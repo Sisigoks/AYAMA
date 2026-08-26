@@ -1,0 +1,24 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+data/
+out/harness*/
+out/
+runs/
+models/
+web/node_modules/
+web/dist/
+*.egg-info/
+.DS_Store
+
+# Study outputs: keep the JSON, the report and the web previews (they are the
+# evidence the site renders); drop the rasters, which are large and regenerate
+# byte-identically from the recorded seed.
+results/**/*.tif
+results/**/*.tiff
+# Full-resolution quick-looks from the run stage: the site reads results/*/preview/
+# instead, and the Pages workflow never publishes these.
+results/**/run/*.png
+results/**/run/*.jpg

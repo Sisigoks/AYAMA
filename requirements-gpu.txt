@@ -1,0 +1,16 @@
+# GPU install. torch/torchvision must come from the CUDA wheel index, so this
+# file cannot be a plain `pip install -r` — use the setup script, which detects
+# the driver version and picks the index for you:
+#
+#   bash scripts/setup_gpu.sh
+#
+# or install by hand:
+#
+#   pip install -r requirements.txt
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+#   pip install transformers
+#
+# cu124 for driver >= 550, cu121 for >= 525, cu118 for >= 510.
+torch>=2.2
+torchvision>=0.17
+transformers>=4.40

@@ -1,0 +1,61 @@
+# Publish the results site to GitHub Pages.
+#
+# The site is static and needs no build step: it is a renderer for
+# results/study.json, so republishing after a new study run is just a commit.
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - 'results/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assemble the site
+        run: |
+          mkdir -p _site
+          cp -r site/. _site/
+          if [ -d results ]; then
+            mkdir -p _site/results
+            # Only what the page reads: the JSON, the report and the web
+            # previews. Matched by extension rather than by directory, because
+            # an rsync pattern containing a slash is anchored at the transfer
+            # root, so 'preview/**' would never match 'seed7/preview/rgb.jpg'
+            # and the explorer would ship with no images at all.
+            ( cd results && find . -type f \
+                \( -name '*.json' -o -name '*.md' -o -name '*.png' -o -name '*.jpg' \) \
+                -exec install -D {} ../_site/results/{} \; )
+          fi
+          test -f _site/index.html
+          echo "published files:"; find _site -type f | head -40
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
