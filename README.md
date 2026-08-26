@@ -92,6 +92,20 @@ python -m unnat.cli study --out results --backbone dav2-vitl \
 
 See [docs/GPU.md](docs/GPU.md) for the GPU box, Docker and Colab paths.
 
+## Presentation output
+
+`results/figures/` holds six publication figures (300 dpi PNG + vector PDF) and
+three `booktabs` LaTeX tables, all rendered from `study.json` so they cannot
+drift from the numbers. Regenerate without re-running inference:
+
+```bash
+python -m unnat.cli figures --study results/study.json
+```
+
+Long runs report live: an interactive terminal gets a single rewritten line with
+a bar, rate, ETA and VRAM; a notebook or log gets timestamped lines instead.
+`--progress rich|plain|none` overrides the detection.
+
 ## Site
 
 `site/` is a static page that renders `results/study.json` — it invents nothing,

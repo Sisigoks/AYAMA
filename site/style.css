@@ -338,3 +338,20 @@ footer .meta { font-family: var(--mono); font-size: .78rem; margin-top: .5rem; }
 .verdict.bad  { background: color-mix(in srgb, var(--danger) 9%, var(--panel));
                 border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); }
 th .dim { color: var(--ink-3); font-weight: 400; }
+
+/* ── paper figures ──────────────────────────────────────────────────────── */
+.figure-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 1.4rem;
+}
+.paper-fig { margin: 0; background: var(--panel); border: 1px solid var(--line);
+             border-radius: var(--radius); overflow: hidden; }
+.paper-fig img {
+  display: block; width: 100%; height: auto; background: #fff;
+  border-bottom: 1px solid var(--line);
+}
+.paper-fig figcaption { padding: .9rem 1.1rem 1.1rem; display: grid; gap: .35rem; }
+.paper-fig figcaption strong { font-size: .95rem; }
+.paper-fig figcaption span { color: var(--ink-2); font-size: .86rem; }
+.paper-fig .dl { font-family: var(--mono); font-size: .78rem; }
+.paper-fig .dl a { color: var(--accent); text-decoration: none; }
+.paper-fig .dl a:hover { text-decoration: underline; }

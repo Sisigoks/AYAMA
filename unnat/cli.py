@@ -178,6 +178,11 @@ def cmd_synth(args) -> int:
     return 0
 
 
+ABLATION_VARIANTS = ("dem_only", "global_affine", "agmc_no_gate", "agmc_no_shadow",
+                     "agmc_no_water", "agmc", "agmc_bootstrap")
+SUN_ELEVATIONS = (15, 20, 25, 30, 40, 50, 60, 70, 75, 80)
+
+
 def _load_gcps(path: Optional[str]) -> list:
     """CSV with row,col,elev_m[,label] or x,y,elev_m in the scene CRS."""
     if not path:
@@ -237,10 +242,12 @@ def cmd_run(args) -> int:
                 "segmentation": "raster" if args.sem else "heuristic",
                 "segmentation_path": args.sem},
     )
+    from .core.progress import Live
+
+    live = Live(mode=args.progress)
     t0 = time.time()
-    print(f"UNNAT run   {os.path.basename(args.image)}")
-    res = run(args.image, cfg, gcps=_load_gcps(args.gcps), out_dir=args.out,
-              on_event=_stage_printer())
+    print(f"UNNAT run   {os.path.basename(args.image)}   {live.banner()}")
+    res = run(args.image, cfg, gcps=_load_gcps(args.gcps), out_dir=args.out, live=live)
 
     print(f"\nTier {res.tier.value} ({res.tier_reason})")
     print(f"anchors: {res.anchors_used} used / {res.anchors_rejected} rejected "
@@ -345,6 +352,7 @@ def cmd_ablate(args) -> int:
 
 def cmd_study(args) -> int:
     """Run the whole study and write reproducible results to disk."""
+    from .core.progress import Live
     from .eval import study as S
     from .eval.bench import format_bench, sweep
 
@@ -352,12 +360,14 @@ def cmd_study(args) -> int:
     os.makedirs(out, exist_ok=True)
     seeds = [int(s) for s in args.seeds.split(",")]
     t0 = time.time()
+    live = Live(mode=args.progress)
 
     print(f"UNNAT study -> {out}/")
     env = S.environment()
     S.save_json(env, os.path.join(out, "environment.json"))
-    print(f"  {env.get('gpu') or 'CPU only'}   torch {env.get('torch')}   "
-          f"{env['platform']}")
+    print(f"  {live.banner()}   torch {env.get('torch')}   {env['platform']}")
+    print(f"  {len(seeds)} scenes at {args.size}x{args.size}, backbone {args.backbone}, "
+          f"{args.bootstrap} bootstrap resamples")
 
     scenes, ablations = [], {}
     sun, lam = [], []
@@ -381,37 +391,63 @@ def cmd_study(args) -> int:
             print(f"  checkpointed {out}/study.json {note}")
         return payload
 
-    for seed in seeds:
-        s = S.scene_experiment(out, seed, size=args.size, backbone=args.backbone,
-                               chip=args.chip, device=args.device, batch=args.batch,
-                               n_bootstrap=args.bootstrap, log=print)
-        scenes.append(s)
-        ablations[str(seed)] = S.ablation_experiment(
-            os.path.join(out, f"seed{seed}"), seed, backbone=args.backbone,
-            chip=args.chip, n_bootstrap=args.bootstrap, log=print)
-        S.release_backbone()
-        checkpoint(note=f"({len(scenes)}/{len(seeds)} scenes)")
+    with live.task("study", len(seeds), "scene") as overall:
+        for seed in seeds:
+            s = S.scene_experiment(out, seed, size=args.size, backbone=args.backbone,
+                                   chip=args.chip, device=args.device, batch=args.batch,
+                                   n_bootstrap=args.bootstrap, log=live.log, live=live)
+            scenes.append(s)
+            with live.task("ablation", len(ABLATION_VARIANTS), "variant") as ab:
+                ablations[str(seed)] = S.ablation_experiment(
+                    os.path.join(out, f"seed{seed}"), seed, backbone=args.backbone,
+                    chip=args.chip, n_bootstrap=args.bootstrap, log=live.log,
+                    on_variant=lambda name, i, n: ab.set(i, n, name))
+            S.release_backbone()
+            checkpoint(note=f"({len(scenes)}/{len(seeds)} scenes)")
+            overall.advance(1, f"seed {seed} MAE {s['metrics'].get('mae_m', float('nan')):.2f} m")
 
     print("\nsun elevation sweep (shadow physics, no inference)")
-    sun = S.sun_sweep(size=args.sun_size, log=print)
+    with live.task("sun sweep", len(SUN_ELEVATIONS), "angle") as t:
+        sun = S.sun_sweep(size=args.sun_size, log=live.log,
+                          on_step=lambda i, n, el: t.set(i, n, f"{el:.0f} deg"))
     checkpoint()
 
     print("\nlambda sensitivity (cached depth)")
-    lam = S.lambda_sweep(os.path.join(out, f"seed{seeds[0]}"), log=print)
+    with live.task("lambda", None, "fit") as t:
+        lam = S.lambda_sweep(os.path.join(out, f"seed{seeds[0]}"), log=live.log,
+                             on_step=lambda i, n, v: t.set(i, n, f"lam {v}"))
     checkpoint(note="before the throughput sweep")
 
     print("\nthroughput")
-    bench = sweep(image=os.path.join(out, f"seed{seeds[0]}", "scene.tif"),
-                  backbones=args.backbone.split(","),
-                  chips=[int(c) for c in args.chips.split(",")],
-                  batches=[int(b) for b in args.batches.split(",")],
-                  device=args.device, on_case=lambda b, c, n: print(
-                      f"  {b} chip={c} batch={n} ..."))
+    cases = (len(args.backbone.split(",")) * len(args.chips.split(","))
+             * len(args.batches.split(",")))
+    with live.task("throughput", cases, "case") as t:
+        seen = {"n": 0}
+
+        def _case(b, c, n):
+            t.set(seen["n"], cases, f"{b} chip={c} batch={n}")
+            seen["n"] += 1
+
+        bench = sweep(image=os.path.join(out, f"seed{seeds[0]}", "scene.tif"),
+                      backbones=args.backbone.split(","),
+                      chips=[int(c) for c in args.chips.split(",")],
+                      batches=[int(b) for b in args.batches.split(",")],
+                      device=args.device, on_case=_case)
     print()
     print(format_bench(bench))
 
     study = checkpoint(bench)
     agg = study["aggregate"]
+
+    if not args.no_figures:
+        from .eval.figures import render_all
+
+        print("\nfigures")
+        with live.task("figures", None, "figure") as t:
+            written = render_all(study, os.path.join(out, "figures"),
+                                 scenes_dir=out,
+                                 on_step=lambda i, n, name: t.set(i, n, name))
+        print(f"  {len(written)} figures + LaTeX tables in {out}/figures/")
 
     print(f"\n{'':=<70}")
     print(f"MAE      {agg['mae_m']['mean']:.2f} +/- {agg['mae_m']['std']:.2f} m "
@@ -603,6 +639,38 @@ def _write_study_markdown(study: dict, path: str) -> None:
         fh.write("\n".join(lines))
 
 
+def cmd_figures(args) -> int:
+    """Render presentation figures and LaTeX tables from a saved study.
+
+    Separate from `study` because plotting is cheap and inference is not: a
+    caption or a colour can be changed in seconds without spending a GPU hour.
+    """
+    import json
+
+    from .core.progress import Live
+    from .eval.figures import render_all
+
+    with open(args.study, encoding="utf-8") as fh:
+        study = json.load(fh)
+
+    scenes_dir = args.scenes or os.path.dirname(os.path.abspath(args.study))
+    out = args.out or os.path.join(scenes_dir, "figures")
+    live = Live(mode=args.progress)
+
+    t0 = time.time()
+    print(f"UNNAT figures -> {out}/")
+    with live.task("figures", None, "figure") as t:
+        written = render_all(study, out, scenes_dir=scenes_dir,
+                             on_step=lambda i, n, name: t.set(i, n, name))
+    pngs = [w for w in written if w.endswith(".png")]
+    tex = [w for w in written if w.endswith(".tex")]
+    print(f"  {len(pngs)} figures (PNG at 300 dpi + vector PDF), {len(tex)} LaTeX tables")
+    for w in written:
+        print(f"    {w}")
+    print(f"done      {time.time() - t0:.1f}s")
+    return 0
+
+
 def cmd_doctor(args) -> int:
     """Is this machine ready to run UNNAT, and how fast will it be."""
     from .eval.bench import device_report
@@ -702,6 +770,7 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--lam", type=float, default=1.0,
                     help="AGMC smoothness weight; results are flat over roughly 0.25-4")
     pr.add_argument("--json", default=None, help="write the run summary here")
+    pr.add_argument("--progress", default="auto", choices=["auto", "rich", "plain", "none"])
     pr.set_defaults(func=cmd_run)
 
     pbn = sub.add_parser("bench", help="throughput sweep over backbones, chip and batch sizes")
@@ -747,7 +816,19 @@ def build_parser() -> argparse.ArgumentParser:
     pst.add_argument("--batches", default="1", help="bench sweep batch sizes")
     pst.add_argument("--sun-size", type=int, default=512,
                      help="scene size for the sun elevation sweep")
+    pst.add_argument("--progress", default="auto", choices=["auto", "rich", "plain", "none"],
+                     help="live display: rich for a terminal, plain for logs/notebooks")
+    pst.add_argument("--no-figures", action="store_true",
+                     help="skip the presentation figures and LaTeX tables")
     pst.set_defaults(func=cmd_study)
+
+    pf = sub.add_parser("figures", help="presentation figures + LaTeX tables from a study")
+    pf.add_argument("--study", default="results/study.json")
+    pf.add_argument("--scenes", default=None,
+                    help="directory holding seed*/ (defaults to the study's own directory)")
+    pf.add_argument("--out", default=None)
+    pf.add_argument("--progress", default="auto", choices=["auto", "rich", "plain", "none"])
+    pf.set_defaults(func=cmd_figures)
 
     pdoc = sub.add_parser("doctor", help="check this machine is ready, and how fast it is")
     pdoc.add_argument("--load", default=None,

@@ -59,13 +59,19 @@ def scene_experiment(
     batch: int = 1,
     n_bootstrap: int = 16,
     log: Optional[Callable[[str], None]] = None,
+    live=None,
 ) -> dict:
     """One scene, generated then reconstructed from its own image alone."""
     scene_dir = os.path.join(out_dir, f"seed{seed}")
     os.makedirs(scene_dir, exist_ok=True)
 
     _log(log, f"  [seed {seed}] generating {size}x{size} scene")
-    sc = make_scene(size=size, gsd_m=gsd_m, seed=seed)
+    if live is not None:
+        with live.task(f"scene {seed}", None, "") as t:
+            t.note(f"rendering {size}x{size} with ray-marched shadows")
+            sc = make_scene(size=size, gsd_m=gsd_m, seed=seed)
+    else:
+        sc = make_scene(size=size, gsd_m=gsd_m, seed=seed)
     img = os.path.join(scene_dir, "scene.tif")
     dsm_ref = os.path.join(scene_dir, "scene_dsm.tif")
     dtm_ref = os.path.join(scene_dir, "scene_dtm.tif")
@@ -80,7 +86,7 @@ def scene_experiment(
 
     _log(log, f"  [seed {seed}] running pipeline ({backbone})")
     t0 = time.time()
-    res = run(img, cfg, out_dir=os.path.join(scene_dir, "run"))
+    res = run(img, cfg, out_dir=os.path.join(scene_dir, "run"), live=live)
     wall = time.time() - t0
     release_backbone()
     _log(log, f"  [seed {seed}] MAE {res.metrics['mae_m']:.2f} m  "
@@ -160,6 +166,7 @@ def ablation_experiment(
     chip: int = 512,
     n_bootstrap: int = 16,
     log: Optional[Callable[[str], None]] = None,
+    on_variant: Optional[Callable[[str, int, int], None]] = None,
 ) -> list:
     """Re-uses the relative depth the pipeline already wrote for this scene."""
     import rasterio
@@ -185,7 +192,8 @@ def ablation_experiment(
     cfg = Config(n_bootstrap=n_bootstrap, lattice_stride=32,
                  dem_source=f"sim:{os.path.join(scene_dir, 'scene_dtm.tif')}")
     _log(log, f"  [seed {seed}] ablation over cached depth")
-    return run_variants(scene, depth, sem, shadow, ref, dem_m=dem_m, cfg=cfg)
+    return run_variants(scene, depth, sem, shadow, ref, dem_m=dem_m, cfg=cfg,
+                        on_variant=on_variant)
 
 
 # --------------------------------------------------------------------------
@@ -197,6 +205,7 @@ def sun_sweep(
     gsd_m: float = 0.5,
     seed: int = 21,
     log: Optional[Callable[[str], None]] = None,
+    on_step: Optional[Callable[[int, int, float], None]] = None,
 ) -> list:
     """Shadow-derived height accuracy against sun elevation.
 
@@ -206,7 +215,9 @@ def sun_sweep(
     of every building is known exactly.
     """
     rows = []
-    for el in elevations:
+    for i, el in enumerate(elevations):
+        if on_step:
+            on_step(i, len(elevations), float(el))
         sc = make_scene(size=size, gsd_m=gsd_m, seed=seed, sun_elevation_deg=float(el))
         scene = Scene(rgb=sc.rgb, meta=sc.meta)
         sem, _ = segment(scene)
@@ -251,6 +262,7 @@ def lambda_sweep(
     lambdas: Sequence[float] = (0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 10.0, 50.0),
     strides: Sequence[int] = (32,),
     log: Optional[Callable[[str], None]] = None,
+    on_step: Optional[Callable[[int, int, float], None]] = None,
 ) -> list:
     """Is the smoothness weight a knob you have to tune, or a scale that works?"""
     import rasterio
@@ -282,8 +294,12 @@ def lambda_sweep(
     rows = [{"lam": None, "stride": None, "variant": "global_affine",
              "mae_m": baseline["mae_m"], "rmse_m": baseline["rmse_m"],
              "pearson_r": baseline["pearson_r"]}]
+    step = 0
     for stride in strides:
         for lam in lambdas:
+            if on_step:
+                on_step(step, len(strides) * len(lambdas), float(lam))
+            step += 1
             cfg = Config(lattice_stride=stride, lam_a=lam, lam_b=lam,
                          dem_source=f"sim:{dtm}")
             calib = solve_agmc(depth, anchors, cfg, tier=Tier.A)

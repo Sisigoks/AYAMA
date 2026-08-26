@@ -40,7 +40,8 @@ jobs:
             # root, so 'preview/**' would never match 'seed7/preview/rgb.jpg'
             # and the explorer would ship with no images at all.
             ( cd results && find . -type f \
-                \( -name '*.json' -o -name '*.md' -o -name '*.png' -o -name '*.jpg' \) \
+                \( -name '*.json' -o -name '*.md' -o -name '*.png' \
+                   -o -name '*.jpg' -o -name '*.pdf' -o -name '*.tex' \) \
                 -exec install -D {} ../_site/results/{} \; )
           fi
           test -f _site/index.html

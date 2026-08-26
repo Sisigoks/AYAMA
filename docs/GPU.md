@@ -51,6 +51,60 @@ The Pages workflow redeploys on that push and the site renders your environment,
 your timings and your metrics. Only the JSON and the web previews are tracked —
 the rasters are gitignored and regenerate byte-identically from the seeds.
 
+## Watching a run
+
+Every stage that can take more than a few seconds reports where it is. Silence
+during a demo is indistinguishable from a hang, and on a rented GPU it is
+indistinguishable from money being wasted.
+
+An interactive terminal gets one line, rewritten in place:
+
+```
+  [study 1/3] [depth 12/36] depth  ▕████████░░░░░░░░░░▏ 12/36 chip  4.10 chip/s  ETA 6s  VRAM 4.2/16.0 GB
+```
+
+A notebook, a CI log or a redirect to a file gets timestamped lines instead, at
+most one every 20 s, because thousands of carriage returns in a log file are
+unreadable. The mode is detected automatically; force it with
+`--progress rich|plain|none` (or `UNNAT_PROGRESS=plain` in the environment).
+
+The line carries the whole nesting at once — which scene, which stage, which
+chip — because "12/36" alone does not tell anyone how much of the run is left.
+VRAM is read from the driver, not from torch's allocator, so it includes
+whatever else is resident on the card; that is the number that decides your
+batch size.
+
+## Presentation output
+
+The study writes publication figures and LaTeX tables alongside the JSON:
+
+```
+results/figures/
+  fig1_ablation.{png,pdf}            which components earn their place
+  fig2_error_by_class.{png,pdf}      where the error lives
+  fig3_sun_window.{png,pdf}          the shadow physics window
+  fig4_lambda_sensitivity.{png,pdf}  sensitivity to the one free parameter
+  fig5_reliability.{png,pdf}         does sigma predict the error
+  fig6_qualitative.{png,pdf}         input / reference / prediction / error / sigma
+  tables/table1_headline.tex         booktabs, ready to \input{}
+  tables/table2_ablation.tex
+  tables/table3_by_class.tex
+```
+
+PNG at 300 dpi for slides, PDF as vector for LaTeX. Every figure is rendered
+from `study.json`, so it cannot drift from the number it illustrates.
+Re-plot without re-running inference — captions and colours cost seconds, a GPU
+hour does not:
+
+```bash
+python -m unnat.cli figures --study results/study.json
+python -m unnat.cli study --no-figures ...   # skip them during a sweep
+```
+
+Two figures need a completed run on disk (`fig5`, `fig6`) because they read the
+per-pixel σ and error rasters; without one they are skipped rather than faked
+from the aggregate.
+
 ## The four commands
 
 ### `doctor` — is this machine ready

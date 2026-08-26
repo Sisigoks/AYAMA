@@ -73,12 +73,15 @@ def run_variants(
     cfg: Optional[Config] = None,
     variants: Sequence[str] = VARIANTS,
     tier: Tier = Tier.A,
+    on_variant=None,
 ) -> list[dict]:
     cfg = cfg or Config()
     gsd = scene.meta.gsd_m
     rows = []
 
-    for variant in variants:
+    for i, variant in enumerate(variants):
+        if on_variant:
+            on_variant(variant, i, len(variants))
         anchors = _anchors_for(variant, scene, depth, sem, shadow, dem_m, gcps, cfg)
         if not anchors and variant != "dem_only":
             rows.append({"variant": variant, "error": "no anchors"})

@@ -19,7 +19,7 @@ import tempfile
 import webbrowser
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-KEEP = (".json", ".md", ".png", ".jpg", ".jpeg", ".svg")
+KEEP = (".json", ".md", ".png", ".jpg", ".jpeg", ".svg", ".pdf", ".tex")
 
 
 def assemble(dest: str) -> str:

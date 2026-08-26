@@ -22,6 +22,7 @@
     <nav>
       <a href="#results">Results</a>
       <a href="#explorer">Explorer</a>
+      <a href="#figures">Figures</a>
       <a href="#method">Method</a>
       <a href="#reproduce">Reproduce</a>
       <a href="#limits">Limits</a>
@@ -148,6 +149,26 @@
       <div class="legend" id="layer-legend"></div>
       <div class="scene-facts" id="scene-facts"></div>
     </div>
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────── figures -->
+<section id="figures" class="band">
+  <div class="wrap">
+    <h2>Figures for the paper</h2>
+    <p class="section-lede">
+      Rendered from the same <code>study.json</code> this page reads, so a figure cannot
+      drift from the number it illustrates. Each is a 300 dpi PNG for slides and a vector
+      PDF for LaTeX; the tables are <code>booktabs</code>, ready to <code>\input{}</code>.
+      Regenerate without re-running inference: <code>python -m unnat.cli figures</code>.
+    </p>
+    <div class="figure-grid" id="figure-grid"></div>
+    <p class="section-lede" style="margin-top:1.6rem">
+      LaTeX tables:
+      <a href="results/figures/tables/table1_headline.tex">headline</a> ·
+      <a href="results/figures/tables/table2_ablation.tex">ablation</a> ·
+      <a href="results/figures/tables/table3_by_class.tex">error by class</a>
+    </p>
   </div>
 </section>
 

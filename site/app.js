@@ -23,6 +23,44 @@ const LAYERS = [
   { id: 'shadow.png',    name: 'Cast shadow',      note: 'The mask the height physics is measured from.' },
 ];
 
+// ── paper figures ────────────────────────────────────────────────────────────
+const PAPER_FIGURES = [
+  { file: 'fig1_ablation',           title: 'Which components earn their place',
+    note: 'One inference per scene; every variant re-solves only the calibration.' },
+  { file: 'fig6_qualitative',        title: 'A reconstruction, end to end',
+    note: 'Input, reference, prediction, error and σ on one colour scale per quantity.' },
+  { file: 'fig3_sun_window',         title: 'The shadow physics window',
+    note: 'Height from shadow length alone, against sun elevation. Two panels, one x-axis — never two y-scales.' },
+  { file: 'fig2_error_by_class',     title: 'Where the error lives',
+    note: 'Terrain is close to solved; buildings and canopy carry the error.' },
+  { file: 'fig5_reliability',        title: 'Does σ predict the error?',
+    note: 'Coverage says whether the bars are the right size; the spread says whether σ can rank pixels.' },
+  { file: 'fig4_lambda_sensitivity', title: 'Sensitivity to the one free parameter',
+    note: 'A parameter that must be hunted for per scene is a knob, not a method.' },
+];
+
+function renderFigures() {
+  const host = $('#figure-grid');
+  if (!host) return;
+  host.innerHTML = PAPER_FIGURES.map(f => `
+    <figure class="paper-fig">
+      <a href="results/figures/${f.file}.png" target="_blank" rel="noopener">
+        <img src="results/figures/${f.file}.png" alt="${f.title}" loading="lazy">
+      </a>
+      <figcaption>
+        <strong>${f.title}</strong>
+        <span>${f.note}</span>
+        <span class="dl"><a href="results/figures/${f.file}.pdf">PDF</a> ·
+                         <a href="results/figures/${f.file}.png">PNG</a></span>
+      </figcaption>
+    </figure>`).join('');
+  // A figure that was never rendered (no reference DSM, say) removes its own card
+  // rather than leaving a broken image on the page.
+  $$('.paper-fig img', host).forEach(img => {
+    img.addEventListener('error', () => img.closest('.paper-fig').remove());
+  });
+}
+
 // ── boot ─────────────────────────────────────────────────────────────────────
 init();
 
@@ -51,6 +89,7 @@ function render(study) {
   renderLambda(study);
   renderBench(study);
   renderExplorer(study);
+  renderFigures();
   renderFooter(study);
 }
 

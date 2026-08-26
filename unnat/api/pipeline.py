@@ -67,13 +67,21 @@ class RunResult:
 
 
 class _Clock:
-    def __init__(self, emit: EventFn):
+    """Times every stage, emits structured events, and drives the live display.
+
+    One object rather than three: a stage that is timed but invisible is exactly
+    the stage a user watches in silence wondering whether the run has hung.
+    """
+
+    def __init__(self, emit: EventFn, live=None):
         self.emit = emit
+        self.live = live
         self.timings: dict = {}
         self._t0 = time.time()
 
-    def stage(self, name: str, detail: str = "", pct: float = 0.0):
-        return _StageCtx(self, name, detail, pct)
+    def stage(self, name: str, detail: str = "", pct: float = 0.0,
+              total: Optional[int] = None, unit: str = ""):
+        return _StageCtx(self, name, detail, pct, total, unit)
 
     def _fire(self, name, status, detail, pct):
         if self.emit:
@@ -81,13 +89,32 @@ class _Clock:
 
 
 class _StageCtx:
-    def __init__(self, clock: _Clock, name: str, detail: str, pct: float):
+    def __init__(self, clock: _Clock, name: str, detail: str, pct: float,
+                 total: Optional[int] = None, unit: str = ""):
         self.clock, self.name, self.detail, self.pct = clock, name, detail, pct
+        self.total, self.unit = total, unit
+        self._ctx = None
+        self.task = None
 
     def __enter__(self):
         self.t = time.time()
         self.clock._fire(self.name, "running", self.detail, self.pct)
+        if self.clock.live is not None:
+            self._ctx = self.clock.live.task(self.name, self.total, self.unit)
+            self.task = self._ctx.__enter__()
         return self
+
+    def progress(self, done: int, total: Optional[int] = None, detail: str = "") -> None:
+        """Report a fraction of this stage, to both the event stream and the display."""
+        if self.task is not None:
+            self.task.set(done, total, detail)
+        if self.emit_progress and total:
+            self.clock._fire(self.name, "running", detail or f"{done}/{total}",
+                             done / max(total, 1))
+
+    @property
+    def emit_progress(self) -> bool:
+        return self.clock.emit is not None
 
     def done(self, detail: str):
         self.detail = detail
@@ -99,6 +126,9 @@ class _StageCtx:
             self.clock._fire(self.name, "done", f"{self.detail}", self.pct)
         else:
             self.clock._fire(self.name, "failed", f"{exc}", self.pct)
+        if self._ctx is not None:
+            self._ctx.done(self.detail if exc_type is None else "")
+            self._ctx.__exit__(exc_type, exc, tb)
         return False
 
 
@@ -195,12 +225,13 @@ def run(
     out_dir: Optional[str] = None,
     on_event: EventFn = None,
     write_artifacts: bool = True,
+    live=None,
 ) -> RunResult:
     from ..depth.backbones import get_backbone
     from ..depth.infer import n_chips, predict_depth
 
     cfg = cfg or Config()
-    clock = _Clock(on_event)
+    clock = _Clock(on_event, live=live)
     res = RunResult()
 
     # ---- ingest ----------------------------------------------------------
@@ -209,15 +240,15 @@ def run(
         st.done(f"{scene.shape[1]} x {scene.shape[0]}  {scene.meta.describe()}")
 
     # ---- relative depth --------------------------------------------------
-    with clock.stage("depth") as st:
+    total = n_chips(scene.shape, cfg.chip, cfg.overlap)
+    with clock.stage("depth", total=total, unit="chip") as st:
+        st.task and st.task.note("loading weights")
         model = get_backbone(cfg.backbone, device=cfg.extras.get("device", "auto"))
         model.load()
-        total = n_chips(scene.shape, cfg.chip, cfg.overlap)
         depth = predict_depth(
             scene, model, chip=cfg.chip, overlap=cfg.overlap,
             batch_size=int(cfg.extras.get("batch_size", 1)),
-            on_progress=(lambda d, t: clock._fire("depth", "running", f"chip {d}/{t}", d / max(t, 1)))
-            if on_event else None,
+            on_progress=lambda d, t: st.progress(d, t),
         )
         st.done(f"{total} chips, {model.describe()}")
 
@@ -261,13 +292,12 @@ def run(
         st.done(f"{calib.n_anchors_used} used, {calib.n_anchors_rejected} rejected, "
                 f"residual {calib.residual_rmse:.2f} m")
 
-    with clock.stage("uncertainty") as st:
+    with clock.stage("uncertainty", total=max(cfg.n_bootstrap, 0) or None,
+                     unit="resample") as st:
         if cfg.n_bootstrap >= 2:
             mean_surface, sigma_calib = bootstrap_sigma(
                 depth, anchors, cfg, n_boot=cfg.n_bootstrap,
-                on_progress=(lambda d, t: clock._fire("uncertainty", "running",
-                                                      f"bootstrap {d}/{t}", d / max(t, 1)))
-                if on_event else None,
+                on_progress=lambda d, t: st.progress(d, t),
             )
             surface = mean_surface
         else:
