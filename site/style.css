@@ -355,3 +355,58 @@ th .dim { color: var(--ink-3); font-weight: 400; }
 .paper-fig .dl { font-family: var(--mono); font-size: .78rem; }
 .paper-fig .dl a { color: var(--accent); text-decoration: none; }
 .paper-fig .dl a:hover { text-decoration: underline; }
+
+
+/* ── the embedded 3D viewer ─────────────────────────────────────────────── */
+.viewer-note {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--warm);
+  border-radius: 10px;
+  background: var(--panel-2);
+  padding: .8rem 1rem;
+  margin: 0 0 1rem;
+  font-size: .92rem;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+.viewer-note strong { color: var(--warm); }
+
+.viewer-frame {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--bg-alt);
+  /* Tall enough that the side panel and the canvas are both usable, and
+     capped against the viewport so the page never traps the scroll. */
+  height: clamp(460px, 72vh, 820px);
+}
+.viewer-frame iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.viewer-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-top: .9rem;
+}
+.viewer-actions .btn {
+  display: inline-block;
+  padding: .5rem .9rem;
+  border-radius: 8px;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  text-decoration: none;
+  font-size: .9rem;
+}
+.viewer-actions .btn:hover { background: var(--accent); color: #fff; }
+.viewer-meta { font: .78rem/1.5 var(--mono); color: var(--ink-3); }
+
+@media (max-width: 700px) {
+  .viewer-frame { height: 78vh; }
+}

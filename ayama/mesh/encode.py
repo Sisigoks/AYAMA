@@ -99,6 +99,60 @@ def decode_linear(rgb: np.ndarray, vmin: float, vmax: float) -> np.ndarray:
     return (vmin + _unpack(rgb).astype(np.float64) / MAX_CODE * (vmax - vmin)).astype(np.float32)
 
 
+def encode_linear_bits(arr: np.ndarray, vmin: float, vmax: float,
+                       bits: int = 24) -> np.ndarray:
+    """Linear encoding that keeps only the top `bits` of the 24-bit code.
+
+    The decode is unchanged - `decode_linear` with the same vmin/vmax still
+    reads it - so this costs the viewer nothing and is purely a payload choice.
+    Zeroing the low bits is what a narrower field would really store, and it is
+    what lets PNG collapse them: the delivery benchmark measures 12 bits taking
+    the linear layers from 6.22 MB to 1.46 MB, a 76% saving, while still
+    resolving every layer to better than 0.1% of its own range.
+
+    Rounding in *value* space and re-encoding is not equivalent and was tried
+    first: floating-point jitter keeps the low byte noisy, and 12 bits came out
+    to a larger file than 16.
+    """
+    bits = int(max(1, min(24, bits)))
+    span = max(float(vmax) - float(vmin), 1e-12)
+    a = np.asarray(arr, np.float64)
+    finite = np.isfinite(a)
+    norm = np.clip((np.where(finite, a, vmin) - vmin) / span, 0.0, 1.0)
+    if bits >= 24:
+        return _pack(norm * MAX_CODE)
+    levels = (1 << bits) - 1
+    code = np.rint(norm * levels).astype(np.uint64) << np.uint64(24 - bits)
+    return _pack(np.minimum(code, MAX_CODE).astype(np.float64))
+
+
+def linear_step(vmin: float, vmax: float, bits: int = 24) -> float:
+    """Metres per representable level at `bits`. Goes into the manifest."""
+    bits = int(max(1, min(24, bits)))
+    return float((float(vmax) - float(vmin)) / ((1 << bits) - 1))
+
+
+def linear_range_for_bits(vmin: float, vmax: float, bits: int = 24) -> tuple:
+    """The (vmin, vmax) to record in the manifest for a `bits`-quantised layer.
+
+    Zeroing the low bits leaves the largest code at ``levels << shift``, which is
+    slightly under the 2^24 - 1 that a plain decode divides by - so the top of
+    the range would come back 0.024% low at 12 bits, a systematic compression
+    toward vmin rather than a rounding error. Widening the recorded vmax by
+    exactly that ratio makes the *unchanged* decoder exact again, so the only
+    error left is the half-step one the caller asked for.
+
+    This is why the range lives in the manifest at all: the encoder gets to
+    choose it, and the viewer never has to know that quantisation happened.
+    """
+    bits = int(max(1, min(24, bits)))
+    if bits >= 24:
+        return float(vmin), float(vmax)
+    span = float(vmax) - float(vmin)
+    top = ((1 << bits) - 1) << (24 - bits)          # largest code we can emit
+    return float(vmin), float(vmin) + span * MAX_CODE / top
+
+
 def quantisation_step(vmin: float, vmax: float) -> float:
     """Metres per code in a linear encoding. Reported in the manifest.
 

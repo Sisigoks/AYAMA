@@ -73,6 +73,74 @@ setTimeout(() => {
   console.log('   footer    ', txt('#footer-meta').slice(0, 90));
   console.log('   lambda note', txt('#lambda-chart .panel-sub').slice(0, 110));
 
-  if (errors.length) { console.log('\n  JS ERRORS:'); errors.forEach(e => console.log('   ' + e)); }
+  
+// ── the 3D section and the viewer it embeds ─────────────────────────────────
+// The front page promises a live 3D view. That promise is only kept if the
+// section is there, the iframe points somewhere real, and the assembled site
+// actually contains the viewer and its tileset - three separate things, each of
+// which has its own way of silently not shipping.
+(function checkViewerEmbed() {
+  const section = w.document.getElementById('three-d');
+  if (!section) { errors.push('the 3D section is missing from index.html'); return; }
+
+  const frame = w.document.getElementById('viewer-embed');
+  if (!frame) { errors.push('the 3D section has no viewer iframe'); return; }
+  const src = frame.getAttribute('src') || '';
+  if (!src) { errors.push('the viewer iframe has no src'); return; }
+
+  // The iframe src is relative to the assembled site root, not to the repo.
+  const viewerDir = path.join(ROOT, 'web');
+  const wants = [
+    ['index.html', 'the viewer page'],
+    ['app.js', 'the viewer script'],
+    ['style.css', 'the viewer styles'],
+    ['data/tileset.json', 'the committed demo tileset'],
+  ];
+  for (const [rel, what] of wants) {
+    if (!fs.existsSync(path.join(viewerDir, rel))) {
+      errors.push(`${what} is missing (web/${rel}), so ${src} would 404`);
+    }
+  }
+
+  const manifestPath = path.join(viewerDir, 'data/tileset.json');
+  if (fs.existsSync(manifestPath)) {
+    let m;
+    try { m = JSON.parse(fs.readFileSync(manifestPath, 'utf8')); }
+    catch (e) { errors.push('web/data/tileset.json is not valid JSON: ' + e.message); }
+    if (m) {
+      let bytes = 0;
+      (function walk(d) {
+        for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+          const f = path.join(d, e.name);
+          if (e.isDirectory()) walk(f); else bytes += fs.statSync(f).size;
+        }
+      })(path.join(viewerDir, 'data'));
+      if (bytes > 6e6) {
+        errors.push(`the demo tileset is ${(bytes / 1e6).toFixed(1)} MB; too heavy to embed`);
+      }
+      if (m.mesh) errors.push('the demo tileset ships the OBJ; it should not');
+      // Every tile the manifest promises must exist, or the viewer draws holes.
+      let missing = 0;
+      for (const lod of m.lods || []) {
+        for (const t of lod.tiles || []) {
+          for (const rel of Object.values(t.layers || {})) {
+            if (!fs.existsSync(path.join(viewerDir, 'data', rel))) missing++;
+          }
+        }
+      }
+      if (missing) errors.push(`${missing} tile(s) named in the manifest are missing`);
+      console.log(`  viewer: ${(bytes / 1e6).toFixed(2)} MB, ${(m.lods || []).length} LODs, ` +
+                  `${m.grid && m.grid.quantise_bits}-bit linear layers`);
+    }
+  }
+
+  // The nav has to reach it, or nobody finds it.
+  const nav = w.document.querySelector('nav');
+  if (nav && !/#three-d/.test(nav.innerHTML)) {
+    errors.push('the nav does not link to the 3D section');
+  }
+})();
+
+if (errors.length) { console.log('\n  JS ERRORS:'); errors.forEach(e => console.log('   ' + e)); }
   console.log(`\n  ${bad === 0 && errors.length === 0 ? 'PAGE RENDERS CLEAN' : 'PROBLEMS: ' + (bad + errors.length)}`);
 }, 400);

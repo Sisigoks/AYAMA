@@ -11,12 +11,14 @@ came out of Phase 2, and `tileset.json` records which run produced it.
 """
 from .build import build_tileset, load_run
 from .encode import (decode_linear, decode_terrain_rgb, encode_linear,
-                     encode_terrain_rgb, normal_map)
+                     encode_linear_bits, encode_terrain_rgb, linear_step,
+                     normal_map)
 from .obj import write_obj
 from .tiles import cut, interior, tile_specs
 
 __all__ = [
     "build_tileset", "load_run",
     "encode_terrain_rgb", "decode_terrain_rgb", "encode_linear", "decode_linear",
+    "encode_linear_bits", "linear_step",
     "normal_map", "write_obj", "tile_specs", "cut", "interior",
 ]

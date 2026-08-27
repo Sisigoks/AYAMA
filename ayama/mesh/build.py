@@ -25,8 +25,8 @@ from typing import Optional
 import numpy as np
 
 from ..core.jsonio import save_json
-from .encode import (encode_linear, encode_terrain_rgb, normal_map,
-                     quantisation_step)
+from .encode import (encode_linear, encode_linear_bits, encode_terrain_rgb,
+                     linear_range_for_bits, linear_step, normal_map)
 from .obj import write_obj
 from .tiles import cut, grid_size, interior, tile_specs
 
@@ -311,9 +311,16 @@ def build_tileset(
     lods: Optional[int] = None,
     obj_stride: int = 2,
     write_mesh: bool = True,
+    quantise_bits: int = 24,
     on_progress=None,
 ) -> dict:
-    """Build `out_dir` from a Phase 2 run. Returns the manifest dict."""
+    """Build `out_dir` from a Phase 2 run. Returns the manifest dict.
+
+    `quantise_bits` trades payload for precision on the linear layers only, and
+    the viewer needs no change to read it - the decode is identical. 24 keeps
+    every bit; 12 costs about a tenth of a percent of each layer's range and
+    saves three quarters of its bytes, which is what the published demo uses.
+    """
     run = load_run(run_dir)
     dsm = run["dsm"]
     H, W = dsm.shape
@@ -343,9 +350,15 @@ def build_tileset(
             }
         else:
             _, vmin, vmax = encode_linear(a)
+            step = linear_step(vmin, vmax, quantise_bits)
+            # The encoder widens the recorded range to absorb the bit-shift, so
+            # the viewer's decode stays exact and stays ignorant of quantisation.
+            enc_min, enc_max = linear_range_for_bits(vmin, vmax, quantise_bits)
             layer_ranges[key] = {
                 "encoding": enc, "units": units, "label": label,
-                "vmin": vmin, "vmax": vmax, "step_m": quantisation_step(vmin, vmax),
+                "vmin": enc_min, "vmax": enc_max,
+                "bits": int(quantise_bits), "step_m": step,
+                "data_range_m": [vmin, vmax],
             }
         layer_ranges[key]["stats"] = st
 
@@ -381,8 +394,8 @@ def build_tileset(
                 if layer_ranges[key]["encoding"] == "terrain-rgb":
                     rgbp = encode_terrain_rgb(padded)
                 else:
-                    rgbp, _, _ = encode_linear(
-                        padded, layer_ranges[key]["vmin"], layer_ranges[key]["vmax"])
+                    lo, hi = layer_ranges[key]["data_range_m"]
+                    rgbp = encode_linear_bits(padded, lo, hi, quantise_bits)
                 rel = f"tiles/lod{lod}/{key}_{spec.key}.png"
                 _save_png(interior(rgbp, spec), os.path.join(out_dir, rel))
                 layers[key] = rel
@@ -437,7 +450,7 @@ def build_tileset(
         "generated_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "source_run": run["dir"],
         "grid": {"width": W, "height": H, "gsd_m": gsd, "tile": tile, "pad": pad,
-                 "extent_m": [W * gsd, H * gsd]},
+                 "extent_m": [W * gsd, H * gsd], "quantise_bits": int(quantise_bits)},
         "crs": meta.get("crs"),
         "transform": meta.get("transform"),
         "bounds_wgs": meta.get("bounds_wgs"),

@@ -28,6 +28,18 @@ def assemble(dest: str) -> str:
         raise SystemExit("site/ not found")
     shutil.copytree(site, dest, dirs_exist_ok=True)
 
+    # The Phase 4 viewer ships as a sub-page. web/ is self-contained - its own
+    # tileset lives in web/data - so copying the directory is the whole job, and
+    # what is served locally is exactly what deploys.
+    web = os.path.join(ROOT, "web")
+    if os.path.isdir(web):
+        shutil.copytree(web, os.path.join(dest, "viewer"), dirs_exist_ok=True,
+                        ignore=shutil.ignore_patterns("node_modules", "dist"))
+        tiles = os.path.join(dest, "viewer", "data", "tileset.json")
+        print(f"  viewer:  /viewer/  ({'with' if os.path.exists(tiles) else 'NO'} tileset)")
+    else:
+        print("  web/: not found - the 3D section will not load")
+
     results = os.path.join(ROOT, "results")
     if os.path.isdir(results):
         out = os.path.join(dest, "results")

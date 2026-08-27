@@ -84,7 +84,7 @@ def test_manifest_carries_the_grid_and_georeference(built):
     m, _, _ = built
     assert m["ayama_tileset_version"] >= 1
     assert m["grid"] == {"width": 96, "height": 96, "gsd_m": 0.5, "tile": 32, "pad": 1,
-                         "extent_m": [48.0, 48.0]}
+                         "extent_m": [48.0, 48.0], "quantise_bits": 24}
     assert m["crs"] == "EPSG:32644"
     assert len(m["transform"]) == 6
 
@@ -310,3 +310,58 @@ def test_the_real_phase2_run_tiles_and_reports_its_own_defect(tmp_path):
 
     # And the sun the viewer lights from is the scene's own.
     assert m["provenance"]["sun_elevation_deg"] == pytest.approx(61.2, abs=0.1)
+
+
+# ------------------------------------------------ the published web tileset
+def test_a_quantised_build_still_round_trips(fake_run, tmp_path):
+    """12-bit is what the published demo ships, so it gets the same guarantee."""
+    run_dir, arrays = fake_run
+    out = str(tmp_path / "q")
+    m = build_tileset(run_dir, out, tile=32, pad=1, write_mesh=False, quantise_bits=12)
+
+    assert m["grid"]["quantise_bits"] == 12
+    for key in ("ndsm", "sigma", "error"):
+        assert m["layers"][key]["bits"] == 12
+        assert "data_range_m" in m["layers"][key]
+
+    spec = m["layers"]["ndsm"]
+    lod0 = m["lods"][0]
+    rebuilt = np.zeros((lod0["height"], lod0["width"]), np.float32)
+    for t in lod0["tiles"]:
+        rebuilt[t["y0"]:t["y0"] + t["height"], t["x0"]:t["x0"] + t["width"]] = \
+            decode_linear(_tile_pixels(out, t["layers"]["ndsm"]),
+                          spec["vmin"], spec["vmax"])
+    assert np.abs(rebuilt - arrays["ndsm"]).max() <= spec["step_m"] / 2 + 1e-6
+
+
+# The committed demo tileset the published site embeds. It lives inside web/
+# so that web/ is self-contained: any static server rooted there serves a
+# working viewer, and the Pages workflow just copies the directory.
+DEMO = os.path.join(ROOT, "web", "data")
+
+
+@pytest.mark.skipif(not os.path.exists(os.path.join(DEMO, "tileset.json")),
+                    reason="web/data not built")
+def test_the_published_demo_tileset_is_web_sized_and_intact():
+    """The tileset the GitHub Pages site serves. It is committed, so it is tested.
+
+    Two things matter for a published demo: that it is small enough to load,
+    and that shrinking it did not quietly change the surface.
+    """
+    with open(os.path.join(DEMO, "tileset.json"), encoding="utf-8") as fh:
+        m = json.load(fh)
+
+    total = sum(os.path.getsize(os.path.join(b, f))
+                for b, _, fs in os.walk(DEMO) for f in fs)
+    assert total < 6e6, f"demo tileset is {total / 1e6:.1f} MB; too heavy for a page"
+    assert m["mesh"] is None, "the demo must not ship the 139 MB OBJ"
+    assert m["grid"]["quantise_bits"] == 12
+
+    for lod in m["lods"]:
+        for t in lod["tiles"]:
+            for rel in t["layers"].values():
+                assert os.path.exists(os.path.join(DEMO, rel)), rel
+
+    # The flat-surface note is the whole reason the demo is honest.
+    assert [n for n in m["notes"] if n["id"] == "flat_surface"]
+    assert m["metrics"]["mae_m"] == pytest.approx(3.394, abs=0.01)

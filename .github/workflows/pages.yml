@@ -32,6 +32,14 @@ jobs:
         run: |
           mkdir -p _site
           cp -r site/. _site/
+          # The Phase 4 viewer, as a sub-page. web/ is self-contained: its
+          # committed tileset lives in web/data, so the 3D section on the front
+          # page loads with no build step and no external request.
+          mkdir -p _site/viewer
+          cp -r web/. _site/viewer/
+          rm -rf _site/viewer/node_modules _site/viewer/dist
+          test -f _site/viewer/index.html
+          test -f _site/viewer/data/tileset.json
           if [ -d results ]; then
             mkdir -p _site/results
             # Only what the page reads: the JSON, the report and the web
@@ -45,7 +53,8 @@ jobs:
                 -exec install -D {} ../_site/results/{} \; )
           fi
           test -f _site/index.html
-          echo "published files:"; find _site -type f | head -40
+          echo "published: $(find _site -type f | wc -l) files, $(du -sh _site | cut -f1)"
+          find _site -type f | head -40
 
       - uses: actions/upload-pages-artifact@v3
         with:

@@ -692,6 +692,7 @@ def cmd_mesh(args) -> int:
         manifest = build_tileset(
             args.run, out, tile=args.tile, pad=args.pad, lods=args.lods or None,
             obj_stride=args.obj_stride, write_mesh=not args.no_mesh,
+            quantise_bits=args.bits,
             on_progress=lambda d, n: t.set(d, n, f"lod {d - 1}"),
         )
 
@@ -998,6 +999,9 @@ def build_parser() -> argparse.ArgumentParser:
     pm.add_argument("--obj-stride", type=int, default=2,
                     help="decimation for the OBJ export; 1 is full resolution")
     pm.add_argument("--no-mesh", action="store_true", help="skip the OBJ export")
+    pm.add_argument("--bits", type=int, default=24,
+                    help="bits kept per linear layer; 12 saves ~76%% of tile bytes "
+                         "at ~0.1%% of each layer's range (the decode is unchanged)")
     pm.add_argument("--progress", default="auto", choices=["auto", "rich", "plain", "none"])
     pm.set_defaults(func=cmd_mesh)
 

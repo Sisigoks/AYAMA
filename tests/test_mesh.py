@@ -15,8 +15,9 @@ import pytest
 from ayama.mesh.encode import (MAX_CODE, TERRAIN_BASE_M, TERRAIN_STEP_M,
                                decode_linear, decode_normal_map,
                                decode_terrain_rgb, encode_linear,
-                               encode_terrain_rgb, normal_map,
-                               quantisation_step)
+                               encode_linear_bits, encode_terrain_rgb,
+                               linear_range_for_bits, linear_step,
+                               normal_map, quantisation_step)
 from ayama.mesh.obj import write_obj
 from ayama.mesh.tiles import (cut, grid_size, interior, pyramid, reassemble,
                               tile_specs)
@@ -278,3 +279,103 @@ def _parse_obj(path: str):
             elif parts[0] == "f":
                 faces.append(tuple(int(p.split("/")[0]) for p in parts[1:4]))
     return verts, uvs, faces
+
+
+# ------------------------------------------------------- quantised encoding
+def _codes(rgb):
+    a = rgb.astype(np.uint32)
+    return (a[..., 0] << 16) | (a[..., 1] << 8) | a[..., 2]
+
+
+@pytest.mark.parametrize("bits", [16, 12, 8])
+def test_quantised_encoding_zeroes_the_low_bits(bits):
+    """The property the payload saving rests on: a narrower field, really.
+
+    Rounding in value space and re-encoding leaves the low byte noisy through
+    floating-point jitter, and PNG cannot collapse it - which once produced a
+    larger file at 12 bits than at 16.
+    """
+    a = np.linspace(0.0, 5.0, 4096).reshape(64, 64)
+    code = _codes(encode_linear_bits(a, 0.0, 5.0, bits))
+    assert np.all(code % (1 << (24 - bits)) == 0)
+    assert len(np.unique(code)) <= (1 << bits)
+
+
+@pytest.mark.parametrize("bits", [24, 16, 12, 8])
+def test_quantised_encoding_round_trips_within_half_a_step(bits):  # noqa: D401
+    """With the manifest range the encoder chooses, the decode stays exact.
+
+    The bit shift leaves the largest emittable code short of 2^24 - 1, so a
+    plain decode would read the top of the range systematically low - 0.024% at
+    12 bits, a compression toward vmin rather than a rounding error.
+    `linear_range_for_bits` widens the recorded vmax by exactly that ratio.
+    """
+    rng = np.random.default_rng(4)
+    a = rng.uniform(-40.0, 15.0, (64, 64))
+    lo, hi = float(a.min()), float(a.max())
+    rgb = encode_linear_bits(a, lo, hi, bits)
+    enc_min, enc_max = linear_range_for_bits(lo, hi, bits)
+    back = decode_linear(rgb, enc_min, enc_max)
+    step = linear_step(lo, hi, bits)
+    # decode_linear returns float32 to match the raster dtype, so at 24 bits the
+    # storage type is the floor rather than the quantiser: float32 spacing at 40
+    # is about 4e-6, which is larger than a 24-bit step over this range.
+    float32_floor = abs(hi) * 1e-6 + 1e-6
+    assert np.abs(back - a).max() <= step / 2 + float32_floor
+
+
+def test_ignoring_the_encoder_range_biases_the_result_low():
+    """Why the range is in the manifest: decoding with the raw range is wrong."""
+    a = np.linspace(-40.0, 15.0, 4096).reshape(64, 64)
+    rgb = encode_linear_bits(a, -40.0, 15.0, 12)
+    naive = decode_linear(rgb, -40.0, 15.0)          # the raw data range
+    enc_min, enc_max = linear_range_for_bits(-40.0, 15.0, 12)
+    correct = decode_linear(rgb, enc_min, enc_max)
+    assert np.abs(correct - a).max() < np.abs(naive - a).max()
+    assert (naive - a).mean() < 0                    # biased toward vmin
+
+
+def test_fewer_bits_never_costs_less_error():
+    """24 bits is excluded: there the float32 return type sets the error, not
+    the quantiser, so the ordering says nothing about the encoding."""
+    # Deliberately irregular. linspace(0, 9, 4096) lands exactly on the 12-bit
+    # level grid, so 12 bits would encode it losslessly and beat 16 - which says
+    # something about that array, not about the encoding.
+    a = np.random.default_rng(23).uniform(0.0, 9.0, (64, 64))
+    worst = []
+    for bits in (16, 12, 8):
+        rgb = encode_linear_bits(a, 0.0, 9.0, bits)
+        lo, hi = linear_range_for_bits(0.0, 9.0, bits)
+        worst.append(float(np.abs(decode_linear(rgb, lo, hi) - a).max()))
+    assert worst == sorted(worst)
+
+
+def test_quantising_shrinks_the_encoded_png():
+    """The payload claim, measured where the byte count means something.
+
+    Not on a small tile: below a few tens of kB a PNG is mostly header and
+    filter choice, and 12 bits can come out larger than 24 by pure noise.
+    """
+    from ayama.dsm.cog import _apply_cmap  # noqa: F401  (PIL is a core dep)
+
+    import io as _io
+
+    from PIL import Image
+
+    rng = np.random.default_rng(17)
+    a = np.cumsum(rng.normal(0, 0.05, (512, 512)), axis=0)   # smooth, like a surface
+
+    def png_bytes(bits):
+        rgb = encode_linear_bits(a, a.min(), a.max(), bits)
+        buf = _io.BytesIO()
+        Image.fromarray(np.ascontiguousarray(rgb)).save(buf, format="PNG", optimize=True)
+        return buf.tell()
+
+    full, quantised = png_bytes(24), png_bytes(12)
+    assert quantised < full * 0.75, f"12-bit saved only {100 * (1 - quantised / full):.0f}%"
+
+
+def test_full_bits_matches_the_unquantised_encoder():
+    a = np.linspace(0.0, 3.0, 1024).reshape(32, 32)
+    plain, lo, hi = encode_linear(a)
+    assert np.array_equal(encode_linear_bits(a, lo, hi, 24), plain)

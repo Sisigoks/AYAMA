@@ -1,0 +1,349 @@
+{
+  "ayama_tileset_version": 1,
+  "generated_utc": "2026-08-27T06:53:02Z",
+  "source_run": "D:\\UNNAT\\results\\seed7\\run",
+  "grid": {
+    "width": 1024,
+    "height": 1024,
+    "gsd_m": 0.5,
+    "tile": 512,
+    "pad": 1,
+    "extent_m": [
+      512.0,
+      512.0
+    ],
+    "quantise_bits": 12
+  },
+  "crs": "EPSG:32644",
+  "transform": [
+    0.5,
+    0.0,
+    300000.0,
+    0.0,
+    -0.5,
+    1990000.0
+  ],
+  "bounds_wgs": [
+    79.11115367324248,
+    17.984492816728807,
+    79.11603629510955,
+    17.989165126496886
+  ],
+  "layers": {
+    "dsm": {
+      "encoding": "terrain-rgb",
+      "units": "m",
+      "label": "Surface elevation",
+      "base_m": -10000.0,
+      "step_m": 0.1,
+      "vmin": 389.4930114746094,
+      "vmax": 407.7936706542969,
+      "stats": {
+        "min": 389.4930114746094,
+        "max": 407.7936706542969,
+        "mean": 399.04901891879854,
+        "p1": 390.09588623046875,
+        "p99": 407.45255279541016
+      }
+    },
+    "ndsm": {
+      "encoding": "linear",
+      "units": "m",
+      "label": "Height above ground",
+      "vmin": 0.0,
+      "vmax": 0.27625150978565216,
+      "bits": 12,
+      "step_m": 6.744422027625153e-05,
+      "data_range_m": [
+        0.0,
+        0.27618408203125
+      ],
+      "stats": {
+        "min": 0.0,
+        "max": 0.27618408203125,
+        "mean": 0.03888977726455778,
+        "p1": 0.0,
+        "p99": 0.165283203125
+      }
+    },
+    "sigma": {
+      "encoding": "linear",
+      "units": "m",
+      "label": "Uncertainty, 1 sigma",
+      "vmin": 3.0000975131988525,
+      "vmax": 3.04460395895876,
+      "bits": 12,
+      "step_m": 1.0865832132006449e-05,
+      "data_range_m": [
+        3.0000975131988525,
+        3.044593095779419
+      ],
+      "stats": {
+        "min": 3.0000975131988525,
+        "max": 3.044593095779419,
+        "mean": 3.004947975006644,
+        "p1": 3.000203847885132,
+        "p99": 3.030965805053711
+      }
+    },
+    "error": {
+      "encoding": "linear",
+      "units": "m",
+      "label": "Predicted minus reference",
+      "vmin": -42.525787353515625,
+      "vmax": 15.149667084217072,
+      "bits": 12,
+      "step_m": 0.014080922332875457,
+      "data_range_m": [
+        -42.525787353515625,
+        15.135589599609375
+      ],
+      "stats": {
+        "min": -42.525787353515625,
+        "max": 15.135589599609375,
+        "mean": -0.714083415659843,
+        "p1": -25.459632873535156,
+        "p99": 13.32672119140625
+      }
+    },
+    "texture": {
+      "encoding": "jpeg",
+      "units": null,
+      "label": "Source imagery"
+    },
+    "normal": {
+      "encoding": "normal-rgb",
+      "units": null,
+      "label": "Surface normals",
+      "note": "(n + 1) / 2, +X east +Y north +Z up"
+    }
+  },
+  "default_layer": "texture",
+  "lods": [
+    {
+      "lod": 0,
+      "stride": 1,
+      "width": 1024,
+      "height": 1024,
+      "gsd_m": 0.5,
+      "tile": 512,
+      "rows": 2,
+      "cols": 2,
+      "tiles": [
+        {
+          "key": "0_0",
+          "row": 0,
+          "col": 0,
+          "x0": 0,
+          "y0": 0,
+          "width": 512,
+          "height": 512,
+          "layers": {
+            "dsm": "tiles/lod0/dsm_0_0.png",
+            "ndsm": "tiles/lod0/ndsm_0_0.png",
+            "sigma": "tiles/lod0/sigma_0_0.png",
+            "error": "tiles/lod0/error_0_0.png",
+            "normal": "tiles/lod0/normal_0_0.png",
+            "texture": "tiles/lod0/texture_0_0.jpg"
+          }
+        },
+        {
+          "key": "0_1",
+          "row": 0,
+          "col": 1,
+          "x0": 512,
+          "y0": 0,
+          "width": 512,
+          "height": 512,
+          "layers": {
+            "dsm": "tiles/lod0/dsm_0_1.png",
+            "ndsm": "tiles/lod0/ndsm_0_1.png",
+            "sigma": "tiles/lod0/sigma_0_1.png",
+            "error": "tiles/lod0/error_0_1.png",
+            "normal": "tiles/lod0/normal_0_1.png",
+            "texture": "tiles/lod0/texture_0_1.jpg"
+          }
+        },
+        {
+          "key": "1_0",
+          "row": 1,
+          "col": 0,
+          "x0": 0,
+          "y0": 512,
+          "width": 512,
+          "height": 512,
+          "layers": {
+            "dsm": "tiles/lod0/dsm_1_0.png",
+            "ndsm": "tiles/lod0/ndsm_1_0.png",
+            "sigma": "tiles/lod0/sigma_1_0.png",
+            "error": "tiles/lod0/error_1_0.png",
+            "normal": "tiles/lod0/normal_1_0.png",
+            "texture": "tiles/lod0/texture_1_0.jpg"
+          }
+        },
+        {
+          "key": "1_1",
+          "row": 1,
+          "col": 1,
+          "x0": 512,
+          "y0": 512,
+          "width": 512,
+          "height": 512,
+          "layers": {
+            "dsm": "tiles/lod0/dsm_1_1.png",
+            "ndsm": "tiles/lod0/ndsm_1_1.png",
+            "sigma": "tiles/lod0/sigma_1_1.png",
+            "error": "tiles/lod0/error_1_1.png",
+            "normal": "tiles/lod0/normal_1_1.png",
+            "texture": "tiles/lod0/texture_1_1.jpg"
+          }
+        }
+      ]
+    },
+    {
+      "lod": 1,
+      "stride": 2,
+      "width": 512,
+      "height": 512,
+      "gsd_m": 1.0,
+      "tile": 512,
+      "rows": 1,
+      "cols": 1,
+      "tiles": [
+        {
+          "key": "0_0",
+          "row": 0,
+          "col": 0,
+          "x0": 0,
+          "y0": 0,
+          "width": 512,
+          "height": 512,
+          "layers": {
+            "dsm": "tiles/lod1/dsm_0_0.png",
+            "ndsm": "tiles/lod1/ndsm_0_0.png",
+            "sigma": "tiles/lod1/sigma_0_0.png",
+            "error": "tiles/lod1/error_0_0.png",
+            "normal": "tiles/lod1/normal_0_0.png",
+            "texture": "tiles/lod1/texture_0_0.jpg"
+          }
+        }
+      ]
+    },
+    {
+      "lod": 2,
+      "stride": 4,
+      "width": 256,
+      "height": 256,
+      "gsd_m": 2.0,
+      "tile": 512,
+      "rows": 1,
+      "cols": 1,
+      "tiles": [
+        {
+          "key": "0_0",
+          "row": 0,
+          "col": 0,
+          "x0": 0,
+          "y0": 0,
+          "width": 256,
+          "height": 256,
+          "layers": {
+            "dsm": "tiles/lod2/dsm_0_0.png",
+            "ndsm": "tiles/lod2/ndsm_0_0.png",
+            "sigma": "tiles/lod2/sigma_0_0.png",
+            "error": "tiles/lod2/error_0_0.png",
+            "normal": "tiles/lod2/normal_0_0.png",
+            "texture": "tiles/lod2/texture_0_0.jpg"
+          }
+        }
+      ]
+    },
+    {
+      "lod": 3,
+      "stride": 8,
+      "width": 128,
+      "height": 128,
+      "gsd_m": 4.0,
+      "tile": 512,
+      "rows": 1,
+      "cols": 1,
+      "tiles": [
+        {
+          "key": "0_0",
+          "row": 0,
+          "col": 0,
+          "x0": 0,
+          "y0": 0,
+          "width": 128,
+          "height": 128,
+          "layers": {
+            "dsm": "tiles/lod3/dsm_0_0.png",
+            "ndsm": "tiles/lod3/ndsm_0_0.png",
+            "sigma": "tiles/lod3/sigma_0_0.png",
+            "error": "tiles/lod3/error_0_0.png",
+            "normal": "tiles/lod3/normal_0_0.png",
+            "texture": "tiles/lod3/texture_0_0.jpg"
+          }
+        }
+      ]
+    }
+  ],
+  "mesh": null,
+  "provenance": {
+    "image": "D:\\UNNAT\\results\\seed7\\scene.tif",
+    "backbone": "dav2-vits",
+    "segmentation": "heuristic",
+    "dem": "simulated copernicus from scene_dtm.tif",
+    "tier": "A",
+    "chip": 512,
+    "overlap": 0.25,
+    "n_bootstrap": 24,
+    "lattice_stride": 32,
+    "sun_azimuth_deg": 138.4,
+    "sun_elevation_deg": 61.2,
+    "sun": "138.4 deg azimuth / 61.2 deg elevation, read from the source image. The surface is lit from the scene's own sun, so shading and the shadows in the draped texture agree."
+  },
+  "metrics": {
+    "n_px": 1048576,
+    "mae_m": 3.39414379131631,
+    "rmse_m": 5.686944837955929,
+    "bias_m": -0.714083415659843,
+    "median_ae_m": 2.00836181640625,
+    "p90_ae_m": 7.5560760498046875,
+    "std_m": 5.641934638528982,
+    "pearson_r": 0.7456736597693778,
+    "spearman_r": 0.8332626124869924,
+    "delta1": null,
+    "delta1_n_px": 0,
+    "slope_mae_deg": 7.001077651977539,
+    "edge_f1": 0.2757062676298042,
+    "ece_m": 2.500834530094247,
+    "coverage_1s": 0.6495447158813477,
+    "coverage_2s": 0.8547592163085938,
+    "mean_sigma_m": 3.004947975006644
+  },
+  "tier": "A",
+  "anchors": {
+    "dem": 3846,
+    "water": 75,
+    "shadow": 61,
+    "total": 3982
+  },
+  "notes": [
+    {
+      "level": "critical",
+      "id": "flat_surface",
+      "text": "Predicted height above ground reaches only 0.28 m (99th percentile 0.17 m) on a scene where 3.0% of pixels are classified as building. The calibration scale field has collapsed to its floor, so this surface is terrain with the structures flattened. See README section 5. Raise the vertical exaggeration to see what little relief there is - it is a defect, not a rendering choice."
+    },
+    {
+      "level": "info",
+      "id": "heuristic_segmentation",
+      "text": "Semantics came from the colour heuristic, not a trained model."
+    },
+    {
+      "level": "info",
+      "id": "simulated_dem",
+      "text": "Anchored to a simulated DEM (simulated copernicus from scene_dtm.tif), not a real product."
+    }
+  ]
+}

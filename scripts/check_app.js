@@ -24,11 +24,13 @@ try {
   process.exit(0);
 }
 
-const tilesetDir = process.argv[2] || path.join(ROOT, 'out/tiles3d_seed7');
+// Default to the committed demo tileset, so this runs on a fresh clone with
+// nothing built. Pass a directory to check a tileset you produced yourself.
+const tilesetDir = process.argv[2] || path.join(ROOT, 'web/data');
 const manifestPath = path.join(tilesetDir, 'tileset.json');
 if (!fs.existsSync(manifestPath)) {
   console.log(`skip: no tileset at ${manifestPath}`);
-  console.log('      build one: python -m ayama.cli mesh results/seed7/run --out out/tiles3d_seed7');
+  console.log('      build one: python -m ayama.cli mesh <run> --out web/data --no-mesh --bits 12');
   process.exit(0);
 }
 

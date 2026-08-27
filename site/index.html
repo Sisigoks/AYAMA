@@ -22,6 +22,7 @@
     <nav>
       <a href="#results">Results</a>
       <a href="#explorer">Explorer</a>
+      <a href="#three-d">3D</a>
       <a href="#figures">Figures</a>
       <a href="#method">Method</a>
       <a href="#reproduce">Reproduce</a>
@@ -148,6 +149,41 @@
 
       <div class="legend" id="layer-legend"></div>
       <div class="scene-facts" id="scene-facts"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────── 3D -->
+<section id="three-d" class="band">
+  <div class="wrap">
+    <h2>The surface in 3D</h2>
+    <p class="section-lede">
+      The Phase&nbsp;2 result, tiled by Phase&nbsp;3 and rendered live by Phase&nbsp;4 —
+      running here in your browser, from the same rasters every number on this page
+      describes. Drag to orbit, scroll to zoom, hover for elevation, height above
+      ground and 1σ at the cursor.
+    </p>
+
+    <div class="viewer-note">
+      <strong>Raise the vertical exaggeration before you judge it.</strong>
+      At 1× this scene is a flat plain, because that is what the calibration
+      produced: predicted height above ground reaches 0.28&nbsp;m where the
+      buildings are 12.4&nbsp;m tall. The viewer says so on its own panel. That is
+      the defect described in <a href="#limits">Limits</a>, not a rendering choice.
+    </div>
+
+    <div class="viewer-frame">
+      <iframe id="viewer-embed" src="viewer/index.html" loading="lazy"
+              title="ĀYĀMA 3D viewer — the calibrated surface, its uncertainty and its error"></iframe>
+    </div>
+
+    <div class="viewer-actions">
+      <a class="btn" href="viewer/index.html" target="_blank" rel="noopener">
+        Open the viewer full screen →
+      </a>
+      <span class="viewer-meta">
+        2.9&nbsp;MB tileset · 4 LODs · 12-bit linear layers · no build step, no CDN
+      </span>
     </div>
   </div>
 </section>
