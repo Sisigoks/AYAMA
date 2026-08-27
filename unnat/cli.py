@@ -671,6 +671,112 @@ def cmd_figures(args) -> int:
     return 0
 
 
+def cmd_mesh(args) -> int:
+    """Phase 3: a Phase 2 run directory -> a browser-ready tileset.
+
+    Deliberately separate from `run`. Tiling is cheap and inference is not, so a
+    tile size or an encoding can be changed in seconds without re-running the
+    pipeline - and, more importantly, this command can only ever *read* what
+    Phase 2 wrote. There is no path by which the viewer shows a number the
+    calibration did not produce.
+    """
+    from .core.progress import Live
+    from .mesh.build import build_tileset
+
+    out = args.out or os.path.join(args.run, "tiles3d")
+    live = Live(mode=args.progress)
+
+    t0 = time.time()
+    print(f"UNNAT mesh   {args.run} -> {out}/")
+    with live.task("tiling", None, "lod") as t:
+        manifest = build_tileset(
+            args.run, out, tile=args.tile, pad=args.pad, lods=args.lods or None,
+            obj_stride=args.obj_stride, write_mesh=not args.no_mesh,
+            on_progress=lambda d, n: t.set(d, n, f"lod {d - 1}"),
+        )
+
+    g = manifest["grid"]
+    n_tiles = sum(len(l["tiles"]) for l in manifest["lods"])
+    print(f"  raster       {g['width']} x {g['height']} px at {g['gsd_m']:.4g} m "
+          f"({g['extent_m'][0]:.0f} x {g['extent_m'][1]:.0f} m)")
+    print(f"  levels       {len(manifest['lods'])} LODs, {n_tiles} tiles of {args.tile} px "
+          f"(+{args.pad} px pad)")
+    print("  layers       " + "  ".join(sorted(manifest["layers"])))
+    for key, spec in sorted(manifest["layers"].items()):
+        if spec.get("vmin") is None:
+            continue
+        print(f"    {key:<8} {spec['vmin']:9.2f} .. {spec['vmax']:9.2f} {spec.get('units') or ''}"
+              f"   step {spec.get('step_m', float('nan')):.4g}")
+    if manifest.get("mesh"):
+        m = manifest["mesh"]
+        print(f"  mesh         {m['obj']}  {m['vertices']:,} vertices, "
+              f"{m['triangles']:,} triangles")
+    for note in manifest.get("notes", []):
+        mark = {"critical": "!!", "warning": " !", "info": "  "}.get(note["level"], "  ")
+        print(f"  {mark} {note['text']}")
+    print(f"done      {time.time() - t0:.1f}s   {out}/tileset.json")
+    return 0
+
+
+def cmd_viewer(args) -> int:
+    """Phase 4: build the tileset if needed, then serve the web app locally.
+
+    One command from a finished run to a 3D view in a browser, with no build
+    step, no package manager and no network. `web/` is plain HTML, CSS and
+    JavaScript for exactly that reason - the same reason every raster is a COG.
+    """
+    import http.server
+    import socketserver
+    import webbrowser
+
+    from .mesh.build import build_tileset
+
+    root = os.path.dirname(os.path.abspath(__file__))
+    web = os.path.join(os.path.dirname(root), "web")
+    if not os.path.isdir(web):
+        print(f"error: web/ not found at {web}", file=sys.stderr)
+        return 2
+
+    tiles = args.tiles or os.path.join(args.run, "tiles3d")
+    manifest_path = os.path.join(tiles, "tileset.json")
+    if args.rebuild or not os.path.exists(manifest_path):
+        print(f"building tileset -> {tiles}/")
+        build_tileset(args.run, tiles, tile=args.tile, pad=1,
+                      obj_stride=args.obj_stride, write_mesh=not args.no_mesh)
+    else:
+        print(f"using existing tileset {manifest_path}")
+
+    # Serve web/ at the root and the tileset under /data, so the page fetches a
+    # relative URL and nothing depends on where either directory happens to sit.
+    web_dir, data_dir = os.path.abspath(web), os.path.abspath(tiles)
+
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def translate_path(self, path):
+            clean = path.split("?", 1)[0].split("#", 1)[0]
+            parts = [p for p in clean.split("/") if p not in ("", ".", "..")]
+            if parts and parts[0] == "data":
+                return os.path.join(data_dir, *parts[1:])
+            return os.path.join(web_dir, *parts) if parts else os.path.join(web_dir, "index.html")
+
+        def log_message(self, fmt, *a):
+            if "200" not in fmt % a:
+                super().log_message(fmt, *a)
+
+    socketserver.TCPServer.allow_reuse_address = True
+    with socketserver.TCPServer(("", args.port), Handler) as httpd:
+        url = f"http://localhost:{args.port}/"
+        print(f"  web      {web_dir}")
+        print(f"  data     {data_dir}  ->  /data/tileset.json")
+        print(f"\nserving {url}   (ctrl-c to stop)")
+        if not args.no_open:
+            webbrowser.open(url)
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            print("\nstopped")
+    return 0
+
+
 def cmd_doctor(args) -> int:
     """Is this machine ready to run UNNAT, and how fast will it be."""
     from .eval.bench import device_report
@@ -829,6 +935,30 @@ def build_parser() -> argparse.ArgumentParser:
     pf.add_argument("--out", default=None)
     pf.add_argument("--progress", default="auto", choices=["auto", "rich", "plain", "none"])
     pf.set_defaults(func=cmd_figures)
+
+    pm = sub.add_parser("mesh", help="Phase 3: run directory -> browser tileset + OBJ mesh")
+    pm.add_argument("run", help="a directory written by `unnat run` (contains dsm.tif)")
+    pm.add_argument("--out", default=None, help="tileset directory (default: <run>/tiles3d)")
+    pm.add_argument("--tile", type=int, default=512)
+    pm.add_argument("--pad", type=int, default=1,
+                    help="overlap pixels per side, for seam-free normals")
+    pm.add_argument("--lods", type=int, default=0, help="0 = derive from the raster size")
+    pm.add_argument("--obj-stride", type=int, default=2,
+                    help="decimation for the OBJ export; 1 is full resolution")
+    pm.add_argument("--no-mesh", action="store_true", help="skip the OBJ export")
+    pm.add_argument("--progress", default="auto", choices=["auto", "rich", "plain", "none"])
+    pm.set_defaults(func=cmd_mesh)
+
+    pv = sub.add_parser("viewer", help="Phase 4: build if needed, then serve the 3D web app")
+    pv.add_argument("run", help="a directory written by `unnat run`")
+    pv.add_argument("--tiles", default=None, help="tileset directory (default: <run>/tiles3d)")
+    pv.add_argument("--port", type=int, default=8020)
+    pv.add_argument("--tile", type=int, default=512)
+    pv.add_argument("--obj-stride", type=int, default=2)
+    pv.add_argument("--no-mesh", action="store_true")
+    pv.add_argument("--rebuild", action="store_true", help="rebuild even if a tileset exists")
+    pv.add_argument("--no-open", action="store_true")
+    pv.set_defaults(func=cmd_viewer)
 
     pdoc = sub.add_parser("doctor", help="check this machine is ready, and how fast it is")
     pdoc.add_argument("--load", default=None,

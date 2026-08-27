@@ -8,6 +8,10 @@ out/harness*/
 out/
 runs/
 models/
+# jsdom for the headless page checks (scripts/check_site.js, check_app.js).
+# Installed with --no-save, so there is no manifest to commit either.
+node_modules/
+package-lock.json
 web/node_modules/
 web/dist/
 *.egg-info/

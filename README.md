@@ -4,10 +4,12 @@
 backbone, converted to metres by **Chhaya** (छाया), an anchor-graph calibration
 engine, then delivered as a COG DSM with a per-pixel uncertainty field.
 
-> **Status: Phase 2 proof of concept, measured on CPU.** Everything below is
-> reproducible on a laptop with no GPU and no data download. The findings
-> include a diagnosis of why the current pipeline does *not* yet work as a DSM
-> estimator, and the measured evidence for the fix.
+> **Status: Phases 1-4 built, measured on CPU.** Everything below is
+> reproducible on a laptop with no GPU, no data download and no package manager.
+> The findings include a diagnosis of why the calibration does *not* yet work as
+> a DSM estimator, and the measured evidence for the fix. Phases 3 and 4 deliver
+> that surface honestly rather than hiding it: `unnat viewer <run>` renders the
+> real result in 3D and states its own defect on screen.
 
 | | |
 |---|---|
@@ -15,9 +17,10 @@ engine, then delivered as a COG DSM with a per-pixel uncertainty field.
 | **POC hardware** | 8-core CPU, no CUDA, `torch 2.13.0+cpu` |
 | **Benchmark** | 3 synthetic 1024×1024 scenes @ 0.5 m, exact ground-truth DSM |
 | **Full study runtime** | 450 s (CPU) |
-| **Test suite** | 88 passed, 7 skipped (GPU-only), 60.6 s |
+| **Test suite** | 133 passed, 7 skipped (GPU-only), 67 s |
 | **Headline** | MAE **3.30 ± 0.08 m** vs a **3.49 m** DEM-only floor |
 | **Central finding** | the scale field collapses to its floor; object height recovered is **0.05 m** of a true 12.4 m |
+| **Delivery** | tiled browser surface + OBJ mesh in **3.3 s / 6.7 s** on CPU; zero-dependency local 3D viewer |
 
 ---
 
@@ -29,9 +32,10 @@ engine, then delivered as a COG DSM with a per-pixel uncertainty field.
 4. [Findings](#4-findings-cpu-poc)
 5. [The central finding: scale-field collapse](#5-the-central-finding-scale-field-collapse)
 6. [Proposed remedy, with measured evidence](#6-proposed-remedy-with-measured-evidence)
-7. [Reproducing everything](#7-reproducing-everything)
-8. [Roadmap](#8-roadmap)
-9. [Layout, contracts and conventions](#9-layout-contracts-and-conventions)
+7. [Phase 3 and 4 — delivery](#7-phase-3-and-4--delivery)
+8. [Reproducing everything](#8-reproducing-everything)
+9. [Roadmap](#9-roadmap)
+10. [Layout, contracts and conventions](#10-layout-contracts-and-conventions)
 
 ---
 
@@ -832,7 +836,7 @@ noise-fitting.
 edge F1. Since §4.4 shows the smoothness prior is what destroys structure, the
 λ that optimises MAE is very likely *not* the λ that optimises structural
 fidelity. Adding edge F1 to this sweep is a one-line change and is listed in
-[§8](#8-roadmap).
+[§9](#9-roadmap).
 
 ## 4.7 Uncertainty calibration
 
@@ -1183,9 +1187,313 @@ Items 1–4 are the critical path and are all inside `unnat/chhaya/`.
 
 ---
 
-# 7. Reproducing everything
+# 7. Phase 3 and 4 — delivery
 
-## 7.1 Setup
+Phase 2 produces rasters. Phases 3 and 4 turn them into something a person can
+look at and a colleague can open: a tiled, browser-loadable surface, a textured
+mesh on disk, and a local 3D viewer.
+
+**Neither phase computes elevation.** Every metre on screen was decoded from a
+tile that Phase 3 wrote from a raster Phase 2 produced, and `tileset.json`
+records which run it came from. That constraint is what makes the viewer
+evidence rather than illustration.
+
+## 7.1 One deviation from the spec, stated up front
+
+The spec's layout says `web/ — React + Vite + Three.js`. What is here is plain
+HTML, CSS and JavaScript with a hand-written WebGL renderer and **no build step,
+no package manager and no CDN**.
+
+The reason is the same one that makes every raster a COG and keeps torch out of
+the core install: *the deliverable has to work for someone who will not install
+anything first.* A Vite app needs `npm install` before it will render at all,
+which puts a network round-trip and a toolchain between a reviewer and the
+result. `python -m unnat.cli viewer <run>` is the entire toolchain here, and it
+works offline.
+
+The cost is real and worth naming: about 300 lines of matrix, shader and camera
+code that Three.js would have supplied, and no scene graph to build on if Phase
+4 grows. `site/` already set this precedent — it is vanilla and checked with
+jsdom — so the two pages remain one project.
+
+## 7.2 The delivery path
+
+```mermaid
+flowchart LR
+    classDef p2 fill:#f7f6f3,stroke:#52514e,color:#0b0b0b
+    classDef p3 fill:#e8f1fd,stroke:#2a78d6,stroke-width:2px,color:#0d366b
+    classDef p4 fill:#e6f7f1,stroke:#1baf7a,stroke-width:2px,color:#0b4f38
+    classDef out fill:#fdece6,stroke:#eb6834,color:#7a2f10
+
+    R["Phase 2 run directory<br/>dsm · ndsm · sigma · error<br/>sem · texture · provenance"]:::p2
+
+    E["encode.py<br/>terrain-RGB for the DSM<br/>24-bit linear for the rest"]:::p3
+    T["tiles.py<br/>tile + 1 px pad<br/>normals from the padded band"]:::p3
+    O["obj.py<br/>Wavefront OBJ + MTL"]:::p3
+    N["derive_notes<br/>warnings computed from the data"]:::p3
+
+    M["tileset.json<br/>the Python/JavaScript contract"]:::out
+    P["tiles/lodN/*.png · *.jpg"]:::out
+    B["mesh/surface.obj + .mtl + .jpg"]:::out
+
+    V["web/app.js<br/>CPU decode · WebGL heightfield<br/>orbit · layers · cursor readout"]:::p4
+    S["cli viewer<br/>stdlib HTTP server<br/>web at / · tileset at /data"]:::p4
+
+    R --> E --> T --> P
+    R --> O --> B
+    R --> N --> M
+    T --> M
+    P --> V
+    M --> V
+    B -.->|"Blender · MeshLab · QGIS"| B
+    S --> V
+```
+
+## 7.3 Phase 3 — what each part does
+
+### Encoding — `unnat/mesh/encode.py`
+
+A browser cannot read a float32 GeoTIFF, so elevation is packed into 8-bit
+channels. Getting this wrong produces a plausible surface that is not the one
+the pipeline computed, which is the worst failure mode available here — so
+there are two encodings and the choice between them is arithmetic, not taste.
+
+**Terrain-RGB** (the Mapbox convention, used for the DSM because other tools
+already read it):
+
+$$ v = \left\lfloor \frac{h - h_0}{\Delta} \right\rceil, \qquad h = h_0 + v\,\Delta, \qquad h_0 = -10000\ \mathrm{m},\ \ \Delta = 0.1\ \mathrm{m} $$
+
+$$ R = \left\lfloor v / 65536 \right\rfloor, \quad G = \left\lfloor v / 256 \right\rfloor \bmod 256, \quad B = v \bmod 256 $$
+
+Fixed step, absolute, interoperable — and the clamp to $[0, 2^{24}-1]$ is
+load-bearing: an unclamped pack would *wrap* a 40 000 m value round to a small
+one and render it as ordinary terrain. Saturating is visible; wrapping is not.
+
+**24-bit linear** (used for nDSM, σ and error), with the range carried in the
+manifest:
+
+$$ v = \left\lfloor \frac{a - a_{\min}}{a_{\max} - a_{\min}} \left(2^{24} - 1\right) \right\rceil, \qquad \text{step} = \frac{a_{\max} - a_{\min}}{2^{24} - 1} $$
+
+**Why both, measured on this run.** Phase 2's nDSM spans 0.28 m in total. At
+Terrain-RGB's fixed 0.1 m step that is *three* quantisation levels — the viewer
+would draw terraces and the reader would be looking at an encoding artifact
+instead of a measurement. The linear encoding spends all 24 bits on the range
+that is actually present:
+
+| layer | range | encoding | step | round-trip error |
+|---|---|---|---|---|
+| dsm | 389.49 … 407.79 m | terrain-RGB | 0.1 m | **0.050 m** (half a step, as designed) |
+| ndsm | 0.00 … 0.28 m | linear | 1.65 × 10⁻⁸ m | **1.5 × 10⁻⁸ m** |
+| sigma | 3.00 … 3.04 m | linear | 2.65 × 10⁻⁹ m | — |
+| error | −42.53 … 15.14 m | linear | 3.44 × 10⁻⁶ m | — |
+
+Both encodings are big-endian $R\cdot65536 + G\cdot256 + B$ so the JavaScript
+decoder is one expression and the two implementations cannot disagree about
+byte order — and a test asserts they do not.
+
+### Normals — `encode.normal_map`
+
+$$ \mathbf{n} = \frac{\left(-\partial z/\partial x,\ \ \partial z/\partial y,\ \ 1\right)}{\left\| \cdot \right\|}, \qquad \mathrm{RGB} = \left\lfloor \frac{\mathbf{n} + 1}{2}\,255 \right\rceil $$
+
+The sign on the second component is the raster convention showing up again:
+`+row` is south, so the north-facing component flips to reach a right-handed
+(east, north, up).
+
+Normals are precomputed and sampled as a texture rather than derived in the
+shader, for a concrete reason: the viewer displaces vertices from a *decimated*
+height grid, so shading derived from those vertices would lose exactly the
+detail the LOD dropped. Full-resolution normals keep fine structure visible at
+every zoom.
+
+### Tiling — `unnat/mesh/tiles.py`
+
+Interiors partition the raster exactly — every pixel owned once, no overhang,
+short tiles at the right and bottom edges. Each tile additionally reads `pad`
+pixels of its **neighbours**:
+
+> a normal at the last row of a tile needs the first row of the tile below it.
+> Without that row the gradient is one-sided, every tile boundary picks up a
+> faint ridge, and in 3D those ridges read as real terrain.
+
+This is the same seam problem [`depth/infer.py`](unnat/depth/infer.py) solves
+for inference chips, but the fix is different and simpler. Inference chips
+overlap and are *blended* because neighbouring chips genuinely disagree;
+delivery tiles are cut from one already-consistent raster, so the halo is used
+for derivatives and then discarded. At the raster's own border, where there is
+no neighbour, the edge row is replicated — which makes the border gradient zero
+rather than wrong.
+
+Two tests pin this down: normals stitched from padded tiles are **byte-identical**
+to normals of the whole raster across every internal seam, and the same test
+with `pad = 0` fails at exactly the tile boundaries.
+
+**LOD** is plain decimation by $2^k$, not averaging — deliberately. Averaging a
+DSM mixes rooftops with the ground beside them and invents elevations that exist
+nowhere on the surface; a decimated DSM is a real subset of measured heights.
+Imagery is a different case, so the texture is resampled bilinearly by PIL.
+
+### Mesh export — `unnat/mesh/obj.py`
+
+The viewer is the demo; the OBJ is the deliverable. It opens in Blender,
+MeshLab and CloudCompare with no plugin — the same reasoning as writing COGs.
+
+Axes are stated once because a silent flip here yields a mesh that looks fine
+and is mirrored: **+X east, +Y north (raster −row), +Z up**, in metres from the
+tile's south-west corner. The georeference stays in the manifest rather than
+being baked into vertices: a UTM easting of 612 345 m in float32 has ~6 cm of
+precision left, which is coarser than the 0.1 m the encoding preserves.
+
+A quad is emitted only where all four corners are finite. Emitting a face across
+a nodata hole is how one bad pixel becomes a spike to −10 000 m.
+
+### Notes — `build.derive_notes`
+
+Warnings **computed from the data**, not hardcoded. This is the mechanism that
+keeps Phase 3 honest: it inspects the surface it is about to ship and says what
+is wrong with it.
+
+On the real seed7 run it fires this, unprompted:
+
+> **!!** Predicted height above ground reaches only 0.28 m (99th percentile
+> 0.17 m) on a scene where 3.0% of pixels are classified as building. The
+> calibration scale field has collapsed to its floor, so this surface is terrain
+> with the structures flattened. See README section 5. Raise the vertical
+> exaggeration to see what little relief there is — it is a defect, not a
+> rendering choice.
+
+plus `heuristic_segmentation` and `simulated_dem`. The same code on the
+`synthetic` backbone's run, whose nDSM reaches 3.14 m, downgrades to a
+`low_relief` warning instead — the check reads the data, it does not know which
+scene it is looking at.
+
+## 7.4 Phase 4 — the viewer
+
+`web/` is three files: `index.html`, `style.css`, `app.js`.
+
+| control | what it does |
+|---|---|
+| **layer** | texture · DSM · nDSM · σ · error, drawn with the same colour ramps as the PNG previews |
+| **vertical exaggeration** | 1× to 200×, applied as a shader uniform so it is free to drag |
+| **detail** | picks a LOD from the manifest; wireframe and normal-shading toggles |
+| **cursor readout** | easting, northing, elevation, height above ground and 1σ at the pixel under the pointer |
+| **panel** | tier, anchor counts, the run's Phase 2 metrics, provenance, and the notes |
+
+**The decode happens on the CPU, not in a shader**, and that is a correctness
+decision. Unpacking 24-bit values in GLSL invites two silent corruptions: the
+browser may colour-manage or premultiply a texture upload, and `mediump` floats
+cannot represent 16 777 215 exactly. Decoding through a 2D canvas returns the
+exact bytes PIL wrote, and the resulting `Float32Array` then serves the cursor
+readout as well. The GPU only ever samples ordinary colour textures.
+
+**Picking** is ray-marched against the height field rather than rendered to a
+pick buffer: intersect the ray with the mean-elevation plane, sample the surface
+under that guess, step the ray to that height, repeat. It converges in a few
+passes on any surface without overhangs, and a height field has none by
+construction.
+
+**Lighting uses the scene's own sun.** The azimuth and elevation are read off
+the source image's tags (138.4° / 61.2° for seed7), so the shading and the
+shadows baked into the draped texture agree. A mismatch between the two is
+immediately obvious, which is why it is worth wiring rather than defaulting.
+
+**The exaggeration slider is where honesty and usability collide.** It defaults
+to 1×, which on this run renders a flat plain — because that is what Phase 2
+produced. The panel says so before you touch anything. Exaggeration makes the
+defect visible; it does not fix it, and the note says that too.
+
+## 7.5 Measured, on the real Phase 2 CPU run
+
+`python -m unnat.cli mesh results/seed7/run` — the run the README reports in §4:
+
+| | |
+|---|---|
+| Input | 1024 × 1024 px at 0.5 m (512 × 512 m), EPSG:32644 |
+| LODs | 4 (1024 / 512 / 256 / 128 px), **7 tiles** of 512 px with 1 px pad |
+| Layers | dsm · ndsm · sigma · error · normal · texture |
+| Mesh | 262 144 vertices, **522 242 triangles** at stride 2 |
+| Build time | **3.3 s** tiles only, **6.7 s** including the OBJ (CPU) |
+| Metrics carried through | MAE 3.394 m, edge F1 0.276, 1σ coverage 0.650, Tier A, 3982 anchors |
+
+All of which match §4's seed7 numbers exactly, because they are the same
+numbers — the manifest reads them out of `study.json` rather than recomputing.
+
+**Where the bytes go**, and it is not where you would guess:
+
+| | size | share |
+|---|---|---|
+| `mesh/surface.obj` + texture | 34.0 MB | 79% |
+| sigma tiles | 3.25 MB | 8% |
+| error tiles | 3.19 MB | 7% |
+| ndsm tiles | 1.95 MB | 5% |
+| texture tiles | 0.45 MB | 1% |
+| **dsm tiles** | **0.14 MB** | 0.3% |
+| normal tiles | 0.09 MB | 0.2% |
+| **total** | **43.1 MB** | |
+
+**The DSM is 23× smaller than the σ layer while covering a 18 m range against
+σ's 0.04 m.** The cause is the encoding: Terrain-RGB's 0.1 m step leaves a
+smooth surface with few distinct codes and a nearly constant low byte, which PNG
+compresses hard. The 24-bit linear encoding spends every bit, so its low byte is
+incompressible noise. Full precision costs roughly 20× the bytes.
+
+That is a fair trade for nDSM here, where 0.1 m quantisation would destroy the
+layer outright. It is a bad trade for σ, whose own value is 3 m and which is
+being stored to 2.65 nanometres. **Quantising each linear layer to its own
+uncertainty rather than to 24 bits would cut the tileset by roughly half**, and
+it is the obvious next change — it is listed in the roadmap, not done.
+
+The OBJ dominating at 79% is a separate issue: a text format at stride 2. Both
+`--obj-stride 4` and `--no-mesh` are flags for exactly this.
+
+## 7.6 Testing
+
+45 new tests, and the suite now runs **133 passed, 7 skipped** in 67 s on CPU.
+
+| file | what it holds down |
+|---|---|
+| [`tests/test_mesh.py`](tests/test_mesh.py) | 23 tests: encoding round-trips, saturation-not-wrapping, normals, tiling coverage, seam equality, OBJ geometry |
+| [`tests/test_viewer.py`](tests/test_viewer.py) | 22 tests: manifest contract, decoded tiles equal their source raster at every LOD, notes fire correctly, and the Python↔JavaScript contract |
+| [`scripts/check_app.js`](scripts/check_app.js) | executes the page under jsdom |
+
+Three of these are worth calling out because they exist to catch failures
+nothing else would notice.
+
+**The two decoders must agree.** `web/app.js` and `unnat/mesh/encode.py` are
+independent implementations of one packing. If they drift, the viewer renders a
+confidently wrong surface and no other test fails. So the constants are asserted
+to match textually from Python, and `check_app.js` decodes a known 24-bit code
+in JavaScript and compares against the closed form.
+
+**The page must degrade, not blank.** jsdom has no WebGL, and that is used
+rather than worked around: `check_app.js` forces `getContext` to return null and
+asserts the page still explains itself and still fills every panel.
+
+**The flat-surface note must survive.** A test asserts the critical note reaches
+the DOM, because the entire point of §5 being visible in the viewer is that it
+cannot be quietly dropped.
+
+Both phases are wired into CI and `scripts/harness.sh`, building the tileset
+from the smoke-test run rather than from a fixture so the tested path is the
+one a user walks.
+
+## 7.7 What Phase 3/4 does not do
+
+- **Tiles are all loaded, not streamed.** Every tile of the selected LOD is
+  fetched and drawn; there is no frustum culling and no LOD switching by
+  distance. Fine at 1024², wrong at 40 000².
+- **No glTF.** OBJ is text and large. glTF/Draco would be an order of magnitude
+  smaller and is the right format for a web mesh.
+- **σ is drawn as a layer, not as geometry.** The honest rendering of a surface
+  with 3 m of uncertainty is a band, not a sheet.
+- **No measurement tools.** Reading a height at the cursor works; profiles,
+  areas and volumes do not exist yet.
+- **The viewer is single-run.** Comparing two runs, or a run against its
+  reference, means opening two tabs.
+---
+
+# 8. Reproducing everything
+
+## 8.1 Setup
 
 ```bash
 bash scripts/setup_gpu.sh                                   # Linux/WSL, detects CUDA
@@ -1206,7 +1514,7 @@ raster IO, calibration, metrics and the synthetic scene all run without it, so
 nobody is blocked on a 2 GB download. `--backbone synthetic` exercises the
 entire path with no weights at all — a plumbing check, never a result.
 
-## 7.2 Regenerate the whole study
+## 8.2 Regenerate the whole study
 
 Everything in [§4](#4-findings-cpu-poc), on CPU, in **450 s**:
 
@@ -1224,7 +1532,7 @@ Then, without re-running inference:
 python -m unnat.cli figures --study results/study.json    # 6 figures (PNG 300dpi + PDF) + 3 LaTeX tables
 ```
 
-## 7.3 Reproduce the §5 diagnosis
+## 8.3 Reproduce the §5 diagnosis
 
 The scale-field collapse is checkable in one command from a completed study:
 
@@ -1266,7 +1574,29 @@ fraction of nodes at the 0.05 floor: 100.0%
 b field range: 21.62 m
 ```
 
-## 7.4 Individual commands
+## 8.4 See the result in 3D
+
+One command from a finished run to a 3D view in a browser. No build step, no
+package manager, no network:
+
+```bash
+python -m unnat.cli viewer results/seed7/run        # builds the tileset, then serves it
+```
+
+It opens `http://localhost:8020/`, and prints the flat-surface note to the
+terminal on the way past. To build the tileset without serving it:
+
+```bash
+python -m unnat.cli mesh results/seed7/run --out out/tiles3d_seed7
+python -m unnat.cli mesh results/seed7/run --obj-stride 4     # a lighter mesh
+python -m unnat.cli mesh results/seed7/run --no-mesh          # tiles only, 3.3 s
+```
+
+`mesh/surface.obj` opens in Blender, MeshLab or CloudCompare with no plugin.
+Raise the vertical exaggeration in any of them, or in the viewer, to see what
+§5 looks like from the side.
+
+## 8.5 Individual commands
 
 ```bash
 python -m unnat.cli doctor --load dav2-vits                      # is this machine ready, and how fast
@@ -1286,7 +1616,7 @@ Long runs report live: an interactive terminal gets a single rewritten line with
 a bar, rate, ETA and VRAM; a notebook or log gets timestamped lines instead.
 `--progress rich|plain|none` overrides the detection.
 
-## 7.5 On a GPU box
+## 8.6 On a GPU box
 
 Nothing in this document depends on it, but the path exists:
 
@@ -1297,14 +1627,27 @@ python -m unnat.cli study --out results --backbone dav2-vitl \
 
 See [docs/GPU.md](docs/GPU.md) for the GPU box, Docker and Colab paths.
 
-## 7.6 Tests
+## 8.7 Tests
 
 ```bash
-python -m pytest tests -q                 # 88 passed, 7 skipped (GPU) in 60.6 s
+python -m pytest tests -q                 # 133 passed, 7 skipped (GPU) in 67 s
 python -m pytest tests -q -m gpu -v       # GPU-only, on the GPU box
+python -m pytest tests/test_mesh.py tests/test_viewer.py -q     # Phase 3 and 4 only
 ```
 
-## 7.7 Site
+The viewer is additionally executed headlessly, which is the only check that
+catches `web/app.js` and `unnat/mesh/encode.py` disagreeing about the encoding:
+
+```bash
+npm install jsdom                                    # once, anywhere on the path
+node scripts/check_app.js out/tiles3d_seed7          # skips cleanly if jsdom is absent
+```
+
+Everything above also runs from `bash scripts/harness.sh` and in
+`.github/workflows/tests.yml`, where the tileset is built from the smoke-test
+run rather than a fixture, so CI walks the same path a user does.
+
+## 8.8 Site
 
 `site/` is a static page that renders `results/study.json` — it invents nothing,
 so re-running the study and pushing updates every number and image on it.
@@ -1319,25 +1662,35 @@ node scripts/check_site.js     # headless render check (needs: npm install jsdom
 
 ---
 
-# 8. Roadmap
+# 9. Roadmap
 
 | Phase | Output | Status |
 |---|---|---|
 | **P1 Baseline** | relative depth raster | **done** |
 | **P2 Calibration** | metric DSM + σ + metrics | **done, measured, one blocking defect diagnosed** |
+| **P3 3D** | tiled surface, normals, OBJ mesh, per [§7](#7-phase-3-and-4--delivery) | **done, measured** |
+| **P4 Product** | local 3D viewer over the tileset | **done, measured** |
 | **P2.5 Dual-branch** | structure recovered, per [§6](#6-proposed-remedy-with-measured-evidence) | **next — critical path** |
-| P3 3D | textured mesh in the browser | not started |
-| P4 Product | web app | not started |
 
-The immediate queue is §6.4 items 1–4, all inside `unnat/chhaya/`. P3 should not
-begin before P2.5 lands: a textured mesh of a flattened city is a worse
-deliverable than no mesh, because it looks finished.
+**P3 and P4 were built before P2.5, and the ordering needs defending.** The
+earlier version of this file argued the opposite: that a textured mesh of a
+flattened city is worse than no mesh, because it looks finished. That risk is
+real and it is what `derive_notes` exists to answer — the viewer inspects the
+surface it is about to draw and states the defect on screen before the reader
+touches a control. With that in place the delivery layer became the fastest way
+to *see* §5 rather than a way to paper over it, and it is now the thing that
+will show P2.5 working the moment it lands.
+
+The immediate queue is still §6.4 items 1-4, all inside `unnat/chhaya/`.
+Next for delivery, in order: quantise linear layers to their own uncertainty
+(roughly halves the tileset, per §7.5), glTF instead of OBJ, and real tile
+streaming.
 
 ---
 
-# 9. Layout, contracts and conventions
+# 10. Layout, contracts and conventions
 
-## 9.1 Layout
+## 10.1 Layout
 
 ```
 unnat/
@@ -1348,25 +1701,33 @@ unnat/
   physics/     soft shadow, test-time refinement            (next)
   dsm/         assemble.py, cog.py - every artifact QGIS can open
   measure/     derive.py - slope, roughness, profile, buildings
-  mesh/        terrain-rgb, normals, padding                (P3)
+  mesh/        encode.py (terrain-rgb + linear), tiles.py (padding),
+               obj.py, build.py - a run directory to a tileset      (P3)
   eval/        metrics, ablation, bench, synthetic_scene, simulate, study, figures
   api/         pipeline.py - the whole method in one file
-web/           React + Vite + Three.js                      (P3/P4)
-scripts/       setup_gpu.sh, setup.ps1, harness.sh, serve.py
+web/           index.html, app.js, style.css - the 3D viewer,
+               vanilla WebGL, no build step                         (P4)
+scripts/       setup_gpu.sh, setup.ps1, harness.sh, serve.py, check_site.js,
+               check_app.js
 notebooks/     unnat_gpu_harness.ipynb (Colab)
 results/       study.json + per-seed artifacts + figures
 ```
 
-One deviation from the spec's layout: a single importable `unnat` package
-instead of `packages/unnat.core/` and friends. Import paths are exactly as
-specified (`unnat.core.ingest`, `unnat.chhaya.agmc`); directory names with dots
-are not importable.
+Two deviations from the spec's layout, both deliberate.
+
+A single importable `unnat` package instead of `packages/unnat.core/` and
+friends. Import paths are exactly as specified (`unnat.core.ingest`,
+`unnat.chhaya.agmc`); directory names with dots are not importable.
+
+`web/` is vanilla HTML/CSS/JS with a hand-written WebGL renderer rather than
+React + Vite + Three.js, so the viewer needs no `npm install` to run. The
+reasoning and its cost are in [§7.1](#71-one-deviation-from-the-spec-stated-up-front).
 
 **If a reviewer asks "show me your method", open
 [`unnat/api/pipeline.py`](unnat/api/pipeline.py)** — the whole thing is one
 readable function.
 
-## 9.2 Contracts
+## 10.2 Contracts
 
 [`unnat/core/types.py`](unnat/core/types.py) is the interface between
 workstreams. Every stage is a pure function `stage(input) -> output`, no
@@ -1374,7 +1735,7 @@ globals — which is what makes the ablation table cheap to generate, and why
 `ablate` can run inference once and re-solve only the calibration for every
 variant.
 
-## 9.3 Conventions worth stating once
+## 10.3 Conventions worth stating once
 
 - **Sign.** The backbone returns higher values for surfaces closer to the
   sensor. From nadir, closer means higher elevation, so relative depth maps
@@ -1410,6 +1771,11 @@ UNNAT's Phase-2 proof of concept establishes, on CPU and reproducibly:
   building height to **1.7 m median error** at 50–60° with no depth model
   involved.
 
+- The **delivery path is complete and cheap**: a run becomes a tiled,
+  browser-loadable surface plus a textured OBJ in **3.3 s / 6.7 s** on CPU, and
+  a zero-dependency local viewer renders it with a cursor readout of elevation,
+  height above ground and σ.
+
 And it establishes, just as clearly, that the method **does not yet work as a
 surface model**: the scale field collapses to its floor, structure is not
 recovered, and the result does not clear the DEM-only floor. The cause is
@@ -1417,4 +1783,6 @@ diagnosed to one term, the fix is specified, and the signal the fix depends on
 is measured at 69–77% of true building height.
 
 That the POC could produce a flattering headline MAE *and* the evidence that the
-headline was flattering is the part worth keeping.
+headline was flattering is the part worth keeping. Phases 3 and 4 extend the
+same rule to the 3D view: the viewer draws the surface Phase 2 actually
+produced, and says on screen why it is flat.

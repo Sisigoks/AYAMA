@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UNNAT viewer — metric surface in 3D</title>
+<meta name="description" content="Phase 4: the calibrated DSM, its uncertainty and its error, rendered in 3D from the tileset Phase 3 built. No frameworks, no CDN, no build step.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⛰️</text></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="app" class="app">
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="mark" aria-hidden="true"></span>
+      <span class="name">UNNAT</span>
+      <span class="deva" lang="hi">उन्नत</span>
+      <span class="phase">viewer</span>
+    </div>
+    <div id="scene-id" class="scene-id">loading…</div>
+    <button id="btn-panel" class="ghost" aria-expanded="true" aria-controls="side">Hide panel</button>
+  </header>
+
+  <div class="stage">
+    <div class="canvas-wrap">
+      <canvas id="gl" aria-label="3D view of the calibrated surface"></canvas>
+
+      <div id="gl-error" class="gl-error" hidden>
+        <strong>WebGL is unavailable in this browser.</strong>
+        <p>Every number this page would draw is still readable in the panel, and
+           <code>mesh/surface.obj</code> in the tileset opens in Blender or MeshLab.</p>
+      </div>
+
+      <div id="readout" class="readout" hidden>
+        <div class="rd-row"><span>easting</span><b id="rd-x">–</b></div>
+        <div class="rd-row"><span>northing</span><b id="rd-y">–</b></div>
+        <div class="rd-row hi"><span>elevation</span><b id="rd-z">–</b></div>
+        <div class="rd-row"><span>above ground</span><b id="rd-n">–</b></div>
+        <div class="rd-row"><span>1σ</span><b id="rd-s">–</b></div>
+      </div>
+
+      <div class="hud">
+        <div id="hud-lod" class="chip">–</div>
+        <div id="hud-tris" class="chip">–</div>
+        <div id="hud-fps" class="chip">–</div>
+      </div>
+
+      <div id="legend" class="legend" hidden>
+        <div class="lg-title" id="lg-title">–</div>
+        <div class="lg-ramp" id="lg-ramp"></div>
+        <div class="lg-ends"><span id="lg-min">–</span><span id="lg-max">–</span></div>
+      </div>
+
+      <div class="hint">drag to orbit · shift-drag to pan · scroll to zoom</div>
+    </div>
+
+    <aside id="side" class="side">
+
+      <div id="notes" class="notes"></div>
+
+      <section class="ctl">
+        <h2>Layer</h2>
+        <div id="layer-buttons" class="seg"></div>
+      </section>
+
+      <section class="ctl">
+        <h2>Vertical exaggeration</h2>
+        <div class="row">
+          <input id="exagg" type="range" min="0" max="300" value="0" step="1"
+                 aria-label="Vertical exaggeration">
+          <output id="exagg-val" class="mono">1×</output>
+        </div>
+        <div class="presets">
+          <button data-exagg="1">1×</button>
+          <button data-exagg="5">5×</button>
+          <button data-exagg="25">25×</button>
+          <button data-exagg="100">100×</button>
+        </div>
+        <p class="note-sm" id="exagg-note"></p>
+      </section>
+
+      <section class="ctl">
+        <h2>Detail</h2>
+        <div class="row">
+          <select id="lod" aria-label="Level of detail"></select>
+        </div>
+        <label class="chk"><input type="checkbox" id="wire"> wireframe</label>
+        <label class="chk"><input type="checkbox" id="shade" checked> shade from normals</label>
+      </section>
+
+      <section class="ctl" id="sun-ctl" hidden>
+        <h2>Sun</h2>
+        <p class="note-sm" id="sun-note"></p>
+      </section>
+
+      <section class="ctl">
+        <h2>This surface</h2>
+        <table class="kv" id="stats"></table>
+      </section>
+
+      <section class="ctl">
+        <h2>Phase 2 result</h2>
+        <table class="kv" id="metrics"></table>
+        <p class="note-sm" id="metrics-note"></p>
+      </section>
+
+      <section class="ctl">
+        <h2>Provenance</h2>
+        <table class="kv" id="prov"></table>
+      </section>
+
+      <section class="ctl">
+        <h2>Download</h2>
+        <ul class="dl" id="downloads"></ul>
+      </section>
+
+    </aside>
+  </div>
+
+  <div id="boot-error" class="boot-error" hidden></div>
+
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

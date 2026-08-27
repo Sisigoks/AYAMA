@@ -40,3 +40,18 @@ jobs:
           python -m unnat.cli info /tmp/s.tif
           python -m unnat.cli run /tmp/s.tif --out /tmp/run --backbone synthetic \
               --chip 256 --dem sim:/tmp/s_dtm.tif --ref /tmp/s_dsm.tif --bootstrap 4
+
+      # Phase 3 and 4. The tileset is built from the run above rather than from a
+      # fixture, so CI exercises the same path a user does, and the viewer is then
+      # executed headlessly against that manifest - the only check that catches
+      # web/app.js and unnat/mesh/encode.py drifting apart on the encoding.
+      - name: Phase 3 tileset
+        run: |
+          python -m unnat.cli mesh /tmp/run --out /tmp/tiles3d --progress plain
+          test -f /tmp/tiles3d/tileset.json
+          test -f /tmp/tiles3d/mesh/surface.obj
+
+      - name: Phase 4 viewer, headless
+        run: |
+          npm install --no-save --no-audit --no-fund jsdom
+          node scripts/check_app.js /tmp/tiles3d
