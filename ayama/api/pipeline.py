@@ -297,6 +297,7 @@ def run(
         if cfg.n_bootstrap >= 2:
             mean_surface, sigma_calib = bootstrap_sigma(
                 depth, anchors, cfg, n_boot=cfg.n_bootstrap,
+                workers=int(cfg.extras.get("workers", 0)),
                 on_progress=lambda d, t: st.progress(d, t),
             )
             surface = mean_surface

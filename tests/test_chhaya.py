@@ -217,3 +217,65 @@ def test_positive_constraint_leaves_a_well_posed_fit_alone():
                                                    extras={"enforce_positive_scale": True}))
     assert np.allclose(free.a, held.a, atol=1e-6)
     assert np.allclose(free.b, held.b, atol=1e-6)
+
+
+# ---------------------------------------------------- parallel bootstrap
+def _bootstrap_inputs(size=96, seed=3):
+    """A small scene with enough anchors that the bootstrap does real work."""
+    import numpy as np
+
+    from ayama.core.types import Anchor, Config, DepthField, SceneMeta
+
+    rng = np.random.default_rng(seed)
+    rel = rng.random((size, size)).astype(np.float32)
+    meta = SceneMeta(crs="EPSG:32644", transform=(0.5, 0, 0, 0, -0.5, 0), gsd_m=0.5)
+    depth = DepthField(relative=rel, meta=meta, backbone="synthetic")
+    anchors = [
+        Anchor(int(r), int(c), float(400.0 + 8.0 * rel[r, c]), "terrain", "dem", 0.6)
+        for r in range(0, size, 6) for c in range(0, size, 6)
+    ]
+    return depth, anchors, Config()
+
+
+def test_parallel_bootstrap_is_bit_identical_to_serial():
+    """Threads must not change the answer, only the wall time.
+
+    The resample indices are drawn up front from the seeded generator and the
+    results accumulated in index order rather than completion order, precisely
+    so this holds. Accumulating as futures land would make sigma depend on
+    thread scheduling, which is the kind of irreproducibility that is very hard
+    to notice and impossible to defend.
+    """
+    import numpy as np
+
+    from ayama.chhaya.uncertainty import bootstrap_sigma
+
+    depth, anchors, cfg = _bootstrap_inputs()
+    mean_s, sigma_s = bootstrap_sigma(depth, anchors, cfg, n_boot=8, workers=1)
+    mean_p, sigma_p = bootstrap_sigma(depth, anchors, cfg, n_boot=8, workers=4)
+
+    assert np.array_equal(mean_s, mean_p)
+    assert np.array_equal(sigma_s, sigma_p)
+    assert np.isfinite(sigma_s).all() and sigma_s.max() > 0
+
+
+def test_bootstrap_worker_count_is_bounded():
+    """Never more threads than solves, and never an unbounded pool."""
+    from ayama.chhaya.uncertainty import _default_workers
+
+    assert _default_workers(1, 24) == 1
+    assert _default_workers(4, 24) == 4
+    assert _default_workers(64, 24) == 24          # capped by the work available
+    assert _default_workers(0, 2) <= 2
+    assert 1 <= _default_workers(0, 24) <= 8       # auto never oversubscribes
+
+
+def test_bootstrap_reports_progress_once_per_resample():
+    from ayama.chhaya.uncertainty import bootstrap_sigma
+
+    depth, anchors, cfg = _bootstrap_inputs()
+    seen = []
+    bootstrap_sigma(depth, anchors, cfg, n_boot=6, workers=3,
+                    on_progress=lambda d, t: seen.append((d, t)))
+    assert [d for d, _ in seen] == [1, 2, 3, 4, 5, 6]
+    assert all(t == 6 for _, t in seen)
