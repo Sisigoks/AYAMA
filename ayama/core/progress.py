@@ -152,8 +152,8 @@ class Live:
     def _resolve(self, mode: str) -> str:
         if mode and mode != "auto":
             return mode
-        if os.environ.get("UNNAT_PROGRESS"):
-            return os.environ["UNNAT_PROGRESS"]
+        if os.environ.get("AYAMA_PROGRESS"):
+            return os.environ["AYAMA_PROGRESS"]
         try:
             return "rich" if self.stream.isatty() else "plain"
         except Exception:

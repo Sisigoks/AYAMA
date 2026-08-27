@@ -237,7 +237,7 @@ def sweep(
 def format_bench(report: dict) -> str:
     env = report["environment"]
     lines = [
-        f"UNNAT throughput   {report['source']}",
+        f"AYAMA throughput   {report['source']}",
         f"  {env.get('gpu') or 'CPU only'}"
         + (f"   {env.get('vram_total_gb')} GB VRAM   CUDA {env.get('cuda')}" if env.get("gpu") else "")
         + f"   torch {env.get('torch')}",

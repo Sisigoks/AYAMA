@@ -26,3 +26,9 @@ results/**/*.tiff
 # instead, and the Pages workflow never publishes these.
 results/**/run/*.png
 results/**/run/*.jpg
+
+# The delivery benchmark's reference tileset: 42 MB of PNG/JPG/OBJ that
+# rebuilds from results/seed7/run in about 5 s. delivery.json and DELIVERY.md
+# are the evidence and are committed; the tiles are not.
+results/tileset/
+results/_delivery_work/

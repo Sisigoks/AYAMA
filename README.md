@@ -1,4 +1,4 @@
-# UNNAT — उन्नत
+# ĀYĀMA — आयाम
 
 **Metric elevation from a single image.** Relative depth from a pretrained
 backbone, converted to metres by **Chhaya** (छाया), an anchor-graph calibration
@@ -8,7 +8,7 @@ engine, then delivered as a COG DSM with a per-pixel uncertainty field.
 > reproducible on a laptop with no GPU, no data download and no package manager.
 > The findings include a diagnosis of why the calibration does *not* yet work as
 > a DSM estimator, and the measured evidence for the fix. Phases 3 and 4 deliver
-> that surface honestly rather than hiding it: `unnat viewer <run>` renders the
+> that surface honestly rather than hiding it: `ayama viewer <run>` renders the
 > real result in 3D and states its own defect on screen.
 
 | | |
@@ -17,7 +17,7 @@ engine, then delivered as a COG DSM with a per-pixel uncertainty field.
 | **POC hardware** | 8-core CPU, no CUDA, `torch 2.13.0+cpu` |
 | **Benchmark** | 3 synthetic 1024×1024 scenes @ 0.5 m, exact ground-truth DSM |
 | **Full study runtime** | 450 s (CPU) |
-| **Test suite** | 133 passed, 7 skipped (GPU-only), 67 s |
+| **Test suite** | 149 passed, 7 skipped (GPU-only) |
 | **Headline** | MAE **3.30 ± 0.08 m** vs a **3.49 m** DEM-only floor |
 | **Central finding** | the scale field collapses to its floor; object height recovered is **0.05 m** of a true 12.4 m |
 | **Delivery** | tiled browser surface + OBJ mesh in **3.3 s / 6.7 s** on CPU; zero-dependency local 3D viewer |
@@ -129,7 +129,7 @@ localised to one term, and the fix is measured in
 # 2. Architecture
 
 Ten stages, each a pure function `stage(input) -> output` over the dataclasses
-in [`unnat/core/types.py`](unnat/core/types.py). No globals, no hidden state.
+in [`ayama/core/types.py`](ayama/core/types.py). No globals, no hidden state.
 That is what makes the ablation table cheap: `ablate` runs inference **once**
 and re-solves only the calibration for every variant, so every row sees the
 identical depth field.
@@ -245,7 +245,7 @@ Each stage below gives its **job**, the **mathematics** it actually implements,
 and the **artifact** it emits. Timings are the CPU mean per 1024×1024 scene from
 the POC study.
 
-## 3.1 Ingest — `unnat/core/ingest.py`, `core/geo.py`
+## 3.1 Ingest — `ayama/core/ingest.py`, `core/geo.py`
 
 **Job.** Read the image and every piece of metadata that can be read, and
 refuse to invent the rest.
@@ -255,19 +255,33 @@ answer "how many metres is one pixel". For a projected CRS it is read from the
 affine transform; for a geographic CRS the degrees are converted at the scene's
 centre latitude φ:
 
-$$ g = \sqrt{|a| \cdot m_x(\varphi) \cdot |e| \cdot m_y(\varphi)} $$
+$$ g = \sqrt{g_x \times g_y} $$
 
-where $a$, $e$ are the affine's x and y pixel sizes and $m_x, m_y$ are metres
-per degree. Non-square pixels collapse to the geometric mean.
+- $g_x$ = pixel width in degrees × metres per degree of longitude at latitude φ
+- $g_y$ = pixel height in degrees × metres per degree of latitude
+
+The square root of the product is the geometric mean, which collapses a
+non-square pixel to a single number.
+
+**Worked example.** A pixel of 1×10⁻⁵ degrees at 18° N is about **1.06 m**, not
+1×10⁻⁵ m. Skipping that conversion would shrink every shadow-derived height by a
+factor of a hundred thousand, and there is a test for exactly this.
 
 If the image carries no sun tags but does carry GPS and a UTC timestamp
 (typical of drone JPGs), sun position is computed from the NOAA solar equations
-in [`core/solar.py`](unnat/core/solar.py) — declination, equation of time, hour
+in [`core/solar.py`](ayama/core/solar.py) — declination, equation of time, hour
 angle, then
 
-$$ \cos z = \sin\varphi \sin\delta + \cos\varphi \cos\delta \cos H, \qquad \alpha = 90^\circ - z $$
+$$ \cos z = \sin\varphi \sin\delta + \cos\varphi \cos\delta \cos H $$
 
-accurate to about 0.1° over 1950–2050, far tighter than the shadow error budget
+$$ \alpha = 90^\circ - z $$
+
+Read it as: how high the sun sits depends on **where you are** (latitude φ),
+**what time of year** it is (the sun's declination δ) and **what time of day**
+it is (the hour angle H). The first line gives $z$, the angle from straight
+overhead; the elevation above the horizon α is simply 90° minus it.
+
+Accurate to about 0.1° over 1950–2050, far tighter than the shadow error budget
 needs.
 
 **Output.** A `Scene` — RGB array plus a `SceneMeta` carrying CRS, transform,
@@ -278,7 +292,7 @@ defaulting to a plausible number.
 
 *CPU cost: under 0.05 s.*
 
-## 3.2 Depth — `unnat/depth/infer.py`
+## 3.2 Depth — `ayama/depth/infer.py`
 
 **Job.** Turn the image into a unitless relative surface $D \in [0,1]$, higher =
 taller, seam-free across chip boundaries.
@@ -290,24 +304,41 @@ depth with an arbitrary per-image scale, so two adjacent chips can disagree by a
 factor of three over the same rooftop. Each chip is mapped to its own rank
 percentile, with tied values averaged so flat water stays flat:
 
-$$ \tilde{D}(p) = \frac{\operatorname{rank}\left(D_{\mathrm{raw}}(p)\right)}{N - 1} \in [0, 1] $$
+$$ \tilde{D}(p) = \frac{\text{how many pixels in this chip sit lower than } p}{N - 1} $$
+
+The lowest pixel in a chip becomes 0, the highest becomes 1, and every other
+pixel lands wherever it falls in the order. Only the *ranking* survives — the
+backbone's arbitrary scale is discarded here, and physical meaning is recovered
+later, once, by the calibration stage.
 
 **(b) Overlap harmonisation.** Rank normalisation makes each chip internally
 consistent and mutually *incomparable*. Every chip after the first is fitted to
 what the mosaic already says, over the overlap band only, by a Huber-reweighted
 affine:
 
-$$ (s^{*}, t^{*}) = \arg\min_{s,t} \sum_{p \in \Omega} w(p) \rho\left(s\tilde{D}(p) + t - M(p)\right) $$
+Find the stretch $s$ and the shift $t$ that make the incoming chip agree best
+with the mosaic, looking only at the band $\Omega$ where the two overlap:
 
-Blending alone would hide the seam and keep the error.
+$$ \text{pick } s, t \text{ that minimise} \sum_{p \,\in\, \Omega} w(p)\, \rho\Big( \underbrace{s\,\tilde{D}(p) + t}_{\text{chip, adjusted}} \;-\; \underbrace{M(p)}_{\text{mosaic so far}} \Big) $$
+
+ρ is the Huber penalty: it grows like a square for small disagreements but only
+linearly for large ones, so an occlusion edge sitting inside the overlap band
+cannot drag the whole fit. Blending alone would hide the seam and keep the
+error.
 
 **(c) Flat-top raised-cosine window.** Weight is exactly 1.0 across the chip
 interior and ramps only inside the overlap band, so interior pixels are never
 attenuated and the weight sum never approaches zero at the image border:
 
-$$ w_1(i) = \tfrac{1}{2}\left(1 - \cos\frac{\pi (i + 0.5)}{r}\right) \text{ on the ramp}, \qquad w_1 = 1 \text{ inside}, \qquad W = w_1 w_1^{\top} $$
+Across the chip interior the weight is simply **1**. Only inside the $r$-pixel
+ramp at each edge does it fall away, following half a cosine from 0 up to 1:
 
-$$ M = \frac{\sum_i W_i \tilde{D}_i}{\sum_i W_i} $$
+$$ w(i) = \tfrac{1}{2}\left(1 - \cos\frac{\pi\,(i + 0.5)}{r}\right), \qquad i = 0, 1, \ldots, r-1 $$
+
+The 2D window is that same profile applied down and across. Chips are then
+combined as an ordinary weighted average, which is all the blend is:
+
+$$ M = \frac{\sum_i w_i \tilde{D}_i}{\sum_i w_i} $$
 
 **Sign convention.** The backbone returns higher values for surfaces closer to
 the sensor. From nadir, closer means higher elevation, so relative depth maps
@@ -320,7 +351,7 @@ produce the identical mosaic, and there is a test for it.
 
 *CPU cost: 22.1 s — 47% of the pipeline, and the only stage a GPU would move.*
 
-## 3.3 Segmentation — `unnat/semantics/segment.py`
+## 3.3 Segmentation — `ayama/semantics/segment.py`
 
 **Job.** Five classes: bare ground, road, building, vegetation, water. Two
 implementations behind one interface — `raster` (load a real model's output,
@@ -329,13 +360,21 @@ the deployment path) and `heuristic` (colour + texture, no weights).
 **Math.** The heuristic uses NIR-free vegetation and water indices over
 normalised RGB, plus a local texture energy:
 
-$$ \mathrm{ExG} = \frac{2g - r - b}{r + g + b}, \qquad \mathrm{ExB} = \frac{2b - r - g}{r + g + b} $$
+$$ \mathrm{ExG} = \frac{2g - r - b}{r + g + b} \qquad \text{how much greener than neutral a pixel is} $$
 
-$$ T(p) = \sqrt{\overline{\left(L - \bar{L}\right)^2}} \Big|_{7 \times 7} $$
+$$ \mathrm{ExB} = \frac{2b - r - g}{r + g + b} \qquad \text{how much bluer than neutral a pixel is} $$
+
+Both divide by the pixel's total brightness, so they describe **colour** rather
+than **exposure** — a shaded lawn and a sunlit lawn score about the same, which
+is the point. Texture is the local variability of brightness:
+
+$$ T = \text{standard deviation of brightness in a } 7 \times 7 \text{ window} $$
+
+High on tree canopy and rubble, low on a roof or a road.
 
 **Why it matters and is not cosmetic.** The class mask feeds the *semantic gate*:
 
-$$ \mathrm{DEM\_ADMISSIBLE} = \{\text{bare ground},\ \text{road},\ \text{water}\} $$
+> A DEM sample is admissible **only** on bare ground, road or water.
 
 A public DEM approximates bare earth, so a DEM sample taken on a rooftop is not
 a weak anchor — it is a **wrong** one, and the gate rejects it before it enters
@@ -346,7 +385,7 @@ the system rather than down-weighting it inside.
 
 *CPU cost: 1.0 s.*
 
-## 3.4 Shadow detection — `unnat/semantics/shadow.py`
+## 3.4 Shadow detection — `ayama/semantics/shadow.py`
 
 **Job.** A cast-shadow mask good enough to measure lengths from.
 
@@ -355,11 +394,24 @@ surface loses direct sunlight but keeps skylight, so it is dark *and*
 blue-shifted. Dark asphalt is dark and *not* blue-shifted — exactly the
 confusion a plain threshold makes:
 
-$$ C_3 = \arctan\frac{b}{\max(r, g)}, \qquad S = \hat{C_3}\left(1 - L\right), \qquad L = 0.299r + 0.587g + 0.114b $$
+$$ L = 0.299\,r + 0.587\,g + 0.114\,b \qquad \text{brightness} $$
 
-$$ \mathrm{mask} = \left[S > \tau_{\mathrm{Otsu}}(S)\right] \wedge \left[L < P_{30}(L)\right] \wedge \neg\,\mathrm{water} $$
+$$ C_3 = \arctan\frac{b}{\max(r,\ g)} \qquad \text{blueness} $$
 
-followed by 3×3 opening, 5×5 closing, and removal of components below 30 px.
+$$ S = \underbrace{\hat{C_3}}_{\text{blue-shifted}} \times \underbrace{(1 - L)}_{\text{and dark}} $$
+
+The hat on $C_3$ just means it has been rescaled to run 0–1 across this image. A
+pixel scores high **only when both** factors are high, which is exactly what
+separates a shadow from dark asphalt: asphalt is dark but not blue, so its
+second factor is large and its first is small, and the product stays low.
+
+A pixel joins the mask when all three of these hold:
+
+1. $S$ is above an **Otsu threshold** — the cut that best splits the histogram into two groups,
+2. brightness is in the **darkest 30%** of the image,
+3. the pixel is **not water**.
+
+Then 3×3 opening, 5×5 closing, and removal of components below 30 px.
 
 Each term earns its place, measured:
 
@@ -381,7 +433,7 @@ tuning knob — no nadir scene at a usable sun elevation is one-third shadow.
 
 *CPU cost: 0.3 s.*
 
-## 3.5 Anchor harvest — `unnat/chhaya/anchors.py`
+## 3.5 Anchor harvest — `ayama/chhaya/anchors.py`
 
 **Job.** Convert the scene into statements in metres, each with a confidence.
 
@@ -391,9 +443,19 @@ Sampled on a 16 px stride, gated to admissible classes, and dropped where the
 DEM's own slope exceeds 25° (steep ground is where a 30 m posting disagrees
 most with a 0.5 m image). Weight comes from the product datasheet:
 
-$$ w_{\mathrm{DEM}} = \operatorname{clip}\left(\frac{3.0}{\sigma_{\mathrm{source}}},\ 0.1,\ 1.0\right) $$
+$$ w = \frac{3.0\ \mathrm{m}}{\sigma_{\text{source}}}, \qquad \text{then clamped to the range } 0.1 \ldots 1.0 $$
 
-$$ \sigma_{\mathrm{source}} \in \{\text{Copernicus } 3.0,\ \text{NASADEM } 5.5,\ \text{SRTM } 6.0,\ \text{ASTER } 8.5\}\ \mathrm{m} $$
+A DEM with a 3 m datasheet accuracy gets full weight; anything worse is trusted
+in proportion. The clamp stops a poor DEM from falling to zero weight (it still
+carries some information) and stops a very good one from swamping everything
+else.
+
+| source | 1σ accuracy | weight |
+|---|---|---|
+| Copernicus GLO-30 | 3.0 m | 1.00 |
+| NASADEM | 5.5 m | 0.55 |
+| SRTM | 6.0 m | 0.50 |
+| ASTER | 8.5 m | 0.35 |
 
 ### Water anchors
 
@@ -403,10 +465,18 @@ constraints tying every sampled pixel to the body's first pixel.
 
 ### Shadow anchors — the physics
 
-$$ \boxed{\ h = L \cdot g \cdot \tan\alpha\ } $$
+$$ \boxed{\ h = \underbrace{L}_{\text{run length, px}} \times \underbrace{g}_{\text{metres per px}} \times \underbrace{\tan\alpha}_{\text{sun elevation}}\ } $$
 
-$L$ = shadow run length in pixels, $g$ = GSD in metres, $\alpha$ = sun
-elevation. Two decisions matter more than the trigonometry:
+It is the schoolbook right triangle: the building is the vertical side, its
+shadow is the horizontal one, and the sun's elevation is the angle between the
+hypotenuse and the ground.
+
+**Worked example, at this benchmark's sun angle.** A shadow 24 px long at 0.5 m
+per pixel is 12 m across the ground. With the sun 61.2° above the horizon,
+tan(61.2°) ≈ 1.82, so the building is 12 × 1.82 ≈ **21.8 m** tall. That is the
+entire physics.
+
+Two decisions matter more than the trigonometry:
 
 1. **The anchors are relative.** Each says "this roof stands $h$ metres above
    the ground at the foot of this building", carrying the reference pixel.
@@ -415,13 +485,30 @@ elevation. Two decisions matter more than the trigonometry:
    A single run is hostage to one occlusion; the median of forty is not. Runs
    tolerate a 2 px gap and stop at the first foreign building.
 
-The march direction comes from the sun vector, with `+col` east and `+row` south:
+The direction to march is just "away from the sun", written in image
+coordinates. With azimuth $A$ measured clockwise from north and elevation
+$\alpha$, the unit vector pointing **at** the sun is:
 
-$$ \hat{s} = \left(\cos\alpha \sin A,\ -\cos\alpha \cos A,\ \sin\alpha\right), \qquad \hat{u}_{\mathrm{anti}} = -\frac{(\hat{s}_{\mathrm{row}},\ \hat{s}_{\mathrm{col}})}{\left\| \cdot \right\|} $$
+$$ \hat{s} = \big( \underbrace{\cos\alpha \sin A}_{\text{east}},\ \ \underbrace{-\cos\alpha \cos A}_{\text{north, and north is } -\text{row}},\ \ \underbrace{\sin\alpha}_{\text{up}} \big) $$
 
-Every shadow anchor is then weighted by three independent quality terms:
+Shadows fall the opposite way, so the march direction is $-\hat{s}$ with the
+vertical component dropped and the remainder rescaled to unit length.
 
-$$ w = \underbrace{\operatorname{clip}\!\left(\tfrac{\alpha - 20}{10}\right) \cdot \operatorname{clip}\!\left(\tfrac{75 - \alpha}{10}\right)}_{\text{sun-angle gate}} \cdot \underbrace{\left(1 - \frac{\mathrm{MAD}(L_i)}{\bar{L}}\right)}_{\text{crispness}} \cdot \underbrace{\left(1 - \frac{\text{neighbour px in ring}}{\text{ring px}}\right)}_{\text{isolation}} $$
+Every shadow anchor is then weighted by three independent quality terms
+multiplied together, each running 0 to 1 — so any one of them being bad is
+enough to kill the anchor:
+
+$$ w = \underbrace{g(\alpha)}_{\text{sun angle}} \times \underbrace{c}_{\text{crispness}} \times \underbrace{s}_{\text{isolation}} $$
+
+| term | how it is computed | the question it asks |
+|---|---|---|
+| $g(\alpha)$ | ramps 0 → 1 across 20–30°, holds at 1, ramps 1 → 0 across 65–75° | is the sun at a usable angle? |
+| $c$ | $1 - \dfrac{\mathrm{MAD}(L_i)}{\bar{L}}$ | did the forty parallel runs agree on a length? |
+| $s$ | $1 - \dfrac{\text{neighbouring building px in a 12 px ring}}{\text{total ring px}}$ | is this building standing on its own? |
+
+MAD is the median absolute deviation — a spread measure that two or three wild
+runs cannot inflate, unlike a standard deviation. So $c$ is near 1 when every
+run measured nearly the same length, and near 0 when they disagreed wildly.
 
 The gate encodes the physics window: below 20° shadow length is dominated by
 terrain slope, above 75° shadows fall below image resolution. Outside the band
@@ -434,23 +521,50 @@ ref_row, ref_col)`. POC yield per scene: **~3840 DEM + ~70 water + ~65 shadow
 
 *CPU cost: 2.3 s.*
 
-## 3.6 Chhaya / AGMC — `unnat/chhaya/agmc.py`
+## 3.6 Chhaya / AGMC — `ayama/chhaya/agmc.py`
 
 **The core of the method.** A global affine fit has two unknowns for a whole
 tile; it is forced to average away every local disagreement between anchor
 sources and inherits the worst error of each. AGMC replaces the two scalars
 with two smooth **fields**:
 
-$$ H(x, y) = a(x, y)\, D(x, y) + b(x, y) $$
+$$ \underbrace{H(x, y)}_{\text{metres}} = \underbrace{a(x, y)}_{\text{metres per unit of depth}} \times \underbrace{D(x, y)}_{\text{unitless, } 0 \ldots 1} + \underbrace{b(x, y)}_{\text{metres}} $$
 
-solved by minimising
+$a$ is a **stretch** and $b$ is an **offset** — the same two numbers a global fit
+would use, except each is now allowed to vary slowly across the image.
 
-$$ E(a, b) = \underbrace{\sum_k w_k\, \rho\left(a(p_k) D(p_k) + b(p_k) - h_k\right)}_{\text{data}} + \underbrace{\lambda_a \|\nabla a\|^2 + \lambda_b \|\nabla b\|^2}_{\text{smoothness}} + \underbrace{\lambda_p \|a - a_{\mathrm{global}}\|^2}_{\text{prior}} $$
+The solver picks the pair of fields that make a total cost as small as possible.
+That cost is three things added together:
+
+$$ E(a, b) = \underbrace{E_{\text{data}}}_{\text{fit the anchors}} + \underbrace{E_{\text{smooth}}}_{\text{do not wobble}} + \underbrace{E_{\text{prior}}}_{\text{stay near the global fit}} $$
+
+**Fit the anchors.** For each anchor $k$, how far the surface lands from what
+that anchor claims, scaled by how much the anchor is trusted:
+
+$$ E_{\text{data}} = \sum_k w_k \, \rho\big( \underbrace{a(p_k) D(p_k) + b(p_k)}_{\text{what we predict there}} - \underbrace{h_k}_{\text{what the anchor says}} \big) $$
+
+**Do not wobble.** Penalise how fast $a$ and $b$ change from one lattice node to
+its neighbour, so the fields stay smooth between anchors rather than spiking at
+each one:
+
+$$ E_{\text{smooth}} = \lambda_a \sum \big(a - a_{\text{neighbour}}\big)^2 \;+\; \lambda_b \sum \big(b - b_{\text{neighbour}}\big)^2 $$
+
+**Stay near the global fit.** Pull $a$ gently toward the single scalar a robust
+global fit would have chosen:
+
+$$ E_{\text{prior}} = \lambda_p \sum \big( a - a_{\text{global}} \big)^2 $$
+
+Note that $b$ gets no such prior. The datum is exactly what the anchors are
+there to determine, so nothing should be pulling it anywhere.
 
 **Relative anchors enter as a difference of two rows**, which is the mechanism
 that keeps a shadow measurement from being reinterpreted as an elevation:
 
-$$ \left[a(p_k)D(p_k) + b(p_k)\right] - \left[a(q_k)D(q_k) + b(q_k)\right] = h_k $$
+$$ \underbrace{H(p_k)}_{\text{the roof}} \;-\; \underbrace{H(q_k)}_{\text{the ground at its foot}} \;=\; \underbrace{h_k}_{\text{the height between them}} $$
+
+An absolute anchor pins one point down. A relative anchor pins only the **gap**
+between two points and says nothing about where either sits — which is precisely
+what a shadow measurement knows and does not know.
 
 **Discretisation.** The fields live on a coarse lattice of stride 32 px — on a
 4k tile that is 128×128 nodes, about 32k unknowns, seconds on CPU. Each anchor
@@ -458,26 +572,45 @@ is spread over its four surrounding nodes bilinearly, which conditions the
 system far better than nearest-node snapping and removes the blocky artifacts
 snapping leaves behind:
 
-$$ a(p) = \sum_{j=1}^{4} \beta_j\, a_{n_j}, \qquad \sum_j \beta_j = 1 $$
+$$ a(p) = \beta_1 a_1 + \beta_2 a_2 + \beta_3 a_3 + \beta_4 a_4, \qquad \beta_1 + \beta_2 + \beta_3 + \beta_4 = 1 $$
 
-**Normal equations.** With $A$ the $m \times 2n$ design matrix, $W$ the IRLS
-weight diagonal, $L = G^{\top}G$ the 5-point graph Laplacian, and $x = [a; b]$:
+An anchor sitting between four lattice nodes contributes to all four, in
+proportion to how close it is to each — the same weighting a bilinear image
+resize uses. The weights sum to 1, so no anchor gains or loses influence by
+where it happens to land.
 
-$$ \left(A^{\top} W A + R + P\right) x = A^{\top} W h + P\, x_{\mathrm{prior}} $$
+**Solving it.** Every term above is something squared, so setting the derivative
+to zero turns the whole problem into one sparse linear system. There is no
+iteration over geometry — just a solve:
 
-$$ R = \operatorname{blkdiag}\left(\lambda_a \kappa L,\ \lambda_b \kappa L\right), \qquad P = \operatorname{blkdiag}\left(\lambda_p \kappa I,\ 0\right), \qquad \kappa = \frac{m}{n} $$
+$$ \big( A^{\top} W A \;+\; R \;+\; P \big)\, x \;=\; A^{\top} W h \;+\; P\, x_{\text{prior}} $$
 
-**$\kappa$ is not cosmetic.** The data term sums over $m$ anchors while the
-smoothness term sums over $n$ nodes. Balancing per *anchor* rather than per
-*unknown* — with $m \gg n$, the normal case — buries the anchors under the
-prior and quietly collapses AGMC back to a global affine fit. Note that $b$ is
-deliberately left free of any prior: the datum is exactly what the anchors are
-there to determine.
+| symbol | what it holds |
+|---|---|
+| $x$ | the unknowns — every node's $a$, stacked on top of every node's $b$ |
+| $A$ | one row per anchor, recording which nodes it touches and by how much |
+| $W$ | how much each anchor is trusted, along the diagonal |
+| $h$ | what the anchors say, in metres |
+| $R$ | the smoothness term |
+| $P$ | the prior on $a$ |
 
-**Robustness.** IRLS with a Huber weight, which gives outlier rejection without
-a RANSAC loop:
+**One scaling detail that is not cosmetic.** Both $R$ and $P$ are multiplied by
 
-$$ w_k^{(t+1)} = w_k^{(0)} \cdot \min\left(1,\ \frac{\delta}{\left|r_k^{(t)}\right|}\right), \qquad \delta = 2.0\ \mathrm{m}, \quad 3 \text{ iterations} $$
+$$ \kappa = \frac{\text{number of anchors}}{\text{number of lattice nodes}} $$
+
+Without it the two halves of the cost are measured on different footings: the
+data term adds up over about 4000 anchors while the smoothness term adds up over
+about 1000 nodes. Smoothness then quietly wins, the fields flatten out, and AGMC
+collapses back into exactly the global affine fit it was built to replace.
+
+**Robustness.** Solve, see how far each anchor was missed by, turn down the
+weight on the ones that were missed badly, then solve again. Three passes:
+
+$$ w_k \;\leftarrow\; w_k^{\text{(initial)}} \times \min\!\left(1,\ \frac{2.0\ \mathrm{m}}{\big|\,\text{how far anchor } k \text{ was missed by}\,\big|}\right) $$
+
+An anchor the surface passes within 2 m of keeps its full weight. One missed by
+20 m keeps a tenth of it, and one missed by 200 m keeps a hundredth. That is
+what buys outlier rejection without a RANSAC loop.
 
 An anchor whose weight falls below 25% of its initial value is reported as
 *rejected*. POC pipeline runs, mean over three scenes: **3879 used, 95
@@ -486,13 +619,14 @@ rejected, residual RMSE 3.04 m**.
 **Positivity projection.** After each IRLS step the scale field is clamped and
 the offset field re-solved against the clamped scale:
 
-$$ a \leftarrow \max(a,\ a_{\min}), \quad a_{\min} = 0.05 $$
+$$ a \leftarrow \max(a,\ 0.05) $$
 
-$$ b \leftarrow \arg\min_b\ \left\| W^{1/2}\left(A_b b - (h - A_a a)\right) \right\|^2 + b^{\top} R_b\, b $$
+then $b$ is re-solved with that clamped $a$ held fixed, against whatever the
+anchors still have left to explain. It is the same least-squares problem as
+before at half the size, so it costs one extra solve per iteration.
 
-Clamping $a$ alone would leave $b$ fitted against the old scale and shift the
-whole datum, so $b$ is re-solved with $a$ held fixed — one extra linear solve
-per iteration, at half the size.
+Clamping $a$ on its own would not do: $b$ would still be fitted against the old
+scale, and the whole datum would shift.
 
 The projection exists to enforce the pipeline's own documented convention, that
 relative depth increases with height. Without it, an anchor set dominated by
@@ -509,14 +643,18 @@ n_anchors_rejected, tier)`, upsampled bilinearly to the full raster.
 
 *CPU cost: 0.3 s — 0.6% of the pipeline. The calibration engine is essentially free.*
 
-## 3.7 Uncertainty — `unnat/chhaya/uncertainty.py`
+## 3.7 Uncertainty — `ayama/chhaya/uncertainty.py`
 
 **Job.** A per-pixel σ that predicts the actual error. *A σ that does not
 predict error is decoration.*
 
 **Math.** Three independent sources, combined in quadrature:
 
-$$ \sigma^2 = \sigma_{\mathrm{calib}}^2 + \sigma_{\mathrm{model}}^2 + \sigma_{\mathrm{ref}}^2 $$
+$$ \sigma = \sqrt{\sigma_{\text{calib}}^2 + \sigma_{\text{model}}^2 + \sigma_{\text{ref}}^2} $$
+
+Independent errors combine as squares, not as a plain sum — so three separate
+2 m uncertainties give **3.5 m** in total, not 6 m. Squaring, adding, then taking
+the root is the whole of it.
 
 | term | how | why it is there |
 |---|---|---|
@@ -524,10 +662,18 @@ $$ \sigma^2 = \sigma_{\mathrm{calib}}^2 + \sigma_{\mathrm{model}}^2 + \sigma_{\m
 | $\sigma_{\mathrm{model}}$ | spread between two backbones (half the absolute difference for two) | crude, defensible, nearly free |
 | $\sigma_{\mathrm{ref}}$ | the DEM's datasheet 1σ, as a constant field | honestly explains why *absolute elevation* is less certain than *relative building height* |
 
-The bootstrap variance is accumulated by Welford, so a 4k tile × 24 resamples
-never has to be held in memory:
+The calibration term is just the spread of the $B$ bootstrap surfaces:
 
-$$ \mu_i = \mu_{i-1} + \frac{s_i - \mu_{i-1}}{i}, \qquad M_{2,i} = M_{2,i-1} + (s_i - \mu_{i-1})(s_i - \mu_i), \qquad \sigma^2_{\mathrm{calib}} = \frac{M_2}{B - 1} $$
+$$ \sigma_{\text{calib}}^2 = \frac{1}{B - 1} \sum_{i=1}^{B} \big( s_i - \bar{s} \big)^2 $$
+
+with $s_i$ the surface from the $i$-th resample and $\bar{s}$ their mean. It is
+accumulated with **Welford's running update** rather than by storing all $B$
+surfaces, so a 4k tile × 24 resamples never has to be held in memory at once:
+
+$$ \mu_i = \mu_{i-1} + \frac{s_i - \mu_{i-1}}{i} $$
+
+each new surface nudges the running mean by its own distance from it, divided by
+how many have been seen — with the running sum of squares carried alongside.
 
 Twenty-four solves of a small sparse system take seconds, which is the whole
 reason the calibration stage was kept separate and cheap.
@@ -538,7 +684,7 @@ single-solve surface. POC mean σ = **3.00 m**, of which $\sigma_{\mathrm{ref}}$
 
 *CPU cost: 8.2 s.*
 
-## 3.8 Assemble — `unnat/dsm/assemble.py`
+## 3.8 Assemble — `ayama/dsm/assemble.py`
 
 **Job.** Decompose the calibrated surface into the delivered products.
 
@@ -550,14 +696,21 @@ sources: a public DEM approximates bare earth and says nothing about a
 nothing about terrain. Keeping them apart stops each source inheriting the
 other's error.
 
-**Math.** The DTM is *extracted, not predicted*. Ground-classified pixels are
-taken at face value, carried under buildings and canopy from the nearest ground
-by a Euclidean distance transform, smoothed, and clipped so that smoothed
-terrain can never rise above measured ground:
+**Math.** The DTM is *extracted, not predicted*, in three steps:
 
-$$ \mathrm{DTM} = \min\left(G_{\sigma_{\mathrm{px}}} * \operatorname{carry}\left(\left.\mathrm{DSM}\right|_{\mathrm{ground}}\right),\ \left.\mathrm{DSM}\right|_{\mathrm{ground}}\right), \qquad \sigma_{\mathrm{px}} = \max\left(1,\ \frac{30\ \mathrm{m}}{3g}\right) $$
+1. **Keep** the pixels the segmentation calls ground; mark every other pixel unknown.
+2. **Carry** the nearest known ground value in under every building and tree
+   (a Euclidean distance transform finds "nearest" for every unknown pixel at once).
+3. **Smooth** with a Gaussian of roughly 30 m radius, then **clip**:
 
-$$ \mathrm{nDSM} = \max\left(\mathrm{DSM} - \mathrm{DTM},\ 0\right) $$
+$$ \mathrm{DTM} = \min\big( \underbrace{\text{smoothed carried ground}}_{\text{our estimate}},\ \ \underbrace{\text{measured ground}}_{\text{what we actually saw}} \big) $$
+
+$$ \mathrm{nDSM} = \max\big( \mathrm{DSM} - \mathrm{DTM},\ \ 0 \big) $$
+
+Both of those outer functions are guards rather than decoration. The `min` stops
+a smoothed hilltop from floating above ground that was genuinely observed; the
+`max` stops a height above ground from going negative, which would describe a
+building sunk into the earth rather than standing on it.
 
 This is the classic morphological approach and it is honest about its limit: it
 will under-estimate terrain inside a very large building footprint, because no
@@ -567,10 +720,10 @@ evidence of the ground there exists in the image.
 
 *CPU cost: 0.5 s.*
 
-## 3.9 Artifacts — `unnat/dsm/cog.py`
+## 3.9 Artifacts — `ayama/dsm/cog.py`
 
 Every raster is written as a **Cloud-Optimised GeoTIFF that opens in QGIS
-without UNNAT installed**, tagged with provenance.
+without ĀYĀMA installed**, tagged with provenance.
 
 | file | contents | units |
 |---|---|---|
@@ -591,7 +744,7 @@ can never be mistaken for a measurement.
 
 *CPU cost: 4.5 s.*
 
-## 3.10 Validation — `unnat/eval/metrics.py`
+## 3.10 Validation — `ayama/eval/metrics.py`
 
 **Job.** Compare against a reference DSM **and against two baselines**, neither
 of which is decoration:
@@ -604,34 +757,71 @@ of which is decoration:
   model contribute anything at all, or is this an expensive DEM interpolator?"*
   **A result that does not clear the floor is not a result.**
 
-**Math.**
+**Math.** Let $d$ be the error at one pixel — what we predicted minus what is
+actually there:
 
-$$ \mathrm{MAE} = \overline{|d|}, \qquad \mathrm{RMSE} = \sqrt{\overline{d^2}}, \qquad \mathrm{bias} = \bar{d}, \qquad d = \hat{H} - H^{*} $$
+$$ d = \hat{H} - H^{*} $$
 
-`bias` separates a wrong datum from a wrong model: a systematic offset is
-fixable in one line, random error is not.
+Everything else is a different way of averaging that one number:
+
+| metric | in words | what it is sensitive to |
+|---|---|---|
+| **MAE** | mean of $\lvert d \rvert$ | the typical error size |
+| **RMSE** | square root of the mean of $d^2$ | the same, but a few large errors count far more |
+| **bias** | mean of $d$, keeping its sign | a systematic offset, since equal +/− errors cancel |
+
+`bias` is the one that separates a wrong datum from a wrong model: a systematic
+offset is fixable in one line, random error is not. MAE and RMSE cannot tell
+those two apart — a surface 5 m too high everywhere and a surface scattered
+randomly by 5 m score the same on both.
 
 **Edge F1** — building outlines are where monocular height estimation actually
 fails, and a pixelwise MAE hides that. Height discontinuities above the 92nd
 percentile of gradient magnitude are matched within a 2 px tolerance band:
 
-$$ E(z) = \left[\|\nabla z\| > P_{92}\left(\|\nabla z\|\right)\right], \qquad F_1 = \frac{2PR}{P + R} \quad \text{with dilation tolerance } \pm 2\ \mathrm{px} $$
+1. Call a pixel an **edge** where the surface is in the steepest 8% of the
+   scene — above the 92nd percentile of slope magnitude.
+2. Do that twice: once on the prediction, once on the truth.
+3. A predicted edge counts as correct if a true edge lies within **2 pixels** of
+   it, and the two directions are combined in the usual way:
+
+$$ F_1 = \frac{2 \times \text{precision} \times \text{recall}}{\text{precision} + \text{recall}} $$
+
+where precision asks "of the edges we drew, how many were real?" and recall asks
+"of the real edges, how many did we draw?".
 
 **Reliability** — the honest test of σ. For a Gaussian, coverage should sit near
 0.68:
 
-$$ \mathrm{cov}_{1\sigma} = \overline{\left[|d| \le \sigma\right]}, \qquad \mathrm{ECE} = \frac{1}{N}\sum_{\mathrm{bins}} n_i \left| \sqrt{\overline{d_i^2}} - \bar{\sigma}_i \right| $$
+$$ 1\sigma \text{ coverage} = \text{the fraction of pixels where } |d| \le \sigma $$
 
-ECE is returned **in metres**, so it reads directly: "our error bars are off by
-2.4 m on average".
+If σ is telling the truth this should land near **0.68**, because that is the
+fraction of a Gaussian lying within one standard deviation of its centre.
+
+ECE asks a sharper question. Sort every pixel into ten bins by the σ it was
+*promised*, and in each bin compare that promise against the error actually
+observed:
+
+$$ \mathrm{ECE} = \text{average over pixels of } \big| \underbrace{\text{actual RMS error in the bin}}_{\text{what happened}} - \underbrace{\text{mean promised } \sigma}_{\text{what was claimed}} \big| $$
+
+Coverage can look right while ECE is bad — that happens when σ is the correct
+size on average but is large in the wrong places. ECE comes back **in metres**,
+so it reads directly: "our error bars are off by 2.4 m on average".
 
 **Slope** and **δ < 1.25**:
 
-$$ \mathrm{slope} = \arctan\sqrt{\left(\frac{\partial z}{\partial x}\right)^2 + \left(\frac{\partial z}{\partial y}\right)^2}, \qquad \delta_1 = \overline{\left[\max\left(\frac{\hat{h}}{h^{*}},\ \frac{h^{*}}{\hat{h}}\right) < 1.25\right]} $$
+$$ \text{slope} = \arctan\big( \text{how steep the surface is at that pixel} \big) $$
 
-$\delta_1$ is computed on **heights above ground**, not elevation — a ratio
-metric is meaningless on absolute elevation, where a 400 m datum makes every
-ratio 1.0.
+$$ \delta_1 = \text{fraction of pixels whose predicted height is within } \pm 25\% \text{ of the truth} $$
+
+Precisely, $\delta_1$ counts a pixel as correct when the ratio between predicted
+and true height — taken whichever way up makes it bigger than 1 — stays under
+1.25. So a 10 m building passes if it is predicted anywhere between 8 m and
+12.5 m.
+
+It is computed on **heights above ground**, never on elevation. A ratio metric
+is meaningless on absolute elevation, where a 400 m datum swamps a 12 m building
+and makes every ratio 1.0.
 
 **Output.** `summary.json`, `error.tif`, and the per-class breakdown.
 
@@ -954,7 +1144,10 @@ The scale field is **pinned at its floor `a_min = 0.05` at every single lattice
 node**. Since $D \in [0,1]$, the maximum relief the depth model can contribute
 to the output is
 
-$$ a_{\min} \cdot \operatorname{ptp}(D) = 0.05 \times 1.0 = \mathbf{0.05\ m} $$
+$$ \underbrace{0.05}_{\text{metres per unit of depth}} \times \underbrace{1.0}_{\text{the full range of } D} = \mathbf{0.05\ m} $$
+
+In other words: even a pixel the depth model ranks as the highest in the entire
+scene can only be lifted 5 cm above the lowest one.
 
 which is exactly the 0.05 m mean building height observed. Meanwhile the offset
 field $b$, which carries **no prior** and is free to move, spans 21.62 m and
@@ -1050,9 +1243,26 @@ fires when the headline number is flattering.
 **Split the depth field by spatial frequency before calibration, and let each
 band be anchored by the source that actually knows about it.**
 
-$$ D = D_{\mathrm{lf}} + D_{\mathrm{hf}}, \qquad D_{\mathrm{lf}} = G_{\sigma} * D, \quad \sigma \approx \frac{60\ \mathrm{m}}{3g} $$
+Blur the depth field heavily — a Gaussian of roughly 60 m radius — to get its
+large-scale part, then subtract that off to see what is left:
 
-$$ H(x,y) = \underbrace{b(x,y)}_{\text{terrain, from DEM/GCP/water anchors}} \;+\; \underbrace{a(x,y)\, D_{\mathrm{hf}}(x,y)}_{\text{structure, from shadow/object anchors}} $$
+$$ D_{\text{smooth}} = \text{blur}(D), \qquad D_{\text{detail}} = D - D_{\text{smooth}} $$
+
+$D_{\text{smooth}}$ is where the backbone's perspective ramp lives, and it is the
+part that is **wrong**. Throw it away. $D_{\text{detail}}$ is the buildings and
+the trees, and it is the part that is right. Then build the surface from two
+sources, each responsible for the band it actually knows about:
+
+$$ H(x,y) = \underbrace{b(x,y)}_{\text{terrain}} \;+\; \underbrace{a(x,y) \times D_{\text{detail}}(x,y)}_{\text{structure}} $$
+
+- **terrain** ($b$) is fitted against the DEM, GCP and water anchors, which know
+  about the ground and nothing else.
+- **structure** ($a$) is fitted against the shadow anchors, which know about
+  building height and nothing else.
+
+The key change is what $a$ is now fitted against. Today it must serve the
+terrain and the buildings at once, and the 3840 terrain anchors win. Here it
+never sees the terrain at all.
 
 The low-frequency band — which is where the backbone's perspective ramp lives
 and where it is *wrong* — is simply **discarded**, not fitted. The terrain comes
@@ -1063,7 +1273,7 @@ anchors generally.
 
 This is not a new subsystem. The contracts already anticipate it —
 `DepthField.terrain`, `DepthField.objects` and `DepthField.has_branches` exist
-in [`unnat/core/types.py`](unnat/core/types.py) and are currently unused. The
+in [`ayama/core/types.py`](ayama/core/types.py) and are currently unused. The
 `branch` field on `Anchor` (`"terrain"` / `"object"` / `"absolute"`) already
 carries the routing information. What is missing is the split itself and the
 routing of anchors to bands.
@@ -1183,7 +1393,7 @@ Recommended, and cheap to implement:
 | 6 | Trained segmentation model to replace the heuristic | 2–4 weeks | better gate, better shadow attribution |
 | 7 | Real imagery with a reference DSM | procurement | the only way to make any external claim |
 
-Items 1–4 are the critical path and are all inside `unnat/chhaya/`.
+Items 1–4 are the critical path and are all inside `ayama/chhaya/`.
 
 ---
 
@@ -1208,7 +1418,7 @@ The reason is the same one that makes every raster a COG and keeps torch out of
 the core install: *the deliverable has to work for someone who will not install
 anything first.* A Vite app needs `npm install` before it will render at all,
 which puts a network round-trip and a toolchain between a reviewer and the
-result. `python -m unnat.cli viewer <run>` is the entire toolchain here, and it
+result. `python -m ayama.cli viewer <run>` is the entire toolchain here, and it
 works offline.
 
 The cost is real and worth naming: about 300 lines of matrix, shader and camera
@@ -1251,7 +1461,7 @@ flowchart LR
 
 ## 7.3 Phase 3 — what each part does
 
-### Encoding — `unnat/mesh/encode.py`
+### Encoding — `ayama/mesh/encode.py`
 
 A browser cannot read a float32 GeoTIFF, so elevation is packed into 8-bit
 channels. Getting this wrong produces a plausible surface that is not the one
@@ -1261,9 +1471,20 @@ there are two encodings and the choice between them is arithmetic, not taste.
 **Terrain-RGB** (the Mapbox convention, used for the DSM because other tools
 already read it):
 
-$$ v = \left\lfloor \frac{h - h_0}{\Delta} \right\rceil, \qquad h = h_0 + v\,\Delta, \qquad h_0 = -10000\ \mathrm{m},\ \ \Delta = 0.1\ \mathrm{m} $$
+Count how many 10 cm steps the height sits above −10 000 m, then write that
+whole number across the three colour channels as if it were a three-digit
+numeral in base 256:
 
-$$ R = \left\lfloor v / 65536 \right\rfloor, \quad G = \left\lfloor v / 256 \right\rfloor \bmod 256, \quad B = v \bmod 256 $$
+$$ v = \text{round}\!\left( \frac{h + 10000}{0.1} \right), \qquad h = -10000 + 0.1 \times v $$
+
+$$ v = R \times 65536 \;+\; G \times 256 \;+\; B $$
+
+**Worked example.** For h = 400.0 m: v = round(10400 / 0.1) = 104 000, which
+splits into R = 1, G = 150, B = 64. Decoding it again:
+1×65536 + 150×256 + 64 = 104 000, and −10000 + 0.1×104 000 = **400.0 m**.
+
+The −10 000 m offset exists so that below-sea-level heights still land on a
+positive number, and 0.1 m is the step every other tool assumes.
 
 Fixed step, absolute, interoperable — and the clamp to $[0, 2^{24}-1]$ is
 load-bearing: an unclamped pack would *wrap* a 40 000 m value round to a small
@@ -1272,7 +1493,17 @@ one and render it as ordinary terrain. Saturating is visible; wrapping is not.
 **24-bit linear** (used for nDSM, σ and error), with the range carried in the
 manifest:
 
-$$ v = \left\lfloor \frac{a - a_{\min}}{a_{\max} - a_{\min}} \left(2^{24} - 1\right) \right\rceil, \qquad \text{step} = \frac{a_{\max} - a_{\min}}{2^{24} - 1} $$
+$$ v = \text{round}\!\left( \underbrace{\frac{a - a_{\min}}{a_{\max} - a_{\min}}}_{\text{where it sits in the range, } 0 \ldots 1} \times \; 16\,777\,215 \right) $$
+
+The value's position within the layer's **own** range is spread across the full
+24-bit code space, so the step is whatever that range divided by 16 777 215
+happens to be:
+
+$$ \text{step} = \frac{a_{\max} - a_{\min}}{16\,777\,215} $$
+
+**Worked example.** The nDSM layer runs 0 → 0.28 m, so one code is
+0.28 / 16 777 215 ≈ **1.7 × 10⁻⁸ m**. Terrain-RGB's fixed 0.1 m step would give
+that same layer only three usable levels.
 
 **Why both, measured on this run.** Phase 2's nDSM spans 0.28 m in total. At
 Terrain-RGB's fixed 0.1 m step that is *three* quantisation levels — the viewer
@@ -1293,7 +1524,18 @@ byte order — and a test asserts they do not.
 
 ### Normals — `encode.normal_map`
 
-$$ \mathbf{n} = \frac{\left(-\partial z/\partial x,\ \ \partial z/\partial y,\ \ 1\right)}{\left\| \cdot \right\|}, \qquad \mathrm{RGB} = \left\lfloor \frac{\mathbf{n} + 1}{2}\,255 \right\rceil $$
+$$ \mathbf{n} = \frac{\big(-\,\text{slope going east},\ \ \text{slope going south},\ \ 1\big)}{\text{its own length}} $$
+
+Dividing by the length makes it a unit vector — direction only, no magnitude. A
+flat pixel has zero slope both ways, so its normal is (0, 0, 1): straight up.
+
+A normal's components run −1 to +1 while a PNG channel runs 0 to 255, so each is
+shifted up by one and halved before scaling:
+
+$$ \text{channel} = \text{round}\!\left( \frac{n + 1}{2} \times 255 \right) $$
+
+which places "straight up" at RGB (128, 128, 255) — the familiar lavender of a
+normal map.
 
 The sign on the second component is the raster convention showing up again:
 `+row` is south, so the north-facing component flips to reach a right-handed
@@ -1305,7 +1547,7 @@ height grid, so shading derived from those vertices would lose exactly the
 detail the LOD dropped. Full-resolution normals keep fine structure visible at
 every zoom.
 
-### Tiling — `unnat/mesh/tiles.py`
+### Tiling — `ayama/mesh/tiles.py`
 
 Interiors partition the raster exactly — every pixel owned once, no overhang,
 short tiles at the right and bottom edges. Each tile additionally reads `pad`
@@ -1315,7 +1557,7 @@ pixels of its **neighbours**:
 > Without that row the gradient is one-sided, every tile boundary picks up a
 > faint ridge, and in 3D those ridges read as real terrain.
 
-This is the same seam problem [`depth/infer.py`](unnat/depth/infer.py) solves
+This is the same seam problem [`depth/infer.py`](ayama/depth/infer.py) solves
 for inference chips, but the fix is different and simpler. Inference chips
 overlap and are *blended* because neighbouring chips genuinely disagree;
 delivery tiles are cut from one already-consistent raster, so the halo is used
@@ -1332,7 +1574,7 @@ DSM mixes rooftops with the ground beside them and invents elevations that exist
 nowhere on the surface; a decimated DSM is a real subset of measured heights.
 Imagery is a different case, so the texture is resampled bilinearly by PIL.
 
-### Mesh export — `unnat/mesh/obj.py`
+### Mesh export — `ayama/mesh/obj.py`
 
 The viewer is the demo; the OBJ is the deliverable. It opens in Blender,
 MeshLab and CloudCompare with no plugin — the same reasoning as writing COGs.
@@ -1403,21 +1645,121 @@ defect visible; it does not fix it, and the note says that too.
 
 ## 7.5 Measured, on the real Phase 2 CPU run
 
-`python -m unnat.cli mesh results/seed7/run` — the run the README reports in §4:
+There is a benchmark for this, and it writes its own evidence:
+
+```bash
+python -m ayama.cli delivery results/seed7/run --out results
+```
+
+Full numbers in **[results/DELIVERY.md](results/DELIVERY.md)**, raw data in
+[`results/delivery.json`](results/delivery.json). Everything below is measured
+against the seed7 run the README reports in §4 — 1024 × 1024 px at 0.5 m — and
+the whole benchmark takes **68 s** on CPU.
+
+### Phase 3, building
 
 | | |
 |---|---|
-| Input | 1024 × 1024 px at 0.5 m (512 × 512 m), EPSG:32644 |
-| LODs | 4 (1024 / 512 / 256 / 128 px), **7 tiles** of 512 px with 1 px pad |
-| Layers | dsm · ndsm · sigma · error · normal · texture |
-| Mesh | 262 144 vertices, **522 242 triangles** at stride 2 |
-| Build time | **3.3 s** tiles only, **6.7 s** including the OBJ (CPU) |
-| Metrics carried through | MAE 3.394 m, edge F1 0.276, 1σ coverage 0.650, Tier A, 3982 anchors |
+| tileset, tiles only | **2.59 s** (0.40 Mpix/s) |
+| tileset, with the OBJ | **5.07 s** (the OBJ alone is 2.47 s) |
+| output | 4 LODs, 7 tiles, 43.1 MB |
+| round trip | **16/16** layer-LOD pairs within half an encoding step |
 
-All of which match §4's seed7 numbers exactly, because they are the same
-numbers — the manifest reads them out of `study.json` rather than recomputing.
+> Build timings are disk-bound. The same 139 MB OBJ took 36 s written to a
+> scratch directory and 205 s written inside the checkout on this machine, once
+> an on-access virus scanner got involved. Every timed build in the benchmark
+> uses one location for that reason, and the report records which.
 
-**Where the bytes go**, and it is not where you would guess:
+**PNG compression is the whole cost.** Packing pixels runs at
+33 Mpix/s; compressing them runs at
+3 Mpix/s. In a full build the three
+PNG-writing stages take 79%
+of the time and the encoding arithmetic takes 2%.
+Nothing in `encode.py` is worth optimising until the compressor is.
+
+**Tile size barely matters.** Across a 21× range in file count
+(24 to 510 files, tiles of
+1024 px down to 128 px) the payload
+moves by 0.8%
+— 9.08 to 9.15 MB. Per-file PNG
+overhead was expected to punish small tiles and does not, because pixel data
+dominates either way. Tile size is therefore free to be chosen for culling and
+request count rather than for bytes; 512 keeps the file count in double digits.
+
+**The OBJ is a text format and it shows.**
+
+| stride | triangles | seconds | size | bytes/triangle |
+|---|---|---|---|---|
+| 1 | 2,093,058 | 9.59 | 139.1 MB | 66 |
+| 2 (default) | 522,242 | 2.40 | 33.6 MB | 64 |
+| 4 | 130,050 | 0.55 | 7.8 MB | 60 |
+| 8 | 32,258 | 0.14 | 1.8 MB | 57 |
+
+At ~64 bytes a triangle the mesh is
+79% of the tileset. That is the
+argument for glTF, and why `--obj-stride` and `--no-mesh` exist.
+
+### Phase 4, the viewer's CPU
+
+Measured against the real `web/app.js` under node, best of five with a warm-up.
+**GPU rasterisation is not measured and is not claimed** — this is the work the
+browser does before a triangle is drawn.
+
+| | ms |
+|---|---|
+| decode terrain-rgb, whole scene | 4.3 |
+| decode linear, whole scene | 4.1 |
+| build geometry, one tile | 2.5 |
+| re-colour, one tile | 1.9 |
+| render the side panel (jsdom) | 3.4 |
+| **CPU before first paint, whole scene** | **35** |
+
+Decode runs at about 244 Mpix/s
+in JavaScript. First paint fetches **4.34 MB** —
+geometry, normals, the default drape and the two layers the cursor readout needs
+— and spends **35 ms** of CPU turning it into
+buffers. A layer switch costs 7 ms.
+
+One free win the benchmark found: reusing the output buffer instead of
+allocating a fresh `Float32Array` per tile per layer is
+**20% faster**
+(3.4 ms against
+4.3 ms). The viewer does not do
+this yet.
+
+### What full precision costs
+
+The linear encoding spends all 24 bits, so its low byte is incompressible noise.
+Keeping only the top N bits — which is what a narrower field really stores —
+makes the rest compress:
+
+| layer | 24-bit | 12-bit | worst error at 12-bit | its own range |
+|---|---|---|---|---|
+| ndsm | 1436 kB | **579 kB** | 9.3e-05 m | 0.276 m |
+| sigma | 2416 kB | **476 kB** | 1.6e-05 m | 0.0445 m |
+| error | 2368 kB | **407 kB** | 0.021 m | 57.7 m |
+
+**12 bits resolves every layer to better than 0.1% of its own range and takes
+the linear layers from 6.22 MB to 1.46 MB — a
+76% saving.** That is now a measurement
+rather than the guess this section used to carry, and it is the next delivery
+change.
+
+Getting there took two wrong answers, both worth recording because the byte
+count alone endorsed both:
+
+- Stepping by fractions of the mean σ (3 m) instead of by each layer's own range
+  "saved" 99.8% on nDSM — by rounding a layer that spans 0.276 m with a 0.75 m
+  step, flattening it to a constant. **A saving that deletes the measurement is
+  not a saving**, and only the max-error column showed it.
+- Rounding in *value* space and re-encoding left the low byte noisy through
+  floating-point jitter, and produced a **larger** file at 12 bits than at 16 —
+  which is impossible if the low bits are really constant.
+
+Both are now pinned by tests in
+[`tests/test_delivery_contract.py`](tests/test_delivery_contract.py).
+
+### Where the bytes go
 
 | | size | share |
 |---|---|---|
@@ -1430,35 +1772,28 @@ numbers — the manifest reads them out of `study.json` rather than recomputing.
 | normal tiles | 0.09 MB | 0.2% |
 | **total** | **43.1 MB** | |
 
-**The DSM is 23× smaller than the σ layer while covering a 18 m range against
-σ's 0.04 m.** The cause is the encoding: Terrain-RGB's 0.1 m step leaves a
-smooth surface with few distinct codes and a nearly constant low byte, which PNG
-compresses hard. The 24-bit linear encoding spends every bit, so its low byte is
-incompressible noise. Full precision costs roughly 20× the bytes.
-
-That is a fair trade for nDSM here, where 0.1 m quantisation would destroy the
-layer outright. It is a bad trade for σ, whose own value is 3 m and which is
-being stored to 2.65 nanometres. **Quantising each linear layer to its own
-uncertainty rather than to 24 bits would cut the tileset by roughly half**, and
-it is the obvious next change — it is listed in the roadmap, not done.
-
-The OBJ dominating at 79% is a separate issue: a text format at stride 2. Both
-`--obj-stride 4` and `--no-mesh` are flags for exactly this.
+The DSM layer is **24× smaller
+than the σ layer** while covering an 18 m range against σ's 0.04 m. Terrain-RGB's
+0.1 m step leaves a smooth surface with few distinct codes and a nearly constant
+low byte, which PNG crushes; the 24-bit linear encoding spends every bit, so its
+low byte is noise. That is the same finding the precision table quantifies.
 
 ## 7.6 Testing
 
-45 new tests, and the suite now runs **133 passed, 7 skipped** in 67 s on CPU.
+61 new tests, and the suite now runs **149 passed, 7 skipped** in about 2 min on CPU.
 
 | file | what it holds down |
 |---|---|
 | [`tests/test_mesh.py`](tests/test_mesh.py) | 23 tests: encoding round-trips, saturation-not-wrapping, normals, tiling coverage, seam equality, OBJ geometry |
 | [`tests/test_viewer.py`](tests/test_viewer.py) | 22 tests: manifest contract, decoded tiles equal their source raster at every LOD, notes fire correctly, and the Python↔JavaScript contract |
+| [`tests/test_delivery_contract.py`](tests/test_delivery_contract.py) | 16 tests: the benchmark's shape, its self-consistency, and that a sweep cannot report a saving which is really a deleted measurement |
 | [`scripts/check_app.js`](scripts/check_app.js) | executes the page under jsdom |
+| [`scripts/bench_viewer.js`](scripts/bench_viewer.js) | times the real `web/app.js` under node |
 
 Three of these are worth calling out because they exist to catch failures
 nothing else would notice.
 
-**The two decoders must agree.** `web/app.js` and `unnat/mesh/encode.py` are
+**The two decoders must agree.** `web/app.js` and `ayama/mesh/encode.py` are
 independent implementations of one packing. If they drift, the viewer renders a
 confidently wrong surface and no other test fails. So the constants are asserted
 to match textually from Python, and `check_app.js` decodes a known 24-bit code
@@ -1471,6 +1806,11 @@ asserts the page still explains itself and still fills every panel.
 **The flat-surface note must survive.** A test asserts the critical note reaches
 the DOM, because the entire point of §5 being visible in the viewer is that it
 cannot be quietly dropped.
+
+**A benchmark must not be able to flatter itself.** The delivery contract tests
+exist because the quantisation sweep twice produced a number that looked like a
+win and was not — once by deleting a layer, once by a non-monotonic byte count.
+Both failure modes are now assertions, not comments.
 
 Both phases are wired into CI and `scripts/harness.sh`, building the tileset
 from the smoke-test run rather than from a fixture so the tested path is the
@@ -1519,7 +1859,7 @@ entire path with no weights at all — a plumbing check, never a result.
 Everything in [§4](#4-findings-cpu-poc), on CPU, in **450 s**:
 
 ```bash
-python -m unnat.cli study --out results
+python -m ayama.cli study --out results
 ```
 
 Writes `results/study.json` (every number in this document),
@@ -1529,7 +1869,7 @@ Writes `results/study.json` (every number in this document),
 Then, without re-running inference:
 
 ```bash
-python -m unnat.cli figures --study results/study.json    # 6 figures (PNG 300dpi + PDF) + 3 LaTeX tables
+python -m ayama.cli figures --study results/study.json    # 6 figures (PNG 300dpi + PDF) + 3 LaTeX tables
 ```
 
 ## 8.3 Reproduce the §5 diagnosis
@@ -1539,12 +1879,12 @@ The scale-field collapse is checkable in one command from a completed study:
 ```bash
 python - <<'PY'
 import numpy as np, rasterio
-from unnat.core.ingest import ingest
-from unnat.core.types import Config, DepthField, Tier
-from unnat.chhaya.agmc import solve_agmc, global_affine
-from unnat.chhaya.ladder import build_anchors
-from unnat.eval.simulate import simulate_public_dem
-from unnat.measure.derive import slope_deg
+from ayama.core.ingest import ingest
+from ayama.core.types import Config, DepthField, Tier
+from ayama.chhaya.agmc import solve_agmc, global_affine
+from ayama.chhaya.ladder import build_anchors
+from ayama.eval.simulate import simulate_public_dem
+from ayama.measure.derive import slope_deg
 
 scene = ingest('results/seed7/scene.tif')
 rd  = rasterio.open('results/seed7/run/relative_depth.tif').read(1)
@@ -1580,33 +1920,56 @@ One command from a finished run to a 3D view in a browser. No build step, no
 package manager, no network:
 
 ```bash
-python -m unnat.cli viewer results/seed7/run        # builds the tileset, then serves it
+python -m ayama.cli viewer results/seed7/run        # builds the tileset, then serves it
 ```
 
 It opens `http://localhost:8020/`, and prints the flat-surface note to the
 terminal on the way past. To build the tileset without serving it:
 
 ```bash
-python -m unnat.cli mesh results/seed7/run --out out/tiles3d_seed7
-python -m unnat.cli mesh results/seed7/run --obj-stride 4     # a lighter mesh
-python -m unnat.cli mesh results/seed7/run --no-mesh          # tiles only, 3.3 s
+python -m ayama.cli mesh results/seed7/run --out out/tiles3d_seed7
+python -m ayama.cli mesh results/seed7/run --obj-stride 4     # a lighter mesh
+python -m ayama.cli mesh results/seed7/run --no-mesh          # tiles only, 3.3 s
 ```
 
 `mesh/surface.obj` opens in Blender, MeshLab or CloudCompare with no plugin.
 Raise the vertical exaggeration in any of them, or in the viewer, to see what
 §5 looks like from the side.
 
-## 8.5 Individual commands
+## 8.5 Measure Phase 3 and 4 on your own machine
+
+The delivery counterpart to `study`: one command, a JSON file holding every
+number, and a markdown report rendered from that JSON so the two cannot
+disagree.
 
 ```bash
-python -m unnat.cli doctor --load dav2-vits                      # is this machine ready, and how fast
-python -m unnat.cli synth  --out data/scene.tif --size 2048      # town + known DSM + ray-marched shadows
-python -m unnat.cli info   data/scene.tif                        # everything we can read about an image
-python -m unnat.cli depth  data/scene.tif --out out/depth.tif --preview
-python -m unnat.cli run    data/scene.tif --out out/run \
+python -m ayama.cli delivery results/seed7/run --out results     # about 70 s on CPU
+```
+
+Writes [`results/delivery.json`](results/delivery.json) and
+[`results/DELIVERY.md`](results/DELIVERY.md), and rebuilds `results/tileset/`
+(gitignored — it regenerates in seconds). Useful flags:
+
+```bash
+--tiles 256,512            # which tile sizes to sweep
+--obj-strides 2,4          # skip the 139 MB full-resolution mesh
+--work-dir /fast/scratch   # where timed builds are written; see the caveat in 7.5
+```
+
+The exit status is non-zero if any layer fails its round-trip check, so it can
+be used as a gate rather than only as a report.
+
+## 8.6 Individual commands
+
+```bash
+python -m ayama.cli doctor --load dav2-vits                      # is this machine ready, and how fast
+python -m ayama.cli synth  --out data/scene.tif --size 2048      # town + known DSM + ray-marched shadows
+python -m ayama.cli info   data/scene.tif                        # everything we can read about an image
+python -m ayama.cli depth  data/scene.tif --out out/depth.tif --preview
+python -m ayama.cli run    data/scene.tif --out out/run \
     --dem sim:data/scene_dtm.tif --ref data/scene_dsm.tif --json out/run.json
-python -m unnat.cli bench  --backbones dav2-vits --chips 512,1024 --batches 1,2,4
-python -m unnat.cli ablate data/scene.tif --ref data/scene_dsm.tif --dem sim:data/scene_dtm.tif
+python -m ayama.cli bench  --backbones dav2-vits --chips 512,1024 --batches 1,2,4
+python -m ayama.cli ablate data/scene.tif --ref data/scene_dsm.tif --dem sim:data/scene_dtm.tif
 ```
 
 **Full harness in one command:** `bash scripts/harness.sh` — doctor, tests,
@@ -1616,27 +1979,27 @@ Long runs report live: an interactive terminal gets a single rewritten line with
 a bar, rate, ETA and VRAM; a notebook or log gets timestamped lines instead.
 `--progress rich|plain|none` overrides the detection.
 
-## 8.6 On a GPU box
+## 8.7 On a GPU box
 
 Nothing in this document depends on it, but the path exists:
 
 ```bash
-python -m unnat.cli study --out results --backbone dav2-vitl \
+python -m ayama.cli study --out results --backbone dav2-vitl \
     --device cuda --batch 0 --size 2048
 ```
 
 See [docs/GPU.md](docs/GPU.md) for the GPU box, Docker and Colab paths.
 
-## 8.7 Tests
+## 8.8 Tests
 
 ```bash
-python -m pytest tests -q                 # 133 passed, 7 skipped (GPU) in 67 s
+python -m pytest tests -q                 # 149 passed, 7 skipped (GPU)
 python -m pytest tests -q -m gpu -v       # GPU-only, on the GPU box
-python -m pytest tests/test_mesh.py tests/test_viewer.py -q     # Phase 3 and 4 only
+python -m pytest tests/test_mesh.py tests/test_viewer.py \n                tests/test_delivery_contract.py -q              # Phase 3 and 4 only
 ```
 
 The viewer is additionally executed headlessly, which is the only check that
-catches `web/app.js` and `unnat/mesh/encode.py` disagreeing about the encoding:
+catches `web/app.js` and `ayama/mesh/encode.py` disagreeing about the encoding:
 
 ```bash
 npm install jsdom                                    # once, anywhere on the path
@@ -1647,7 +2010,7 @@ Everything above also runs from `bash scripts/harness.sh` and in
 `.github/workflows/tests.yml`, where the tileset is built from the smoke-test
 run rather than a fixture, so CI walks the same path a user does.
 
-## 8.8 Site
+## 8.9 Site
 
 `site/` is a static page that renders `results/study.json` — it invents nothing,
 so re-running the study and pushing updates every number and image on it.
@@ -1681,7 +2044,7 @@ touches a control. With that in place the delivery layer became the fastest way
 to *see* §5 rather than a way to paper over it, and it is now the thing that
 will show P2.5 working the moment it lands.
 
-The immediate queue is still §6.4 items 1-4, all inside `unnat/chhaya/`.
+The immediate queue is still §6.4 items 1-4, all inside `ayama/chhaya/`.
 Next for delivery, in order: quantise linear layers to their own uncertainty
 (roughly halves the tileset, per §7.5), glTF instead of OBJ, and real tile
 streaming.
@@ -1693,7 +2056,7 @@ streaming.
 ## 10.1 Layout
 
 ```
-unnat/
+ayama/
   core/        types.py (the contracts), geo.py, solar.py, ingest.py, progress.py
   depth/       backbones/{base,hf,synthetic}.py, infer.py
   semantics/   segment.py (heuristic or raster), shadow.py
@@ -1709,27 +2072,27 @@ web/           index.html, app.js, style.css - the 3D viewer,
                vanilla WebGL, no build step                         (P4)
 scripts/       setup_gpu.sh, setup.ps1, harness.sh, serve.py, check_site.js,
                check_app.js
-notebooks/     unnat_gpu_harness.ipynb (Colab)
+notebooks/     ayama_gpu_harness.ipynb (Colab)
 results/       study.json + per-seed artifacts + figures
 ```
 
 Two deviations from the spec's layout, both deliberate.
 
-A single importable `unnat` package instead of `packages/unnat.core/` and
-friends. Import paths are exactly as specified (`unnat.core.ingest`,
-`unnat.chhaya.agmc`); directory names with dots are not importable.
+A single importable `ayama` package instead of `packages/ayama.core/` and
+friends. Import paths are exactly as specified (`ayama.core.ingest`,
+`ayama.chhaya.agmc`); directory names with dots are not importable.
 
 `web/` is vanilla HTML/CSS/JS with a hand-written WebGL renderer rather than
 React + Vite + Three.js, so the viewer needs no `npm install` to run. The
 reasoning and its cost are in [§7.1](#71-one-deviation-from-the-spec-stated-up-front).
 
 **If a reviewer asks "show me your method", open
-[`unnat/api/pipeline.py`](unnat/api/pipeline.py)** — the whole thing is one
+[`ayama/api/pipeline.py`](ayama/api/pipeline.py)** — the whole thing is one
 readable function.
 
 ## 10.2 Contracts
 
-[`unnat/core/types.py`](unnat/core/types.py) is the interface between
+[`ayama/core/types.py`](ayama/core/types.py) is the interface between
 workstreams. Every stage is a pure function `stage(input) -> output`, no
 globals — which is what makes the ablation table cheap to generate, and why
 `ablate` can run inference once and re-solve only the calibration for every
@@ -1760,7 +2123,7 @@ variant.
 
 ## Summary
 
-UNNAT's Phase-2 proof of concept establishes, on CPU and reproducibly:
+ĀYĀMA's Phase-2 proof of concept establishes, on CPU and reproducibly:
 
 - The pipeline **runs end to end in 46.7 s per scene** with no GPU, emitting
   QGIS-ready COGs with provenance.

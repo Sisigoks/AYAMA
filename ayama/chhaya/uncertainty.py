@@ -13,7 +13,7 @@ sigma_ref     the reference DEM's own vertical accuracy, from its datasheet.
               less certain than relative building height, and saying so out
               loud reads as rigour rather than weakness.
 
-A sigma that does not predict error is decoration. `unnat.eval.metrics` reports
+A sigma that does not predict error is decoration. `ayama.eval.metrics` reports
 ECE and one-sigma coverage precisely so this one can be shown not to be.
 """
 from __future__ import annotations

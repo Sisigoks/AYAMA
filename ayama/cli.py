@@ -1,8 +1,8 @@
-"""UNNAT command line.
+"""AYAMA command line.
 
-    python -m unnat.cli info   data/sample.tif
-    python -m unnat.cli depth  data/sample.tif --out out/depth.tif
-    python -m unnat.cli backbones
+    python -m ayama.cli info   data/sample.tif
+    python -m ayama.cli depth  data/sample.tif --out out/depth.tif
+    python -m ayama.cli backbones
 
 Phase 2 adds `run` (full pipeline with calibration and metrics).
 """
@@ -103,8 +103,8 @@ def cmd_depth(args) -> int:
 
     out = write_cog(
         args.out, rel, scene.meta, description="relative depth (unitless, higher = taller)",
-        tags={"UNNAT_STAGE": "relative_depth", "UNNAT_BACKBONE": depth.backbone,
-              "UNNAT_UNITS": "none"},
+        tags={"AYAMA_STAGE": "relative_depth", "AYAMA_BACKBONE": depth.backbone,
+              "AYAMA_UNITS": "none"},
     )
     print(f"wrote     {out}")
     if args.preview:
@@ -160,9 +160,9 @@ def cmd_synth(args) -> int:
     sc = make_scene(size=args.size, gsd_m=args.gsd, seed=args.seed,
                     sun_azimuth_deg=args.sun_az, sun_elevation_deg=args.sun_el)
     stem = os.path.splitext(args.out)[0]
-    write_rgb(args.out, sc.rgb, sc.meta, tags={"UNNAT_STAGE": "synthetic_rgb"})
+    write_rgb(args.out, sc.rgb, sc.meta, tags={"AYAMA_STAGE": "synthetic_rgb"})
     write_cog(f"{stem}_dsm.tif", sc.dsm_m, sc.meta, description="ground-truth DSM (m)",
-              tags={"UNNAT_STAGE": "reference_dsm", "UNNAT_UNITS": "m"})
+              tags={"AYAMA_STAGE": "reference_dsm", "AYAMA_UNITS": "m"})
     write_cog(f"{stem}_dtm.tif", sc.dtm_m, sc.meta, description="ground-truth DTM (m)")
     write_cog(f"{stem}_sem.tif", sc.sem.astype(np.float32), sc.meta, dtype="uint8",
               nodata=255, description="semantic class ids")
@@ -246,7 +246,7 @@ def cmd_run(args) -> int:
 
     live = Live(mode=args.progress)
     t0 = time.time()
-    print(f"UNNAT run   {os.path.basename(args.image)}   {live.banner()}")
+    print(f"AYAMA run   {os.path.basename(args.image)}   {live.banner()}")
     res = run(args.image, cfg, gcps=_load_gcps(args.gcps), out_dir=args.out, live=live)
 
     print(f"\nTier {res.tier.value} ({res.tier_reason})")
@@ -362,7 +362,7 @@ def cmd_study(args) -> int:
     t0 = time.time()
     live = Live(mode=args.progress)
 
-    print(f"UNNAT study -> {out}/")
+    print(f"AYAMA study -> {out}/")
     env = S.environment()
     S.save_json(env, os.path.join(out, "environment.json"))
     print(f"  {live.banner()}   torch {env.get('torch')}   {env['platform']}")
@@ -469,9 +469,9 @@ def _write_study_markdown(study: dict, path: str) -> None:
         return "-" if not v else f"{v['mean']:.2f} ± {v['std']:.2f}"
 
     lines = [
-        "# UNNAT results",
+        "# ĀYĀMA results",
         "",
-        f"Generated {env['timestamp_utc']} by `python -m unnat.cli study`.",
+        f"Generated {env['timestamp_utc']} by `python -m ayama.cli study`.",
         "",
         "Every number here is measured against synthetic scenes whose exact DSM is",
         "known, using only the RGB image plus a simulated public DEM as input. They",
@@ -627,12 +627,12 @@ def _write_study_markdown(study: dict, path: str) -> None:
         "",
         "```bash",
         "bash scripts/setup_gpu.sh          # or scripts/setup.ps1 on Windows",
-        f"python -m unnat.cli study --backbone {cfg['backbone']} "
+        f"python -m ayama.cli study --backbone {cfg['backbone']} "
         f"--size {cfg['size']} --seeds {','.join(str(s) for s in cfg['seeds'])} --out results",
         "```",
         "",
         f"Took {study['wall_s']:.0f}s on the machine above. Every artifact is a COG that",
-        "opens in QGIS without UNNAT installed.",
+        "opens in QGIS without ĀYĀMA installed.",
         "",
     ]
     with open(path, "w", encoding="utf-8") as fh:
@@ -658,7 +658,7 @@ def cmd_figures(args) -> int:
     live = Live(mode=args.progress)
 
     t0 = time.time()
-    print(f"UNNAT figures -> {out}/")
+    print(f"AYAMA figures -> {out}/")
     with live.task("figures", None, "figure") as t:
         written = render_all(study, out, scenes_dir=scenes_dir,
                              on_step=lambda i, n, name: t.set(i, n, name))
@@ -687,7 +687,7 @@ def cmd_mesh(args) -> int:
     live = Live(mode=args.progress)
 
     t0 = time.time()
-    print(f"UNNAT mesh   {args.run} -> {out}/")
+    print(f"AYAMA mesh   {args.run} -> {out}/")
     with live.task("tiling", None, "lod") as t:
         manifest = build_tileset(
             args.run, out, tile=args.tile, pad=args.pad, lods=args.lods or None,
@@ -777,12 +777,64 @@ def cmd_viewer(args) -> int:
     return 0
 
 
+def cmd_delivery(args) -> int:
+    """Measure Phase 3 and Phase 4 on this machine, and write the evidence.
+
+    The delivery counterpart to `study`. Same contract: one command, a JSON file
+    holding every number, and a markdown report rendered from that JSON so the
+    two can never disagree.
+
+    Nothing here is a correctness test - `pytest tests/test_mesh.py
+    tests/test_viewer.py` covers that. This answers the questions correctness
+    tests do not: what does tiling cost, how big is the payload, and how much
+    CPU does the viewer burn before the GPU is involved.
+    """
+    from .eval.delivery import run_delivery, write_report
+    from .core.jsonio import save_json
+
+    out = args.out
+    os.makedirs(out, exist_ok=True)
+    t0 = time.time()
+    print(f"AYAMA delivery   {args.run} -> {out}/")
+
+    tiles = tuple(int(x) for x in str(args.tiles).split(",") if x.strip())
+    strides = tuple(int(x) for x in str(args.obj_strides).split(",") if x.strip())
+
+    rep = run_delivery(
+        args.run, out, tile=args.tile, tiles=tiles, obj_strides=strides,
+        repeats=args.repeats, work_dir=args.work_dir, log=lambda m: print(m),
+    )
+
+    json_path = save_json(rep, os.path.join(out, "delivery.json"))
+    md_path = write_report(rep, os.path.join(out, "DELIVERY.md"))
+
+    b, p = rep["build"], rep["payload"]
+    print()
+    print(f"  build        {b['tiles_only_s']:.2f}s tiles, {b['full_s']:.2f}s with the OBJ"
+          f"   ({b['mpix_per_s']:.2f} Mpix/s)")
+    print(f"  payload      {p['total_bytes'] / 1e6:.1f} MB total, "
+          f"{p['first_paint_bytes'] / 1e6:.2f} MB before first paint")
+    v = rep.get("viewer") or {}
+    if v.get("totals_ms"):
+        print(f"  viewer CPU   {v['totals_ms']['first_paint_cpu']:.0f} ms before first paint"
+              f"   (GPU not measured)")
+    elif v.get("skipped"):
+        print(f"  viewer CPU   skipped: {v['skipped']}")
+    bad = [r for r in rep["roundtrip"] if not r["within_half_a_step"]]
+    print(f"  round trip   {len(rep['roundtrip']) - len(bad)}/{len(rep['roundtrip'])}"
+          f" layer-LOD pairs within half a step")
+    for r in bad:
+        print(f"    ! lod {r['lod']} {r['layer']}: {r['max_abs_error_m']:.3g} m")
+    print(f"\ndone      {time.time() - t0:.1f}s   {json_path}   {md_path}")
+    return 1 if bad else 0
+
+
 def cmd_doctor(args) -> int:
-    """Is this machine ready to run UNNAT, and how fast will it be."""
+    """Is this machine ready to run AYAMA, and how fast will it be."""
     from .eval.bench import device_report
 
     rep = device_report()
-    print("UNNAT doctor\n")
+    print("AYAMA doctor\n")
     print(f"  platform        {rep['platform']}")
     print(f"  python          {rep['python']}   cpus {rep['cpu_count']}")
     print(f"  torch           {rep.get('torch') or 'NOT INSTALLED'}")
@@ -825,7 +877,7 @@ def cmd_doctor(args) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser("unnat", description="Metric elevation from a single image.")
+    p = argparse.ArgumentParser("ayama", description="Metric elevation from a single image.")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pi = sub.add_parser("info", help="print everything we can read about an image")
@@ -937,7 +989,7 @@ def build_parser() -> argparse.ArgumentParser:
     pf.set_defaults(func=cmd_figures)
 
     pm = sub.add_parser("mesh", help="Phase 3: run directory -> browser tileset + OBJ mesh")
-    pm.add_argument("run", help="a directory written by `unnat run` (contains dsm.tif)")
+    pm.add_argument("run", help="a directory written by `ayama run` (contains dsm.tif)")
     pm.add_argument("--out", default=None, help="tileset directory (default: <run>/tiles3d)")
     pm.add_argument("--tile", type=int, default=512)
     pm.add_argument("--pad", type=int, default=1,
@@ -950,7 +1002,7 @@ def build_parser() -> argparse.ArgumentParser:
     pm.set_defaults(func=cmd_mesh)
 
     pv = sub.add_parser("viewer", help="Phase 4: build if needed, then serve the 3D web app")
-    pv.add_argument("run", help="a directory written by `unnat run`")
+    pv.add_argument("run", help="a directory written by `ayama run`")
     pv.add_argument("--tiles", default=None, help="tileset directory (default: <run>/tiles3d)")
     pv.add_argument("--port", type=int, default=8020)
     pv.add_argument("--tile", type=int, default=512)
@@ -959,6 +1011,21 @@ def build_parser() -> argparse.ArgumentParser:
     pv.add_argument("--rebuild", action="store_true", help="rebuild even if a tileset exists")
     pv.add_argument("--no-open", action="store_true")
     pv.set_defaults(func=cmd_viewer)
+
+    pdel = sub.add_parser("delivery",
+                          help="Phase 3/4 CPU benchmark: build cost, payload, viewer CPU")
+    pdel.add_argument("run", nargs="?", default="results/seed7/run",
+                      help="a directory written by `ayama run`")
+    pdel.add_argument("--out", default="results", help="where delivery.json lands")
+    pdel.add_argument("--tile", type=int, default=512, help="tile size for the reference build")
+    pdel.add_argument("--tiles", default="128,256,512,1024", help="tile sizes to sweep")
+    pdel.add_argument("--obj-strides", default="1,2,4,8", help="mesh decimations to sweep")
+    pdel.add_argument("--repeats", type=int, default=3,
+                      help="timing repeats; the best is reported")
+    pdel.add_argument("--work-dir", default=None,
+                      help="where timed builds are written (default: the system temp "
+                           "directory, which is usually not virus-scanned)")
+    pdel.set_defaults(func=cmd_delivery)
 
     pdoc = sub.add_parser("doctor", help="check this machine is ready, and how fast it is")
     pdoc.add_argument("--load", default=None,

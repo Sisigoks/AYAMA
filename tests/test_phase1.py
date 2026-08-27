@@ -7,12 +7,12 @@ from datetime import datetime, timezone
 import numpy as np
 import pytest
 
-from unnat.core.geo import (gsd_metres, percentile_stretch, pixel_to_world,
+from ayama.core.geo import (gsd_metres, percentile_stretch, pixel_to_world,
                             shadow_height, shadow_length, sun_vector, world_to_pixel)
-from unnat.core.solar import solar_position
-from unnat.core.types import Scene, SceneMeta
-from unnat.depth.backbones import get_backbone
-from unnat.depth.infer import (blend_window, n_chips, predict_depth, rank_normalise,
+from ayama.core.solar import solar_position
+from ayama.core.types import Scene, SceneMeta
+from ayama.depth.backbones import get_backbone
+from ayama.depth.infer import (blend_window, n_chips, predict_depth, rank_normalise,
                                tile_offsets)
 
 
@@ -161,8 +161,8 @@ rasterio = pytest.importorskip("rasterio")
 
 
 def test_geotiff_roundtrip_preserves_geometry_and_sun(tmp_path):
-    from unnat.core.ingest import ingest
-    from unnat.dsm.cog import write_rgb
+    from ayama.core.ingest import ingest
+    from ayama.dsm.cog import write_rgb
 
     meta = SceneMeta(
         crs="EPSG:32644",
@@ -186,7 +186,7 @@ def test_geotiff_roundtrip_preserves_geometry_and_sun(tmp_path):
 
 
 def test_write_cog_preserves_values_and_nodata(tmp_path):
-    from unnat.dsm.cog import write_cog
+    from ayama.dsm.cog import write_cog
 
     meta = SceneMeta(crs="EPSG:32644", transform=(1.0, 0, 0, 0, -1.0, 0), gsd_m=1.0)
     a = np.arange(64 * 64, dtype=np.float32).reshape(64, 64)
@@ -201,7 +201,7 @@ def test_write_cog_preserves_values_and_nodata(tmp_path):
 
 
 def test_synthetic_scene_is_self_consistent():
-    from unnat.eval.synthetic_scene import make_scene
+    from ayama.eval.synthetic_scene import make_scene
 
     sc = make_scene(size=256, gsd_m=0.5, seed=3)
     assert np.isfinite(sc.dsm_m).all() and np.isfinite(sc.dtm_m).all()

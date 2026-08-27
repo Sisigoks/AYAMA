@@ -132,7 +132,7 @@ def run_variants(
 def format_ablation(rows: Sequence[dict]) -> str:
     head = (f"  {'variant':<18}{'anchors':>9}{'MAE m':>9}{'RMSE m':>9}{'bias m':>9}"
             f"{'r':>8}{'rho':>8}{'edge F1':>9}{'1s cov':>8}")
-    lines = ["UNNAT ablation", "", head, "  " + "-" * 79]
+    lines = ["AYAMA ablation", "", head, "  " + "-" * 79]
     best = min((r.get("mae_m", float("inf")) for r in rows if "mae_m" in r), default=None)
     for r in rows:
         if "error" in r:

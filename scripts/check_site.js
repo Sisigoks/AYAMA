@@ -23,7 +23,7 @@ vc.on('error', (...a) => errors.push('console.error: ' + a.join(' ')));
 
 const dom = new JSDOM(html, {
   runScripts: 'outside-only', virtualConsole: vc,
-  url: 'https://someuser.github.io/unnat/',
+  url: 'https://someuser.github.io/ayama/',
 });
 const w = dom.window;
 w.fetch = (url) => Promise.resolve({

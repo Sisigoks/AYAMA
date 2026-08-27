@@ -9,7 +9,7 @@ completed work at the very last stage. Each case now runs in a child process.
 from __future__ import annotations
 
 
-from unnat.eval.bench import device_report, format_bench, sweep
+from ayama.eval.bench import device_report, format_bench, sweep
 
 
 def test_device_report_describes_the_machine():

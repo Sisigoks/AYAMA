@@ -1,5 +1,5 @@
 """Raster output. Everything the pipeline produces lands on disk in a format
-QGIS can open without UNNAT installed, because that is the fallback demo when
+QGIS can open without AYAMA installed, because that is the fallback demo when
 anything downstream breaks.
 
 Cloud Optimised GeoTIFF when GDAL supports the COG driver, a tiled GeoTIFF with

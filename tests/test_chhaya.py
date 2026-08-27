@@ -4,10 +4,10 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from unnat.chhaya.agmc import (apply_calibration, global_affine, make_lattice,
+from ayama.chhaya.agmc import (apply_calibration, global_affine, make_lattice,
                                solve_agmc)
-from unnat.chhaya.anchors import harvest_dem, harvest_water
-from unnat.core.types import (BARE_GROUND, BUILDING, WATER, Anchor, Config,
+from ayama.chhaya.anchors import harvest_dem, harvest_water
+from ayama.core.types import (BARE_GROUND, BUILDING, WATER, Anchor, Config,
                               DepthField, SceneMeta)
 
 META = SceneMeta(crs="EPSG:32644", transform=(0.5, 0, 0, 0, -0.5, 0), gsd_m=0.5)
@@ -128,7 +128,7 @@ def test_water_without_a_dem_falls_back_to_relative_constraints():
 
 
 def test_dem_weight_reflects_datasheet_accuracy():
-    from unnat.chhaya.anchors import dem_weight
+    from ayama.chhaya.anchors import dem_weight
 
     assert dem_weight("copernicus") > dem_weight("srtm") > dem_weight("aster")
 

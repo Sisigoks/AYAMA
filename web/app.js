@@ -1,8 +1,8 @@
-/* UNNAT viewer — Phase 4.
+/* AYAMA viewer — Phase 4.
  *
  * No frameworks, no CDN, no build step, no network. The same reason every
  * raster is written as a COG: the deliverable has to be openable by someone who
- * will not install anything first. `python -m unnat.cli viewer <run>` serves
+ * will not install anything first. `python -m ayama.cli viewer <run>` serves
  * this directory and the tileset, and that is the whole toolchain.
  *
  * Two decisions worth stating, because both are correctness rather than taste.
@@ -21,7 +21,7 @@
  */
 'use strict';
 
-var UNNAT = (function () {
+var AYAMA = (function () {
 
 // ── pure helpers ────────────────────────────────────────────────────────────
 
@@ -29,7 +29,7 @@ var MAX_CODE = 256 * 256 * 256 - 1;      // 16777215
 var TERRAIN_BASE = -10000.0;
 var TERRAIN_STEP = 0.1;
 
-/** RGBA bytes -> metres, Mapbox Terrain-RGB. Mirrors unnat/mesh/encode.py. */
+/** RGBA bytes -> metres, Mapbox Terrain-RGB. Mirrors ayama/mesh/encode.py. */
 function decodeTerrainRGBA(data, out) {
   var n = data.length / 4;
   out = out || new Float32Array(n);
@@ -50,7 +50,7 @@ function decodeLinearRGBA(data, vmin, vmax, out) {
   return out;
 }
 
-/* Colour ramps, anchor-for-anchor the same as unnat/dsm/cog.py's fallback LUT,
+/* Colour ramps, anchor-for-anchor the same as ayama/dsm/cog.py's fallback LUT,
    so a PNG preview and this page never disagree about what a height looks like. */
 var RAMPS = {
   terrain: [[51, 51, 153], [0, 153, 102], [243, 226, 137], [140, 92, 61], [255, 255, 255]],
@@ -926,21 +926,22 @@ function boot() {
     })
     .catch(function (e) {
       setStatusError('Could not load data/tileset.json.',
-        'Build one with: python -m unnat.cli mesh &lt;run&gt; — or serve this page with ' +
-        'python -m unnat.cli viewer &lt;run&gt;. (' + e.message + ')');
+        'Build one with: python -m ayama.cli mesh &lt;run&gt; — or serve this page with ' +
+        'python -m ayama.cli viewer &lt;run&gt;. (' + e.message + ')');
       throw e;
     });
 }
 
 if (typeof document !== 'undefined' && document.addEventListener) {
   document.addEventListener('DOMContentLoaded', function () {
-    if (!window.UNNAT_NO_AUTOBOOT) boot().catch(function () { /* surfaced in the DOM */ });
+    if (!window.AYAMA_NO_AUTOBOOT) boot().catch(function () { /* surfaced in the DOM */ });
   });
 }
 
 return {
   decodeTerrainRGBA: decodeTerrainRGBA, decodeLinearRGBA: decodeLinearRGBA,
-  lut: lut, cssRamp: cssRamp, layerStyle: layerStyle, pickLodIndex: pickLodIndex,
+  lut: lut, cssRamp: cssRamp, colourize: colourize, layerStyle: layerStyle,
+  pickLodIndex: pickLodIndex,
   fmt: fmt, mat4Perspective: mat4Perspective, mat4LookAt: mat4LookAt, mat4Mul: mat4Mul,
   tileGeometry: tileGeometry, gridIndices: gridIndices,
   renderPanels: renderPanels, renderNotes: renderNotes, renderLegend: renderLegend,
@@ -953,5 +954,5 @@ return {
 
 /* Explicit global. `'use strict'` means a `var` in eval'd code stays in the eval
    scope, so scripts/check_app.js would otherwise never see the module. */
-if (typeof window !== 'undefined') { window.UNNAT = UNNAT; }
-if (typeof module !== 'undefined' && module.exports) { module.exports = UNNAT; }
+if (typeof window !== 'undefined') { window.AYAMA = AYAMA; }
+if (typeof module !== 'undefined' && module.exports) { module.exports = AYAMA; }

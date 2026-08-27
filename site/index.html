@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>UNNAT — metric elevation from a single image</title>
+<title>ĀYĀMA — metric elevation from a single image</title>
 <meta name="description" content="Physics-anchored monocular elevation: one RGB image to a metric DSM with honest uncertainty. Reproducible study and results.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⛰️</text></svg>">
 <link rel="stylesheet" href="style.css">
@@ -16,8 +16,8 @@
   <div class="wrap bar">
     <div class="brand">
       <span class="mark" aria-hidden="true"></span>
-      <span class="name">UNNAT</span>
-      <span class="deva" lang="hi">उन्नत</span>
+      <span class="name">ĀYĀMA</span>
+      <span class="deva" lang="hi">आयाम</span>
     </div>
     <nav>
       <a href="#results">Results</a>
@@ -57,7 +57,7 @@
   <div class="wrap">
     <h2>What it measures</h2>
     <p class="section-lede">
-      Every number on this page is produced by <code>python -m unnat.cli study</code> and read
+      Every number on this page is produced by <code>python -m ayama.cli study</code> and read
       live from <code>results/study.json</code>. Nothing is typed in by hand. Re-run the study
       on your own machine and this page renders your numbers instead.
     </p>
@@ -160,7 +160,7 @@
       Rendered from the same <code>study.json</code> this page reads, so a figure cannot
       drift from the number it illustrates. Each is a 300 dpi PNG for slides and a vector
       PDF for LaTeX; the tables are <code>booktabs</code>, ready to <code>\input{}</code>.
-      Regenerate without re-running inference: <code>python -m unnat.cli figures</code>.
+      Regenerate without re-running inference: <code>python -m ayama.cli figures</code>.
     </p>
     <div class="figure-grid" id="figure-grid"></div>
     <p class="section-lede" style="margin-top:1.6rem">
@@ -207,7 +207,7 @@
 
       <figure class="method-fig">
         <svg viewBox="0 0 420 560" role="img" aria-labelledby="pipe-title">
-          <title id="pipe-title">UNNAT pipeline: image to metric DSM</title>
+          <title id="pipe-title">ĀYĀMA pipeline: image to metric DSM</title>
           <defs>
             <marker id="arw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
               <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
@@ -314,26 +314,26 @@
         <p>Open the notebook, set <em>Runtime → Change runtime type → GPU</em>, run all. It installs the deps, generates ground-truth test data, runs the pipeline and renders the outputs.</p>
         <p><a class="btn" id="colab-btn" href="#" target="_blank" rel="noopener">Open the GPU harness notebook</a></p>
         <pre><code># then, on your own image, in a cell:
-!python -m unnat.cli run my_image.tif --out out/mine \
+!python -m ayama.cli run my_image.tif --out out/mine \
     --backbone dav2-vitl --device cuda --batch 0 \
     --dem my_dem.tif --ref my_lidar_dsm.tif --json out/mine.json</code><button class="copy">Copy</button></pre>
       </div>
 
       <div class="tabpane" data-pane="local">
-        <pre><code>git clone &lt;repo&gt; &amp;&amp; cd unnat
+        <pre><code>git clone &lt;repo&gt; &amp;&amp; cd ayama
 bash scripts/setup_gpu.sh          # Linux/WSL; detects CUDA
 # powershell -ExecutionPolicy Bypass -File scripts/setup.ps1   # Windows
 
-python -m unnat.cli doctor         # is this machine ready
-python -m unnat.cli study --out results   # regenerate everything on this page</code><button class="copy">Copy</button></pre>
+python -m ayama.cli doctor         # is this machine ready
+python -m ayama.cli study --out results   # regenerate everything on this page</code><button class="copy">Copy</button></pre>
         <p>Your own image, no reference data needed:</p>
-        <pre><code>python -m unnat.cli run my_image.tif --out out/mine --preview</code><button class="copy">Copy</button></pre>
+        <pre><code>python -m ayama.cli run my_image.tif --out out/mine --preview</code><button class="copy">Copy</button></pre>
       </div>
 
       <div class="tabpane" data-pane="docker">
-        <pre><code>docker build -t unnat:gpu .
-docker run --gpus all --rm -it -v unnat-cache:/cache -v "$PWD:/work" \
-    unnat:gpu bash scripts/harness.sh</code><button class="copy">Copy</button></pre>
+        <pre><code>docker build -t ayama:gpu .
+docker run --gpus all --rm -it -v ayama-cache:/cache -v "$PWD:/work" \
+    ayama:gpu bash scripts/harness.sh</code><button class="copy">Copy</button></pre>
         <p>The <code>/cache</code> volume keeps model weights across container restarts.</p>
       </div>
     </div>
@@ -448,7 +448,7 @@ docker run --gpus all --rm -it -v unnat-cache:/cache -v "$PWD:/work" \
 
 <footer class="site">
   <div class="wrap">
-    <p><strong>UNNAT</strong> · उन्नत, “elevated” · calibration engine <strong>Chhaya</strong> · छाया, “shadow”</p>
+    <p><strong>ĀYĀMA</strong> · आयाम, “dimension, extent” · calibration engine <strong>Chhaya</strong> · छाया, “shadow”</p>
     <p class="meta" id="footer-meta"></p>
   </div>
 </footer>

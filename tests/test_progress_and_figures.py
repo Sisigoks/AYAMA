@@ -14,7 +14,7 @@ import time
 
 import pytest
 
-from unnat.core.progress import Live, _fmt_dur, gpu_stats
+from ayama.core.progress import Live, _fmt_dur, gpu_stats
 
 
 # ── progress ────────────────────────────────────────────────────────────────
@@ -152,7 +152,7 @@ def small_study():
 
 
 def test_figures_render_png_and_vector_pdf(small_study, tmp_path):
-    from unnat.eval.figures import render_all
+    from ayama.eval.figures import render_all
 
     out = str(tmp_path / "figures")
     written = render_all(small_study, out)
@@ -168,14 +168,14 @@ def test_figures_render_png_and_vector_pdf(small_study, tmp_path):
 
 def test_figures_needing_rasters_are_skipped_not_fatal(small_study, tmp_path):
     """No completed run on disk means no reliability or qualitative panel."""
-    from unnat.eval.figures import fig_qualitative, fig_reliability
+    from ayama.eval.figures import fig_qualitative, fig_reliability
 
     assert fig_reliability(small_study, str(tmp_path), scenes_dir=str(tmp_path)) == []
     assert fig_qualitative(small_study, str(tmp_path), scenes_dir=str(tmp_path)) == []
 
 
 def test_latex_tables_are_wellformed(small_study, tmp_path):
-    from unnat.eval.figures import write_tables
+    from ayama.eval.figures import write_tables
 
     written = write_tables(small_study, str(tmp_path))
     assert len(written) == 3
@@ -190,7 +190,7 @@ def test_latex_tables_are_wellformed(small_study, tmp_path):
 
 
 def test_headline_table_carries_the_floor_column(small_study, tmp_path):
-    from unnat.eval.figures import write_tables
+    from ayama.eval.figures import write_tables
 
     text = open(write_tables(small_study, str(tmp_path))[0], encoding="utf-8").read()
     assert "DEM alone" in text, "the floor must appear in the paper table too"
@@ -198,7 +198,7 @@ def test_headline_table_carries_the_floor_column(small_study, tmp_path):
 
 
 def test_a_broken_figure_does_not_abort_the_rest(small_study, tmp_path, monkeypatch):
-    from unnat.eval import figures as F
+    from ayama.eval import figures as F
 
     def explode(*a, **k):
         raise RuntimeError("synthetic failure")
@@ -210,7 +210,7 @@ def test_a_broken_figure_does_not_abort_the_rest(small_study, tmp_path, monkeypa
 
 
 def test_figures_survive_a_study_with_missing_sections(tmp_path):
-    from unnat.eval.figures import render_all
+    from ayama.eval.figures import render_all
 
     written = render_all({"aggregate": {}}, str(tmp_path / "empty"))
     assert all(w.endswith(".tex") for w in written)

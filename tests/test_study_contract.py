@@ -33,7 +33,7 @@ PREVIEWS = ("rgb.jpg", "dsm_pred.png", "dsm_truth.png", "error.png",
 @pytest.fixture(scope="module")
 def mini_study(tmp_path_factory):
     """A real study, small enough to run in seconds on the synthetic backbone."""
-    from unnat.eval import study as S
+    from ayama.eval import study as S
 
     out = str(tmp_path_factory.mktemp("study"))
     scene = S.scene_experiment(out, seed=5, size=256, backbone="synthetic",
@@ -111,7 +111,7 @@ def test_sun_and_lambda_sweeps_are_plottable(mini_study):
 
 def test_study_json_is_serialisable(mini_study, tmp_path):
     """numpy floats must not leak into the JSON the browser fetches."""
-    from unnat.eval.study import save_json
+    from ayama.eval.study import save_json
 
     p = str(tmp_path / "study.json")
     save_json({k: v for k, v in mini_study.items() if k != "out"}, p)
@@ -126,7 +126,7 @@ def test_results_json_is_strict_json_a_browser_will_parse(mini_study, tmp_path):
     ECE with too few samples — so this is a normal path, not an edge case. It
     cost a fully blank deployed site once already.
     """
-    from unnat.eval.study import save_json
+    from ayama.eval.study import save_json
 
     payload = {k: v for k, v in mini_study.items() if k != "out"}
     payload["deliberately_missing"] = float("nan")
@@ -148,7 +148,7 @@ def _reject_constant(name):
 
 
 def test_every_artifact_json_the_cli_writes_is_strict(tmp_path):
-    from unnat.core.jsonio import dumps, save_json
+    from ayama.core.jsonio import dumps, save_json
 
     nested = {"a": [float("nan"), 1.0, {"b": float("-inf")}], "c": np.float32("nan")}
     text = dumps(nested)

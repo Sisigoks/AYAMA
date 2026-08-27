@@ -45,13 +45,13 @@ def pytest_collection_modifyitems(config, items):
 @pytest.fixture(scope="session")
 def synthetic_scene():
     """A small deterministic scene with known ground truth."""
-    from unnat.eval.synthetic_scene import make_scene
+    from ayama.eval.synthetic_scene import make_scene
 
     return make_scene(size=384, gsd_m=0.5, seed=17)
 
 
 @pytest.fixture(scope="session")
 def scene(synthetic_scene):
-    from unnat.core.types import Scene
+    from ayama.core.types import Scene
 
     return Scene(rgb=synthetic_scene.rgb, meta=synthetic_scene.meta, raw_dtype="uint8")

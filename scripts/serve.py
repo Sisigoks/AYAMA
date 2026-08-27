@@ -55,7 +55,7 @@ def main() -> int:
     ap.add_argument("--no-open", action="store_true")
     args = ap.parse_args()
 
-    tmp = tempfile.mkdtemp(prefix="unnat-site-")
+    tmp = tempfile.mkdtemp(prefix="ayama-site-")
     print(f"assembling into {tmp}")
     assemble(tmp)
 

@@ -1,8 +1,8 @@
-/* UNNAT results site.
+/* AYAMA results site.
  *
  * This file renders results/study.json. It invents nothing: if a field is
  * missing the panel says so rather than showing a plausible number. Re-run
- * `python -m unnat.cli study` and the page shows the new measurements.
+ * `python -m ayama.cli study` and the page shows the new measurements.
  */
 'use strict';
 
@@ -525,7 +525,7 @@ function wireStaticUI() {
     repo = parts.length ? `https://github.com/${user}/${parts[0]}` : `https://github.com/${user}`;
   }
   $('#repo-link').href = repo;
-  const nb = repo.replace('https://github.com/', '') + '/blob/main/notebooks/unnat_gpu_harness.ipynb';
+  const nb = repo.replace('https://github.com/', '') + '/blob/main/notebooks/ayama_gpu_harness.ipynb';
   $('#colab-btn').href = `https://colab.research.google.com/github/${nb}`;
 
   $$('.repro-tabs button').forEach(btn => btn.addEventListener('click', () => {
@@ -596,7 +596,7 @@ function updateWizard(s) {
   $('#wiz-expl').textContent = expl;
 
   const img = s.geo === 'yes' ? 'my_scene.tif' : 'my_photo.jpg';
-  const lines = [`python -m unnat.cli run ${img} --out out/mine \\`,
+  const lines = [`python -m ayama.cli run ${img} --out out/mine \\`,
                  `    --backbone dav2-vitl --device cuda --batch 0 \\`];
   if (demUsable) lines.push(`    --dem my_dem.tif \\`);
   if (hasGcp) lines.push(`    --gcps my_gcps.csv \\`);
@@ -617,7 +617,7 @@ function showMissingResults(err) {
   $('#hero-metrics').innerHTML = `
     <div class="error-note" style="grid-column:1/-1">
       <strong>No results found.</strong> This page renders <code>results/study.json</code>,
-      which is produced by <code>python -m unnat.cli study --out results</code>.
+      which is produced by <code>python -m ayama.cli study --out results</code>.
       Run it, commit <code>results/</code>, and every number and image here fills in.
       <br><span style="font-family:var(--mono);font-size:.8rem">(${err})</span>
     </div>`;

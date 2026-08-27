@@ -1,4 +1,4 @@
-# UNNAT setup on Windows.
+# AYAMA setup on Windows.
 #
 #   powershell -ExecutionPolicy Bypass -File scripts/setup.ps1
 #   powershell -ExecutionPolicy Bypass -File scripts/setup.ps1 -Cuda cu124
@@ -28,7 +28,7 @@ if (-not $Cuda) {
     }
 }
 
-Write-Host "== UNNAT setup =="
+Write-Host "== AYAMA setup =="
 Write-Host "   cuda   : $Cuda"
 
 if (-not (Test-Path $Venv)) { python -m venv $Venv }
@@ -43,10 +43,10 @@ Write-Host "== torch ($Cuda) =="
 & $py -m pip install --quiet transformers
 
 Write-Host "== verify =="
-& $py -m unnat.cli doctor
+& $py -m ayama.cli doctor
 
 Write-Host ""
 Write-Host "Next:"
-Write-Host "  $py -m unnat.cli synth --out data/sample.tif --size 2048"
+Write-Host "  $py -m ayama.cli synth --out data/sample.tif --size 2048"
 Write-Host "  bash scripts/harness.sh"
 Write-Host "  $py -m pytest tests -q"

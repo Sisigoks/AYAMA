@@ -1,6 +1,6 @@
-# UNNAT results
+# ĀYĀMA results
 
-Generated 2026-08-26T09:31:49Z by `python -m unnat.cli study`.
+Generated 2026-08-26T09:31:49Z by `python -m ayama.cli study`.
 
 Every number here is measured against synthetic scenes whose exact DSM is
 known, using only the RGB image plus a simulated public DEM as input. They
@@ -132,8 +132,8 @@ scene it would not be a method, it would be a knob.
 
 ```bash
 bash scripts/setup_gpu.sh          # or scripts/setup.ps1 on Windows
-python -m unnat.cli study --backbone dav2-vits --size 1024 --seeds 7,21,33 --out results
+python -m ayama.cli study --backbone dav2-vits --size 1024 --seeds 7,21,33 --out results
 ```
 
 Took 450s on the machine above. Every artifact is a COG that
-opens in QGIS without UNNAT installed.
+opens in QGIS without ĀYĀMA installed.

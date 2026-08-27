@@ -1,6 +1,6 @@
 """Turn a Phase 2 run directory into a tileset a browser can render.
 
-Input is exactly what `unnat.cli run` already writes - no new inference, no new
+Input is exactly what `ayama.cli run` already writes - no new inference, no new
 calibration, nothing re-derived. Phase 3 is a *delivery* phase: if a number
 appears in the viewer it came out of the rasters Phase 2 produced, and the
 manifest records which run produced them.
@@ -82,7 +82,7 @@ def load_run(run_dir: str) -> dict:
     if dsm is None:
         raise FileNotFoundError(
             f"{run_dir} has no dsm.tif - point this at a directory written by "
-            "`unnat run`, not at a study root"
+            "`ayama run`, not at a study root"
         )
     out = {
         "dir": os.path.abspath(run_dir),
@@ -123,7 +123,7 @@ def _scene_meta(path: str) -> dict:
             "transform": [t.a, t.b, t.c, t.d, t.e, t.f] if t is not None else None,
             "gsd_m": gsd,
             "bounds_wgs": bounds,
-            "tags": {k: v for k, v in ds.tags().items() if k.startswith("UNNAT_")},
+            "tags": {k: v for k, v in ds.tags().items() if k.startswith("AYAMA_")},
         }
 
 
@@ -229,7 +229,7 @@ def derive_notes(run: dict, layer_ranges: dict) -> list:
 def _phase2_summary(run_dir: str) -> dict:
     """The Phase 2 numbers for this run: metrics, tier, anchor counts.
 
-    `unnat run` writes `summary.json` beside the rasters, but `unnat study`
+    `ayama run` writes `summary.json` beside the rasters, but `ayama study`
     keeps every scene's metrics together in one `study.json` instead. Rather
     than make the viewer show nothing for the runs the study produced - which
     are the ones the README actually reports - the study file is consulted and
@@ -425,7 +425,7 @@ def build_tileset(
             _save_jpg(texture, os.path.join(out_dir, "mesh", tex_name), quality=90)
         mesh_info = write_obj(
             os.path.join(out_dir, "mesh", "surface.obj"), dsm, gsd,
-            texture_name=tex_name, stride=obj_stride, name="unnat_surface")
+            texture_name=tex_name, stride=obj_stride, name="ayama_surface")
         mesh_info = {k: (os.path.relpath(v, out_dir).replace("\\", "/")
                          if k in ("obj", "mtl") else v)
                      for k, v in mesh_info.items()}
@@ -433,7 +433,7 @@ def build_tileset(
             mesh_info["texture"] = f"mesh/{tex_name}"
 
     manifest = {
-        "unnat_tileset_version": TILESET_VERSION,
+        "ayama_tileset_version": TILESET_VERSION,
         "generated_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "source_run": run["dir"],
         "grid": {"width": W, "height": H, "gsd_m": gsd, "tile": tile, "pad": pad,

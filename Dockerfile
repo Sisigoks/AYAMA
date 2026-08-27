@@ -1,8 +1,8 @@
-# UNNAT GPU image.
+# AYAMA GPU image.
 #
-#   docker build -t unnat:gpu .
-#   docker run --gpus all --rm -it -v "$PWD:/work" unnat:gpu bash scripts/harness.sh
-#   docker run --gpus all --rm -it unnat:gpu python -m unnat.cli doctor
+#   docker build -t ayama:gpu .
+#   docker run --gpus all --rm -it -v "$PWD:/work" ayama:gpu bash scripts/harness.sh
+#   docker run --gpus all --rm -it ayama:gpu python -m ayama.cli doctor
 #
 # rasterio's manylinux wheel bundles GDAL, so no system GDAL packages are
 # installed here on purpose: fewer moving parts, and no version skew between
@@ -33,9 +33,9 @@ RUN python -m pip install --upgrade pip wheel \
 COPY . .
 
 # Model weights live in a cache volume so a container restart does not re-download
-# 1.3 GB of ViT-L. Mount it with:  -v unnat-cache:/cache
+# 1.3 GB of ViT-L. Mount it with:  -v ayama-cache:/cache
 VOLUME ["/cache"]
 
-RUN python -c "import unnat.core.types" && python -m unnat.cli backbones
+RUN python -c "import ayama.core.types" && python -m ayama.cli backbones
 
-CMD ["python", "-m", "unnat.cli", "doctor"]
+CMD ["python", "-m", "ayama.cli", "doctor"]

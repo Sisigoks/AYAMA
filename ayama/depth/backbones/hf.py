@@ -6,7 +6,7 @@ single implementation covers them and the only difference is the checkpoint id.
 Deliberate choice: the RELATIVE Depth Anything V2 checkpoints, not the metric
 ones. The metric variants carry a scale prior fitted to ground-level outdoor
 scenes, which is actively wrong for nadir imagery. We want the clean unitless
-surface and our own calibration on top of it (see unnat.chhaya).
+surface and our own calibration on top of it (see ayama.chhaya).
 
 GPU notes, because this is where the throughput is:
   - chips are batched, so a 4k tile is a handful of forward passes and not

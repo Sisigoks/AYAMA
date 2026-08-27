@@ -9,7 +9,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from unnat.core.types import (BARE_GROUND, BUILDING, Config, Scene, Tier)
+from ayama.core.types import (BARE_GROUND, BUILDING, Config, Scene, Tier)
 
 rasterio = pytest.importorskip("rasterio")
 
@@ -17,8 +17,8 @@ rasterio = pytest.importorskip("rasterio")
 @pytest.fixture(scope="module")
 def written_scene(tmp_path_factory):
     """A synthetic town on disk, with its ground truth alongside."""
-    from unnat.dsm.cog import write_cog, write_rgb
-    from unnat.eval.synthetic_scene import make_scene
+    from ayama.dsm.cog import write_cog, write_rgb
+    from ayama.eval.synthetic_scene import make_scene
 
     d = tmp_path_factory.mktemp("scene")
     sc = make_scene(size=384, gsd_m=0.5, seed=21)
@@ -36,7 +36,7 @@ def written_scene(tmp_path_factory):
 
 # ------------------------------------------------------------------- semantics
 def test_heuristic_segmentation_finds_the_classes_that_exist(written_scene):
-    from unnat.semantics.segment import class_fractions, segment
+    from ayama.semantics.segment import class_fractions, segment
 
     sc, _ = written_scene
     scene = Scene(rgb=sc.rgb, meta=sc.meta)
@@ -49,8 +49,8 @@ def test_heuristic_segmentation_finds_the_classes_that_exist(written_scene):
 
 
 def test_segmentation_can_be_supplied_as_a_raster(written_scene, tmp_path):
-    from unnat.dsm.cog import write_cog
-    from unnat.semantics.segment import segment
+    from ayama.dsm.cog import write_cog
+    from ayama.semantics.segment import segment
 
     sc, _ = written_scene
     p = str(tmp_path / "sem.tif")
@@ -63,7 +63,7 @@ def test_segmentation_can_be_supplied_as_a_raster(written_scene, tmp_path):
 
 # ---------------------------------------------------------------------- shadow
 def test_shadow_quality_gate_follows_the_sun():
-    from unnat.semantics.shadow import quality_from_sun_elevation
+    from ayama.semantics.shadow import quality_from_sun_elevation
 
     assert quality_from_sun_elevation(None) == 0.0
     assert quality_from_sun_elevation(12.0) == 0.0     # too low, shadows sprawl
@@ -74,7 +74,7 @@ def test_shadow_quality_gate_follows_the_sun():
 
 def test_shadow_detector_is_precise_as_well_as_complete(written_scene):
     """Recall alone is satisfied by flagging half the image; F1 is not."""
-    from unnat.semantics.shadow import detect_shadow
+    from ayama.semantics.shadow import detect_shadow
 
     sc, _ = written_scene
     scene = Scene(rgb=sc.rgb, meta=sc.meta)
@@ -92,7 +92,7 @@ def test_shadow_detector_is_precise_as_well_as_complete(written_scene):
 
 def test_shadow_anchors_recover_building_heights(written_scene):
     """The physics, checked against the DSM that cast the shadows."""
-    from unnat.chhaya.anchors import harvest_shadow
+    from ayama.chhaya.anchors import harvest_shadow
 
     sc, _ = written_scene
     scene = Scene(rgb=sc.rgb, meta=sc.meta)
@@ -109,7 +109,7 @@ def test_shadow_anchors_recover_building_heights(written_scene):
 def test_shadow_anchors_are_empty_without_sun_metadata(written_scene):
     from dataclasses import replace
 
-    from unnat.chhaya.anchors import harvest_shadow
+    from ayama.chhaya.anchors import harvest_shadow
 
     sc, _ = written_scene
     blind = replace(sc.meta, sun_azimuth_deg=None, sun_elevation_deg=None)
@@ -121,8 +121,8 @@ def test_shadow_anchors_are_empty_without_sun_metadata(written_scene):
 def test_tier_selection_walks_the_ladder(written_scene):
     from dataclasses import replace
 
-    from unnat.chhaya.ladder import select_tier
-    from unnat.core.types import GCP
+    from ayama.chhaya.ladder import select_tier
+    from ayama.core.types import GCP
 
     sc, paths = written_scene
     scene = Scene(rgb=sc.rgb, meta=sc.meta)
@@ -139,7 +139,7 @@ def test_tier_selection_walks_the_ladder(written_scene):
 
 # -------------------------------------------------------------------- assembly
 def test_ndsm_is_never_negative_and_dtm_sits_under_the_dsm(written_scene):
-    from unnat.dsm.assemble import assemble
+    from ayama.dsm.assemble import assemble
 
     sc, _ = written_scene
     surf = assemble(sc.dsm_m, sc.sem, sc.meta, tier=Tier.A)
@@ -151,7 +151,7 @@ def test_ndsm_is_never_negative_and_dtm_sits_under_the_dsm(written_scene):
 
 
 def test_hole_filling_removes_non_finite_pixels():
-    from unnat.dsm.assemble import fill_holes
+    from ayama.dsm.assemble import fill_holes
 
     a = np.arange(64, dtype=np.float32).reshape(8, 8)
     a[3:5, 3:5] = np.nan
@@ -162,7 +162,7 @@ def test_hole_filling_removes_non_finite_pixels():
 
 # -------------------------------------------------------------------- pipeline
 def test_full_run_produces_artifacts_and_metrics(written_scene):
-    from unnat.api.pipeline import run
+    from ayama.api.pipeline import run
 
     sc, paths = written_scene
     cfg = Config(backbone="synthetic", chip=256, overlap=0.25,
@@ -182,14 +182,14 @@ def test_full_run_produces_artifacts_and_metrics(written_scene):
 
     with rasterio.open(res.artifacts["dsm"]) as ds:
         assert ds.crs is not None
-        assert ds.tags().get("UNNAT_BACKBONE") == "synthetic"
+        assert ds.tags().get("AYAMA_BACKBONE") == "synthetic"
 
     for stage in ("ingest", "depth", "anchors", "calibration", "assemble"):
         assert stage in res.timings_s
 
 
 def test_run_without_a_dem_drops_to_tier_c(written_scene):
-    from unnat.api.pipeline import run
+    from ayama.api.pipeline import run
 
     sc, paths = written_scene
     cfg = Config(backbone="synthetic", chip=256, n_bootstrap=0)
@@ -201,7 +201,7 @@ def test_run_without_a_dem_drops_to_tier_c(written_scene):
 
 def test_missing_dem_file_fails_loudly(written_scene):
     """A run must never silently proceed with a DEM it could not load."""
-    from unnat.api.pipeline import run
+    from ayama.api.pipeline import run
 
     sc, paths = written_scene
     cfg = Config(backbone="synthetic", chip=256, dem_source="copernicus", n_bootstrap=0)
@@ -210,12 +210,12 @@ def test_missing_dem_file_fails_loudly(written_scene):
 
 
 def test_ablation_variants_share_one_inference(written_scene):
-    from unnat.api.pipeline import load_dem
-    from unnat.core.ingest import ingest
-    from unnat.depth.infer import predict_depth
-    from unnat.eval.ablation import run_variants
-    from unnat.semantics.segment import segment
-    from unnat.semantics.shadow import detect_shadow
+    from ayama.api.pipeline import load_dem
+    from ayama.core.ingest import ingest
+    from ayama.depth.infer import predict_depth
+    from ayama.eval.ablation import run_variants
+    from ayama.semantics.segment import segment
+    from ayama.semantics.shadow import detect_shadow
 
     sc, paths = written_scene
     scene = ingest(paths["rgb"])
@@ -239,9 +239,9 @@ def test_reference_is_reprojected_not_squashed(written_scene, tmp_path):
     Reading with out_shape alone squashes a wider lidar DSM onto the tile, and
     every metric computed against it then looks plausible and means nothing.
     """
-    from unnat.api.pipeline import load_reference
-    from unnat.core.ingest import ingest
-    from unnat.dsm.cog import write_cog
+    from ayama.api.pipeline import load_reference
+    from ayama.core.ingest import ingest
+    from ayama.dsm.cog import write_cog
 
     sc, paths = written_scene
     scene = ingest(paths["rgb"])
@@ -265,7 +265,7 @@ def test_reference_is_reprojected_not_squashed(written_scene, tmp_path):
 
 def test_delta1_is_reported_against_reference_heights(written_scene):
     """delta1 needs heights above ground on both sides, or it is meaningless."""
-    from unnat.api.pipeline import run
+    from ayama.api.pipeline import run
 
     sc, paths = written_scene
     cfg = Config(backbone="synthetic", chip=256, dem_source=f"sim:{paths['dtm']}",

@@ -12,13 +12,13 @@ import os
 import numpy as np
 import pytest
 
-from unnat.mesh.encode import (MAX_CODE, TERRAIN_BASE_M, TERRAIN_STEP_M,
+from ayama.mesh.encode import (MAX_CODE, TERRAIN_BASE_M, TERRAIN_STEP_M,
                                decode_linear, decode_normal_map,
                                decode_terrain_rgb, encode_linear,
                                encode_terrain_rgb, normal_map,
                                quantisation_step)
-from unnat.mesh.obj import write_obj
-from unnat.mesh.tiles import (cut, grid_size, interior, pyramid, reassemble,
+from ayama.mesh.obj import write_obj
+from ayama.mesh.tiles import (cut, grid_size, interior, pyramid, reassemble,
                               tile_specs)
 
 

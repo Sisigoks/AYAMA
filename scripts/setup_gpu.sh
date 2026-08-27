@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# UNNAT GPU environment setup (Linux / WSL).
+# AYAMA GPU environment setup (Linux / WSL).
 #
 #   bash scripts/setup_gpu.sh              # detect CUDA, build .venv, verify
 #   CUDA=cu121 bash scripts/setup_gpu.sh   # force a wheel index
@@ -26,7 +26,7 @@ detect_cuda() {
 }
 CUDA=${CUDA:-$(detect_cuda)}
 
-echo "== UNNAT setup =="
+echo "== AYAMA setup =="
 echo "   python : $($PY --version 2>&1)"
 echo "   cuda   : $CUDA"
 if command -v nvidia-smi >/dev/null 2>&1; then
@@ -53,12 +53,12 @@ fi
 $PIP install --quiet transformers
 
 echo "== verify =="
-$PYBIN -m unnat.cli doctor
+$PYBIN -m ayama.cli doctor
 
 cat <<'EOF'
 
 Next:
-  .venv/bin/python -m unnat.cli synth --out data/sample.tif --size 2048
+  .venv/bin/python -m ayama.cli synth --out data/sample.tif --size 2048
   bash scripts/harness.sh                      # full harness, writes to out/harness
   .venv/bin/python -m pytest tests -q -m gpu -v # GPU-only checks
 EOF

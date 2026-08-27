@@ -5,7 +5,7 @@ the website are the numbers a reviewer can regenerate with one command. Each
 entry carries the environment it was measured on and the provenance of every
 input, because a metric without those is a rumour.
 
-    python -m unnat.cli study --backbone dav2-vits --out results
+    python -m ayama.cli study --backbone dav2-vits --out results
 
 Four experiments:
 
@@ -75,7 +75,7 @@ def scene_experiment(
     img = os.path.join(scene_dir, "scene.tif")
     dsm_ref = os.path.join(scene_dir, "scene_dsm.tif")
     dtm_ref = os.path.join(scene_dir, "scene_dtm.tif")
-    write_rgb(img, sc.rgb, sc.meta, tags={"UNNAT_STAGE": "synthetic_rgb"})
+    write_rgb(img, sc.rgb, sc.meta, tags={"AYAMA_STAGE": "synthetic_rgb"})
     write_cog(dsm_ref, sc.dsm_m, sc.meta, description="ground-truth DSM (m)")
     write_cog(dtm_ref, sc.dtm_m, sc.meta, description="ground-truth DTM (m)")
 

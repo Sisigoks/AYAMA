@@ -1,7 +1,7 @@
 """The whole method, as one readable function.
 
 If a judge asks "show me your method", this is the file to open. Every stage is
-a pure function over the contracts in unnat.core.types, so any stage can be
+a pure function over the contracts in ayama.core.types, so any stage can be
 swapped, disabled or ablated from the config without touching the others.
 """
 from __future__ import annotations
@@ -353,10 +353,10 @@ def write_outputs(surface, scene, sem, shadow, relative, out_dir: str,
                   provenance: Optional[dict] = None) -> dict:
     os.makedirs(out_dir, exist_ok=True)
     meta = surface.meta
-    tags = {f"UNNAT_{k.upper()}": str(v) for k, v in (provenance or {}).items()}
+    tags = {f"AYAMA_{k.upper()}": str(v) for k, v in (provenance or {}).items()}
     art = {}
     art["dsm"] = write_cog(os.path.join(out_dir, "dsm.tif"), surface.dsm_m, meta,
-                           description="DSM (m)", tags={**tags, "UNNAT_UNITS": "m"})
+                           description="DSM (m)", tags={**tags, "AYAMA_UNITS": "m"})
     art["ndsm"] = write_cog(os.path.join(out_dir, "ndsm.tif"), surface.ndsm_m, meta,
                             description="height above ground (m)", tags=tags)
     art["sigma"] = write_cog(os.path.join(out_dir, "sigma.tif"), surface.sigma_m, meta,

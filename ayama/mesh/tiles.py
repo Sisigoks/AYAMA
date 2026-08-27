@@ -1,6 +1,6 @@
 """Tiling with overlap padding, so per-tile derivatives match at the seams.
 
-This is the same problem [`unnat/depth/infer.py`](../depth/infer.py) solves for
+This is the same problem [`ayama/depth/infer.py`](../depth/infer.py) solves for
 inference chips, reappearing at delivery resolution and with a different fix.
 Inference chips overlap and are *blended*, because neighbouring chips genuinely
 disagree. Delivery tiles are cut from one already-consistent raster, so there is

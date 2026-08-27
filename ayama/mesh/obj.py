@@ -3,7 +3,7 @@
 The browser viewer is the demo; this is the deliverable. An OBJ plus MTL plus
 the aligned texture opens in Blender, MeshLab, CloudCompare and every DCC tool
 without a plugin, which makes the output reviewable by someone who will never
-install UNNAT - the same reason every raster is written as a COG.
+install AYAMA - the same reason every raster is written as a COG.
 
 Geometry convention, stated once because a silent axis flip here produces a
 mesh that looks fine and is mirrored:
@@ -43,7 +43,7 @@ def write_obj(
     texture_name: Optional[str] = None,
     stride: int = 1,
     exaggeration: float = 1.0,
-    name: str = "unnat_surface",
+    name: str = "ayama_surface",
 ) -> dict:
     """Write `path` (.obj), its .mtl sidecar, and return a summary dict.
 
@@ -83,7 +83,7 @@ def write_obj(
     mtl_name = os.path.basename(mtl_path)
 
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(f"# UNNAT {name}\n")
+        fh.write(f"# AYAMA {name}\n")
         fh.write(f"# grid {h} x {w}  step {step:.6g} m  exaggeration {exaggeration:g}\n")
         fh.write("# axes: +X east, +Y north, +Z up (metres from the SW corner)\n")
         fh.write(f"mtllib {mtl_name}\n")

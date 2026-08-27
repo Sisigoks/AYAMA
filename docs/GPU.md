@@ -1,4 +1,4 @@
-# Running UNNAT on a GPU box
+# Running ĀYĀMA on a GPU box
 
 Everything here works with no data to download: the harness generates a
 synthetic town with a known DSM, correct CRS, sun angles and ray-marched
@@ -10,7 +10,7 @@ it at your own imagery when you have some.
 ## Quick start
 
 ```bash
-git clone <repo> && cd unnat
+git clone <repo> && cd ayama
 bash scripts/setup_gpu.sh          # detects CUDA, builds .venv, verifies
 bash scripts/harness.sh            # doctor, tests, bench, run, ablation
 ```
@@ -21,13 +21,13 @@ with the whole transcript.
 
 ### Colab
 
-Open `notebooks/unnat_gpu_harness.ipynb`, set the runtime to GPU, run all.
+Open `notebooks/ayama_gpu_harness.ipynb`, set the runtime to GPU, run all.
 
 ### Docker
 
 ```bash
-docker build -t unnat:gpu .
-docker run --gpus all --rm -it -v unnat-cache:/cache -v "$PWD:/work" unnat:gpu \
+docker build -t ayama:gpu .
+docker run --gpus all --rm -it -v ayama-cache:/cache -v "$PWD:/work" ayama:gpu \
     bash scripts/harness.sh
 ```
 
@@ -42,7 +42,7 @@ The site publishes whatever is in `results/`. To replace the CPU numbers with
 yours:
 
 ```bash
-python -m unnat.cli study --out results \
+python -m ayama.cli study --out results \
     --backbone dav2-vitl --device cuda --batch 0 --size 2048 --seeds 7,21,33
 git add results && git commit -m "results: GPU run" && git push
 ```
@@ -66,7 +66,7 @@ An interactive terminal gets one line, rewritten in place:
 A notebook, a CI log or a redirect to a file gets timestamped lines instead, at
 most one every 20 s, because thousands of carriage returns in a log file are
 unreadable. The mode is detected automatically; force it with
-`--progress rich|plain|none` (or `UNNAT_PROGRESS=plain` in the environment).
+`--progress rich|plain|none` (or `AYAMA_PROGRESS=plain` in the environment).
 
 The line carries the whole nesting at once — which scene, which stage, which
 chip — because "12/36" alone does not tell anyone how much of the run is left.
@@ -97,8 +97,8 @@ Re-plot without re-running inference — captions and colours cost seconds, a GP
 hour does not:
 
 ```bash
-python -m unnat.cli figures --study results/study.json
-python -m unnat.cli study --no-figures ...   # skip them during a sweep
+python -m ayama.cli figures --study results/study.json
+python -m ayama.cli study --no-figures ...   # skip them during a sweep
 ```
 
 Two figures need a completed run on disk (`fig5`, `fig6`) because they read the
@@ -110,7 +110,7 @@ from the aggregate.
 ### `doctor` — is this machine ready
 
 ```bash
-python -m unnat.cli doctor --load dav2-vits,dav2-vitl
+python -m ayama.cli doctor --load dav2-vits,dav2-vitl
 ```
 
 Prints platform, torch, CUDA, GPU name, VRAM total and free, GDAL, and then
@@ -120,7 +120,7 @@ missing, so it works as a CI gate.
 ### `bench` — how fast, and what fits
 
 ```bash
-python -m unnat.cli bench --image data/scene.tif \
+python -m ayama.cli bench --image data/scene.tif \
     --backbones dav2-vits,dav2-vitb,dav2-vitl \
     --chips 518,1024 --batches 1,2,4,8 --device cuda --json out/bench.json
 ```
@@ -136,7 +136,7 @@ Batch size `0` means "pick from free VRAM" (`suggest_batch_size`).
 ### `run` — the full pipeline
 
 ```bash
-python -m unnat.cli run data/scene.tif --out out/run \
+python -m ayama.cli run data/scene.tif --out out/run \
     --backbone dav2-vitl --device cuda --batch 0 \
     --dem sim:data/scene_dtm.tif --ref data/scene_dsm.tif \
     --bootstrap 24 --json out/run_summary.json
@@ -149,7 +149,7 @@ breakdown.
 Artifacts written to `--out`: `dsm.tif`, `ndsm.tif`, `sigma.tif`, `sem.tif`,
 `shadow.tif`, `relative_depth.tif`, `error.tif` (with `--ref`), `texture.jpg`,
 quick-look PNGs, and `provenance.json`. All COGs, all openable in QGIS without
-UNNAT installed.
+ĀYĀMA installed.
 
 `--dem` takes a real bare-earth GeoTIFF, or `sim:<terrain.tif>` to simulate a
 Copernicus GLO-30 from a known terrain surface during development. Network DEM
@@ -159,7 +159,7 @@ DEM it could not load.
 ### `ablate` — which parts earn their place
 
 ```bash
-python -m unnat.cli ablate data/scene.tif --ref data/scene_dsm.tif \
+python -m ayama.cli ablate data/scene.tif --ref data/scene_dsm.tif \
     --dem sim:data/scene_dtm.tif --backbone dav2-vitl --device cuda --json out/ablation.json
 ```
 

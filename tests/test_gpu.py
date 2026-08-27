@@ -15,7 +15,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from unnat.depth.infer import predict_depth
+from ayama.depth.infer import predict_depth
 
 
 class _DeterministicBackbone:
@@ -64,7 +64,7 @@ def test_cuda_is_visible_and_reports_memory():
 
 @pytest.mark.gpu
 def test_device_resolution_prefers_cuda():
-    from unnat.depth.backbones.hf import resolve_device, resolve_dtype
+    from ayama.depth.backbones.hf import resolve_device, resolve_dtype
 
     assert resolve_device("auto") == "cuda"
     assert resolve_dtype("auto", "cuda") == "float16"
@@ -75,7 +75,7 @@ def test_device_resolution_prefers_cuda():
 @pytest.mark.gpu
 @pytest.mark.slow
 def test_backbone_loads_onto_the_gpu():
-    from unnat.depth.backbones import get_backbone
+    from ayama.depth.backbones import get_backbone
 
     model = get_backbone("dav2-vits", device="cuda").load()
     assert model.device.startswith("cuda")
@@ -88,8 +88,8 @@ def test_backbone_loads_onto_the_gpu():
 @pytest.mark.slow
 def test_gpu_and_cpu_agree_on_the_same_chip():
     """fp16 on GPU must not move the surface more than the calibration residual."""
-    from unnat.depth.backbones import get_backbone
-    from unnat.eval.synthetic_scene import make_scene
+    from ayama.depth.backbones import get_backbone
+    from ayama.eval.synthetic_scene import make_scene
 
     sc = make_scene(size=518, gsd_m=0.5, seed=5)
     patch = sc.rgb[:518, :518]
@@ -107,8 +107,8 @@ def test_gpu_and_cpu_agree_on_the_same_chip():
 @pytest.mark.gpu
 @pytest.mark.slow
 def test_gpu_batching_matches_single_chip_inference():
-    from unnat.depth.backbones import get_backbone
-    from unnat.eval.synthetic_scene import make_scene
+    from ayama.depth.backbones import get_backbone
+    from ayama.eval.synthetic_scene import make_scene
 
     sc = make_scene(size=518, gsd_m=0.5, seed=6)
     patches = [sc.rgb[:518, :518], np.flipud(sc.rgb[:518, :518]).copy()]
@@ -124,8 +124,8 @@ def test_gpu_batching_matches_single_chip_inference():
 @pytest.mark.gpu
 @pytest.mark.slow
 def test_suggested_batch_size_fits_in_memory():
-    from unnat.depth.backbones import get_backbone
-    from unnat.eval.synthetic_scene import make_scene
+    from ayama.depth.backbones import get_backbone
+    from ayama.eval.synthetic_scene import make_scene
 
     model = get_backbone("dav2-vits", device="cuda").load()
     n = model.suggest_batch_size(518)
@@ -141,10 +141,10 @@ def test_suggested_batch_size_fits_in_memory():
 @pytest.mark.slow
 def test_full_pipeline_runs_on_gpu(tmp_path):
     """The whole thing, end to end, on the device the demo will use."""
-    from unnat.api.pipeline import run
-    from unnat.core.types import Config
-    from unnat.dsm.cog import write_cog, write_rgb
-    from unnat.eval.synthetic_scene import make_scene
+    from ayama.api.pipeline import run
+    from ayama.core.types import Config
+    from ayama.dsm.cog import write_cog, write_rgb
+    from ayama.eval.synthetic_scene import make_scene
 
     sc = make_scene(size=512, gsd_m=0.5, seed=8)
     img = str(tmp_path / "scene.tif")

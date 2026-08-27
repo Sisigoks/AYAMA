@@ -37,52 +37,55 @@ LOG="$OUT/harness.log"
 say() { echo "" | tee -a "$LOG"; echo "=== $* ===" | tee -a "$LOG"; }
 run() { echo "\$ $*" | tee -a "$LOG"; "$@" 2>&1 | tee -a "$LOG"; return "${PIPESTATUS[0]}"; }
 
-say "1/6  doctor"
-run "$PYBIN" -m unnat.cli doctor --load "$BACKBONES" --device "$DEVICE"
+say "1/8  doctor"
+run "$PYBIN" -m ayama.cli doctor --load "$BACKBONES" --device "$DEVICE"
 
 if [ -z "$IMAGE" ]; then
-  say "2/6  synthetic scene (${SIZE}x${SIZE}, known ground truth)"
-  run "$PYBIN" -m unnat.cli synth --out "$OUT/scene.tif" --size "$SIZE"
+  say "2/8  synthetic scene (${SIZE}x${SIZE}, known ground truth)"
+  run "$PYBIN" -m ayama.cli synth --out "$OUT/scene.tif" --size "$SIZE"
   IMAGE="$OUT/scene.tif"
   REF="$OUT/scene_dsm.tif"
   DEM="sim:$OUT/scene_dtm.tif"
 else
-  say "2/6  using supplied image"
-  run "$PYBIN" -m unnat.cli info "$IMAGE"
+  say "2/8  using supplied image"
+  run "$PYBIN" -m ayama.cli info "$IMAGE"
 fi
 
-say "3/7  unit tests"
+say "3/8  unit tests"
 run "$PYBIN" -m pytest tests -q
 
-say "4/7  throughput sweep"
-run "$PYBIN" -m unnat.cli bench --image "$IMAGE" --backbones "$BACKBONES" \
+say "4/8  throughput sweep"
+run "$PYBIN" -m ayama.cli bench --image "$IMAGE" --backbones "$BACKBONES" \
     --chips "$CHIPS" --batches "$BATCHES" --device "$DEVICE" --dtype "$DTYPE" \
     --json "$OUT/bench.json"
 
-say "5/7  full pipeline run"
-CMD=("$PYBIN" -m unnat.cli run "$IMAGE" --out "$OUT/run" --backbone "$PRIMARY"
+say "5/8  full pipeline run"
+CMD=("$PYBIN" -m ayama.cli run "$IMAGE" --out "$OUT/run" --backbone "$PRIMARY"
      --device "$DEVICE" --batch 0 --bootstrap "$BOOTSTRAP" --json "$OUT/run_summary.json")
 [ -n "$DEM" ] && CMD+=(--dem "$DEM")
 [ -n "$REF" ] && CMD+=(--ref "$REF")
 run "${CMD[@]}"
 
 if [ -n "$REF" ]; then
-  say "6/7  ablation table"
-  ABL=("$PYBIN" -m unnat.cli ablate "$IMAGE" --ref "$REF" --backbone "$PRIMARY"
+  say "6/8  ablation table"
+  ABL=("$PYBIN" -m ayama.cli ablate "$IMAGE" --ref "$REF" --backbone "$PRIMARY"
        --device "$DEVICE" --batch 0 --bootstrap "$BOOTSTRAP" --json "$OUT/ablation.json")
   [ -n "$DEM" ] && ABL+=(--dem "$DEM")
   run "${ABL[@]}"
 else
-  say "6/7  ablation skipped (no REF supplied)"
+  say "6/8  ablation skipped (no REF supplied)"
 fi
 
-say "7/7  Phase 3 tileset + mesh"
-run "$PYBIN" -m unnat.cli mesh "$OUT/run" --out "$OUT/tiles3d" --progress plain
+say "7/8  Phase 3 tileset + mesh"
+run "$PYBIN" -m ayama.cli mesh "$OUT/run" --out "$OUT/tiles3d" --progress plain
 if command -v node >/dev/null 2>&1; then
   run node scripts/check_app.js "$OUT/tiles3d"
 else
   say "     viewer render check skipped (node not on PATH)"
 fi
+
+say "8/8  Phase 3/4 delivery benchmark"
+run "$PYBIN" -m ayama.cli delivery "$OUT/run" --out "$OUT/delivery"     --obj-strides 2,4
 
 say "done"
 echo "results in $OUT:" | tee -a "$LOG"

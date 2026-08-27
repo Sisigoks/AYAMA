@@ -1,4 +1,4 @@
-"""UNNAT data contracts.
+"""AYAMA data contracts.
 
 Every pipeline stage is a pure function ``stage(input_contract) -> output_contract``.
 These dataclasses are the interface between the six parallel workstreams; they are
@@ -103,7 +103,7 @@ class Scene:
 
 @dataclass
 class DepthField:
-    """Unitless relative surface. Higher value = taller (see unnat.depth.infer)."""
+    """Unitless relative surface. Higher value = taller (see ayama.depth.infer)."""
 
     relative: np.ndarray                  # (H, W) float32 in [0, 1]
     meta: SceneMeta

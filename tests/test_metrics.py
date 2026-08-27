@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from unnat.eval.metrics import (evaluate, evaluate_by_class,
+from ayama.eval.metrics import (evaluate, evaluate_by_class,
                                 expected_calibration_error, format_table)
 
 
@@ -78,7 +78,7 @@ def test_edge_f1_drops_when_structures_move(ref):
 
 
 def test_per_class_breakdown_isolates_the_hard_class():
-    from unnat.core.types import BARE_GROUND, BUILDING
+    from ayama.core.types import BARE_GROUND, BUILDING
 
     ref = np.full((64, 64), 400.0)
     sem = np.full((64, 64), BARE_GROUND, np.uint8)
