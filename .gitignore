@@ -3,7 +3,11 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .ipynb_checkpoints/
-data/
+# Anchored to the root on purpose. A bare 'data/' matches any directory of
+# that name at any depth, which silently swallowed web/data/ - the demo
+# tileset the published viewer loads - and would have failed the Pages
+# deploy on a fresh checkout.
+/data/
 out/harness*/
 out/
 runs/
