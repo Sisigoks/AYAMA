@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import sys
 import time
 from typing import Optional
@@ -831,6 +832,163 @@ def cmd_delivery(args) -> int:
     return 1 if bad else 0
 
 
+def _device_available(device: str) -> tuple:
+    """(is it usable, why not). Never raises - the caller wants a verdict."""
+    try:
+        import torch
+    except ImportError:
+        return False, "torch is not installed"
+    if device == "cuda":
+        if not torch.cuda.is_available():
+            built = getattr(torch.version, "cuda", None)
+            return False, (
+                f"CUDA is not available to torch {torch.__version__}"
+                + (f" (built against CUDA {built})" if built
+                   else " - this is a CPU-only build")
+            )
+        return True, ""
+    if device == "mps":
+        backend = getattr(torch.backends, "mps", None)
+        if backend is None or not backend.is_available():
+            return False, "MPS is not available to this torch build"
+        return True, ""
+    return True, ""
+
+
+def cmd_preflight(args) -> int:
+    """Run the whole pipeline end to end on one device and report a verdict.
+
+    The question "does this work on a GPU" cannot be answered by inspection, and
+    it cannot be answered on a machine without one. So it is answered by a
+    command: this runs synth -> depth -> anchors -> AGMC -> uncertainty ->
+    artifacts -> tileset on whatever device is selected, checks the device that
+    was *actually* used rather than the one requested, and fails loudly.
+
+    On a CUDA box:  python -m ayama.cli preflight --device cuda --backbone dav2-vits
+
+    Exit status is 0 only if every stage ran, the device matched the request,
+    every headline metric came back finite, and the artifacts are on disk.
+    """
+    import tempfile
+
+    import numpy as np
+
+    from .api.pipeline import run as run_pipeline
+    from .core.types import Config
+    from .eval.bench import device_report
+    from .eval.synthetic_scene import make_scene
+    from .mesh.build import build_tileset
+    from .dsm.cog import write_cog, write_rgb
+
+    rep = device_report()
+    print("AYAMA preflight\n")
+    print(f"  requested device   {args.device}")
+    print(f"  torch              {rep.get('torch')}   CUDA available: {rep.get('cuda_available')}")
+    if rep.get("gpu"):
+        print(f"  gpu                {rep['gpu']}  {rep.get('vram_total_gb')} GB")
+
+    # Fail here, clearly, rather than 40 lines deep inside torch. "Is my GPU
+    # set up" is the question this command exists to answer, so an unavailable
+    # device is a verdict, not a traceback.
+    want = args.device
+    if want in ("cuda", "mps") and args.backbone != "synthetic":
+        available, why = _device_available(want)
+        if not available:
+            print("\n  device used        UNAVAILABLE")
+            print("\nPREFLIGHT FAILED")
+            print(f"  ! {why}")
+            print("  ! install a CUDA build of torch, e.g.")
+            print("      pip install torch torchvision "
+                  "--index-url https://download.pytorch.org/whl/cu124")
+            return 1
+
+    failures = []
+    work = tempfile.mkdtemp(prefix="ayama-preflight-")
+    t0 = time.time()
+
+    # ---- a scene with known truth, so the metrics mean something ----------
+    sc = make_scene(size=args.size, gsd_m=0.5, seed=11)
+    img = os.path.join(work, "scene.tif")
+    write_rgb(img, sc.rgb, sc.meta, tags={"AYAMA_STAGE": "synthetic_rgb"})
+    dsm_p = os.path.join(work, "scene_dsm.tif")
+    dtm_p = os.path.join(work, "scene_dtm.tif")
+    write_cog(dsm_p, sc.dsm_m, sc.meta, description="reference DSM (m)")
+    write_cog(dtm_p, sc.dtm_m, sc.meta, description="reference DTM (m)")
+    print(f"  scene              {args.size} x {args.size} px at 0.5 m")
+
+    # ---- the full pipeline on the requested device -----------------------
+    cfg = Config(
+        backbone=args.backbone, chip=min(args.chip, args.size), reference=dsm_p,
+        dem_source=f"sim:{dtm_p}", n_bootstrap=args.bootstrap,
+        extras={"device": args.device, "batch_size": args.batch,
+                "workers": args.workers},
+    )
+    out_dir = os.path.join(work, "run")
+    print("\n  running the pipeline ...")
+    res = run_pipeline(img, cfg=cfg, out_dir=out_dir, write_artifacts=True)
+
+    # ---- did it use the device we asked for? -----------------------------
+    used = "unknown"
+    try:
+        from .depth.backbones import get_backbone
+
+        m = get_backbone(args.backbone, device=args.device)
+        m.load()
+        used = m.stats().get("device", "unknown")
+        dtype = m.stats().get("dtype", "?")
+    except Exception as exc:                       # synthetic backbone has no device
+        dtype = "-"
+        used = "n/a" if args.backbone == "synthetic" else f"error: {exc}"
+
+    print(f"\n  device used        {used} / {dtype}")
+    if args.device not in ("auto", "cpu") and args.backbone != "synthetic":
+        if not str(used).startswith(args.device):
+            failures.append(f"asked for {args.device} but the backbone ran on {used}")
+
+    # ---- every stage must have run ---------------------------------------
+    print("\n  stage timings")
+    for k, v in res.timings_s.items():
+        print(f"    {k:<14}{v:7.2f}s")
+    missing = [s for s in ("ingest", "depth", "anchors", "calibration",
+                           "uncertainty", "assemble") if s not in res.timings_s]
+    if missing:
+        failures.append(f"stages did not run: {missing}")
+
+    # ---- metrics must be finite ------------------------------------------
+    mets = res.metrics or {}
+    print("\n  metrics")
+    for k in ("mae_m", "rmse_m", "pearson_r", "coverage_1s", "edge_f1"):
+        v = mets.get(k)
+        ok = v is not None and np.isfinite(v)
+        print(f"    {k:<14}{'-' if v is None else f'{v:7.3f}'}   {'ok' if ok else 'NOT FINITE'}")
+        if not ok:
+            failures.append(f"metric {k} is not finite")
+
+    # ---- artifacts, and the delivery path -------------------------------
+    for name in ("dsm", "ndsm", "sigma"):
+        if not os.path.exists(os.path.join(out_dir, f"{name}.tif")):
+            failures.append(f"missing artifact {name}.tif")
+    try:
+        man = build_tileset(out_dir, os.path.join(work, "tiles"), tile=256,
+                            write_mesh=False, quantise_bits=12)
+        print(f"\n  tileset            {len(man['lods'])} LODs, "
+              f"{sum(len(l['tiles']) for l in man['lods'])} tiles")
+    except Exception as exc:
+        failures.append(f"tileset build failed: {exc}")
+
+    # ---- verdict ---------------------------------------------------------
+    dt = time.time() - t0
+    print(f"\n  wall               {dt:.1f}s")
+    shutil.rmtree(work, ignore_errors=True)
+    if failures:
+        print("\nPREFLIGHT FAILED")
+        for f in failures:
+            print(f"  ! {f}")
+        return 1
+    print(f"\nPREFLIGHT OK - the full pipeline runs end to end on {used}")
+    return 0
+
+
 def cmd_doctor(args) -> int:
     """Is this machine ready to run AYAMA, and how fast will it be."""
     from .eval.bench import device_report
@@ -1035,6 +1193,18 @@ def build_parser() -> argparse.ArgumentParser:
                       help="where timed builds are written (default: the system temp "
                            "directory, which is usually not virus-scanned)")
     pdel.set_defaults(func=cmd_delivery)
+
+    ppre = sub.add_parser("preflight",
+                          help="run the whole pipeline end to end on one device and verdict it")
+    ppre.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda", "mps"])
+    ppre.add_argument("--backbone", default="synthetic",
+                      help="use a real backbone (dav2-vits) to exercise the GPU path")
+    ppre.add_argument("--size", type=int, default=384)
+    ppre.add_argument("--chip", type=int, default=384)
+    ppre.add_argument("--batch", type=int, default=0)
+    ppre.add_argument("--bootstrap", type=int, default=4)
+    ppre.add_argument("--workers", type=int, default=0)
+    ppre.set_defaults(func=cmd_preflight)
 
     pdoc = sub.add_parser("doctor", help="check this machine is ready, and how fast it is")
     pdoc.add_argument("--load", default=None,

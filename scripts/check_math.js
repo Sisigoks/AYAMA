@@ -36,9 +36,34 @@ for (const line of src.split('\n')) {
 const problems = [];
 const warnings = [];
 
+// Markdown is processed BEFORE the math renderer sees the source, so a literal
+// `*` inside an expression is consumed as emphasis and the LaTeX that reaches
+// KaTeX is not the LaTeX in the file. `$h^*_i$` arrives as `$h^_i$` and fails
+// with "Missing open brace for superscript" - on the rendered page only.
+//
+// This checker used to validate the raw source and passed while the published
+// page showed a red error box. Checking the source alone is not enough: the
+// hazard has to be caught here, because nothing downstream will.
+const MD_HAZARDS = [
+  [/\*/, 'a literal * (markdown eats it as emphasis) - use \\ast, \\star or \\cdot'],
+  [/(?<!\\)~/, 'a literal ~ (markdown strikethrough) - use \\sim or \\approx'],
+];
+
+function hazards(tex, label, i) {
+  for (const pair of MD_HAZARDS) {
+    if (pair[0].test(tex)) {
+      problems.push(label + ' #' + (i + 1) + ': contains ' + pair[1] +
+                    '\n    ' + tex.trim().slice(0, 150));
+      return true;
+    }
+  }
+  return false;
+}
+
 function run(list, label) {
   list.forEach((tex, i) => {
     const seen = [];
+    if (hazards(tex, label, i)) return;
     try {
       katex.renderToString(tex, {
         displayMode: label === 'display',

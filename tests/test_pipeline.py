@@ -274,3 +274,49 @@ def test_delta1_is_reported_against_reference_heights(written_scene):
     assert np.isfinite(res.metrics["delta1"]), "delta1 was not computed"
     assert 0.0 <= res.metrics["delta1"] <= 1.0
     assert res.metrics["delta1_n_px"] > 0
+
+
+# ------------------------------------------------------- device preflight
+def test_device_availability_returns_a_verdict_never_raises():
+    """`preflight` must answer "is my GPU set up", not traceback into torch."""
+    from ayama.cli import _device_available
+
+    for dev in ("cpu", "cuda", "mps", "auto"):
+        ok, why = _device_available(dev)
+        assert isinstance(ok, bool)
+        assert ok or why, f"{dev} unavailable without saying why"
+    assert _device_available("cpu")[0] is True
+
+
+def test_preflight_refuses_an_unavailable_device_cleanly():
+    """Asking for CUDA on a CPU-only build is a verdict with an exit code.
+
+    It previously raised `AssertionError: Torch not compiled with CUDA enabled`
+    from forty frames inside torch, which is the least useful possible answer to
+    the one question the command exists to answer.
+    """
+    import torch
+
+    if torch.cuda.is_available():
+        pytest.skip("this box has CUDA; the refusal path cannot be exercised")
+
+    from ayama.cli import build_parser, main
+
+    args = build_parser().parse_args(
+        ["preflight", "--device", "cuda", "--backbone", "dav2-vits"])
+    assert args.func.__name__ == "cmd_preflight"
+    assert main(["preflight", "--device", "cuda", "--backbone", "dav2-vits"]) == 1
+
+
+@pytest.mark.slow
+def test_preflight_passes_end_to_end_on_this_machine():
+    """The whole pipeline, on whatever device this is, with a verdict.
+
+    Deliberately runs the real command rather than the pieces: the point is that
+    one invocation proves synth -> depth -> anchors -> AGMC -> uncertainty ->
+    artifacts -> tileset, which is what someone with a fresh GPU box needs.
+    """
+    from ayama.cli import main
+
+    assert main(["preflight", "--device", "cpu", "--backbone", "synthetic",
+                 "--size", "256", "--chip", "256", "--bootstrap", "3"]) == 0

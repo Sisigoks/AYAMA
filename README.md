@@ -87,33 +87,59 @@ product became useless**, and the protocol caught it.
 ```mermaid
 flowchart TB
     classDef inp  fill:#e8f1fd,stroke:#2a78d6,color:#0d366b
-    classDef st   fill:#f7f6f3,stroke:#52514e,color:#0b0b0b
+    classDef p1   fill:#f7f6f3,stroke:#52514e,color:#0b0b0b
     classDef core fill:#fdece6,stroke:#eb6834,stroke-width:2px,color:#7a2f10
     classDef out  fill:#fff8e1,stroke:#b8860b,color:#5c4200
-    classDef ev   fill:#e6f7f1,stroke:#1baf7a,color:#0b4f38
+    classDef ev   fill:#e6f7f1,stroke:#1baf7a,stroke-width:2px,color:#0b4f38
+    classDef p3   fill:#eef0ff,stroke:#6b5bd6,color:#2f2470
 
     IMG["single RGB image<br/>+ sun angles"]:::inp
     AUX["public DEM · GCPs<br/>optional"]:::inp
 
-    DEP["relative depth D<br/>tiled backbone inference"]:::st
-    SEM["semantics + shadow mask"]:::st
-    ANC["anchor construction<br/>absolute: DEM, water, GCP<br/>relative: shadow heights"]:::st
+    subgraph PH1["PHASE 1 · relative depth"]
+        DEP["tiled backbone inference<br/>rank-normalise · harmonise · blend<br/><b>the only GPU stage</b>"]:::p1
+    end
 
-    AGMC["AGMC<br/>solve fields a(p), b(p)<br/>IRLS + Huber, lattice"]:::core
-    UNC["uncertainty<br/>bootstrap + model + reference"]:::core
+    subgraph PH2["PHASE 2 · metric calibration — the research core"]
+        SEM["semantics + shadow mask"]:::p1
+        ANC["anchor construction<br/>absolute: DEM, water, GCP<br/>relative: shadow heights"]:::p1
+        AGMC["AGMC<br/>solve fields a(p), b(p)<br/>IRLS + Huber on a lattice"]:::core
+        UNC["uncertainty<br/>bootstrap + model + reference<br/>threaded, bit-identical"]:::core
+        ASM["assemble<br/>DSM = DTM + nDSM"]:::p1
+    end
 
-    DSM["metric DSM + nDSM + sigma"]:::out
-    EVAL["evaluation<br/>vs reference DSM<br/>+ DEM-only floor<br/>+ global-affine baseline"]:::ev
+    COG["COG artifacts<br/>dsm · ndsm · sigma · error<br/>sem · shadow · texture"]:::out
+
+    subgraph PH34["PHASES 3–4 · delivery (engineering, §8)"]
+        TILE["encode + tile + normals<br/>terrain-RGB · 12-bit linear"]:::p3
+        MESH["OBJ + MTL mesh"]:::p3
+        VIEW["WebGL viewer<br/>+ derive_notes"]:::p3
+    end
+
+    EVAL["EVALUATION<br/>vs reference DSM<br/>+ DEM-only floor<br/>+ global-affine baseline<br/>edge F1 · delta1 · coverage"]:::ev
 
     IMG --> DEP --> AGMC
     IMG --> SEM --> ANC
-    AUX --> ANC --> AGMC --> UNC --> DSM --> EVAL
+    SEM --> AGMC
+    AUX --> ANC --> AGMC --> UNC --> ASM --> COG
     DEP -. "shape only, never metres" .-> ANC
+    COG --> EVAL
+    COG --> TILE --> VIEW
+    COG --> MESH
+    EVAL -. "the floor baseline fires here" .-> AGMC
 ```
 
-**Figure 1.** The dashed edge is the design commitment: anchors are harvested
-from the image and auxiliary data, never from the depth field. Depth supplies
-*shape*; the anchor graph supplies *metres*.
+**Figure 1 — the whole pipeline.** Two edges carry the design. The dashed
+`depth → anchors` edge is the commitment that anchors come from the image and
+auxiliary data, **never from the depth field**: depth supplies *shape*, the
+anchor graph supplies *metres*. The dashed `evaluation → AGMC` edge is the one
+this project turns on — the DEM-only floor baseline is what revealed that the
+calibration had degenerated (§4), and it is why the protocol is a contribution
+rather than boilerplate.
+
+Everything downstream of the COG artifacts **only reads** them, so no number in
+the viewer or the mesh can be one the calibration did not produce. Phases 3–4
+are engineering and are reported in §8; the research core is Phase 2.
 
 ## 1.1 Problem statement
 
@@ -249,7 +275,7 @@ field (3.0 m for Copernicus GLO-30 [4]).
 Derived from §4, **not yet evaluated end to end.** Decompose depth with a
 Gaussian of radius ≈ 60 m and discard the low band:
 
-$$ D_{\text{lo}} = G_\sigma * D, \qquad D_{\text{hi}} = D - D_{\text{lo}} $$
+$$ D_{\text{lo}} = G_\sigma \ast D, \qquad D_{\text{hi}} = D - D_{\text{lo}} $$
 
 $$ H(p) \;=\; \underbrace{b(p)}_{\substack{\text{terrain} \\ \text{DEM, GCP, water anchors}}} \;+\; \underbrace{a(p)\, D_{\text{hi}}(p)}_{\substack{\text{structure} \\ \text{shadow anchors}}} $$
 
@@ -318,15 +344,15 @@ is invisible.
 
 ## 2.4 Metrics
 
-With $e_i = \hat{H}_i - H^*_i$ over valid pixels:
+With $e_i = \hat{H}_i - H^{\star}_i$ over valid pixels:
 
 | metric | definition | what it detects |
 |---|---|---|
 | MAE | $\frac{1}{N}\sum \lvert e_i \rvert$ | typical error magnitude |
 | RMSE | $\sqrt{\frac{1}{N}\sum e_i^2}$ | as above, large errors weighted |
 | bias | $\frac{1}{N}\sum e_i$ | systematic offset (wrong datum vs wrong model) |
-| Pearson *r*, Spearman *ρ* | on $(\hat{H}, H^*)$ | linear / rank agreement |
-| slope MAE | mean $\lvert \arctan\lVert\nabla \hat{H}\rVert - \arctan\lVert\nabla H^*\rVert \rvert$ | local geometry |
+| Pearson *r*, Spearman *ρ* | on $(\hat{H}, H^{\star})$ | linear / rank agreement |
+| slope MAE | mean $\lvert \arctan\lVert\nabla \hat{H}\rVert - \arctan\lVert\nabla H^{\star}\rVert \rvert$ | local geometry |
 | **edge F1** | see below | whether height discontinuities land in the right place |
 | **δ < 1.25** | see below | height-above-ground accuracy as a ratio |
 | **1σ coverage** | $\frac{1}{N}\sum \mathbf{1}(\lvert e_i \rvert \le \sigma_i)$ | is σ honest? ideal ≈ 0.683 |
@@ -340,7 +366,7 @@ dilation; report $F_1 = 2PR/(P+R)$.
 **δ < 1.25.** Computed on **height above ground**, not elevation, over pixels
 where both predicted and reference nDSM exceed 0.5 m:
 
-$$ \delta_1 \;=\; \frac{1}{|\Omega|}\sum_{i \in \Omega} \mathbf{1}\!\left(\max\!\left(\frac{\hat{h}_i}{h^*_i}, \frac{h^*_i}{\hat{h}_i}\right) < 1.25\right), \quad \Omega = \{i : \hat{h}_i > 0.5 \wedge h^*_i > 0.5\} $$
+$$ \delta_1 \;=\; \frac{1}{|\Omega|}\sum_{i \in \Omega} \mathbf{1}\!\left(\max\!\left(\frac{\hat{h}_i}{h^{\star}_i}, \frac{h^{\star}_i}{\hat{h}_i}\right) < 1.25\right), \quad \Omega = \{i : \hat{h}_i > 0.5 \wedge h^{\star}_i > 0.5\} $$
 
 A ratio metric is meaningless on absolute elevation, where a 400 m datum makes
 every ratio ≈ 1.
@@ -728,9 +754,10 @@ check, never a result).
 |---|---|---|
 | `python -m ayama.cli study --out results` | §3 and §4 — `results/study.json` | 450 s |
 | `python -m ayama.cli run <scene> --workers 8` | one scene, threaded bootstrap | 42 s |
+| `python -m ayama.cli preflight --device cuda` | end-to-end verdict on one device | 20 s |
 | `python -m ayama.cli delivery results/seed7/run --out results` | §8 — `results/delivery.json` | 68 s |
 | `python -m ayama.cli viewer results/seed7/run` | interactive 3D at `localhost:8020` | 5 s |
-| `python -m pytest tests -q` | 165 passed, 7 skipped (GPU) | 82 s |
+| `python -m pytest tests -q` | 168 passed, 7 skipped (GPU) | 102 s |
 
 ## 7.2 Reproduce the §4 diagnosis
 
@@ -831,21 +858,72 @@ accumulated in index order rather than completion order. Accumulating as futures
 land would make σ depend on thread scheduling — irreproducibility that is hard
 to notice and impossible to defend. There is a test asserting equality.
 
-### Running on a GPU
+### Verifying it end to end on a GPU
+
+Whether the pipeline runs on a GPU is not answerable by inspection, so it is
+answerable by a command. `preflight` runs synth → depth → anchors → AGMC →
+uncertainty → artifacts → tileset on the requested device, checks the device
+that was **actually used** rather than the one asked for, asserts every headline
+metric came back finite, and exits non-zero if anything failed:
+
+```bash
+python -m ayama.cli preflight --device cuda --backbone dav2-vits
+```
+
+```
+PREFLIGHT OK - the full pipeline runs end to end on cuda:0
+```
+
+On this CPU-only machine it correctly refuses, which is the same mechanism
+working:
+
+```
+PREFLIGHT FAILED
+  ! CUDA is not available to torch 2.13.0+cpu - this is a CPU-only build
+  ! install a CUDA build of torch, e.g.
+      pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+```
+
+That refusal path is tested; so is a full end-to-end preflight pass on CPU. What
+is **not** tested here is the CUDA success path, for the obvious reason.
 
 ```bash
 bash scripts/setup_gpu.sh                    # detects CUDA, builds .venv, verifies
+python -m ayama.cli preflight --device cuda --backbone dav2-vits   # <- start here
 python -m ayama.cli doctor --load dav2-vitl  # device, VRAM, load and warm-up time
 python -m ayama.cli bench --backbones dav2-vits,dav2-vitl \
     --chips 518,1024,2048 --batches 1,2,4,8  # throughput sweep, writes JSON
-python -m ayama.cli study --out results --backbone dav2-vitl \
-    --device cuda --batch 0 --size 2048      # the full study at scale
 python -m pytest tests -q -m gpu -v          # the 9 GPU tests, un-skipped
 ```
 
 `--batch 0` sizes the batch from free VRAM rather than making you guess;
 `--device auto` resolves CUDA → MPS → CPU. Docker and Colab paths are in
 [docs/GPU.md](docs/GPU.md).
+
+### What a GPU is actually for here
+
+Not speed. §2.6 lists the protocol's limits and every one of the top three is a
+*scale* problem that a CPU cannot solve in reasonable time:
+
+| limitation | CPU today | what a GPU makes feasible |
+|---|---|---|
+| **N = 3 scenes** | 450 s for 3 at 1024² | N = 30 in a comparable wall time |
+| **one backbone** | `dav2-vits` only | `dav2-vitl`, and a second family, to test whether the §4 anti-correlation is model-specific |
+| **fixed 1024² / 0.5 m** | 2048² is minutes/scene | 2048² and 4096², testing scale generalisation |
+
+**This is the useful GPU study**, and it is the one that would move §3 from
+"observed on three scenes" toward something defensible:
+
+```bash
+python -m ayama.cli study --out results/gpu \
+    --backbone dav2-vitl --device cuda --batch 0 \
+    --size 2048 --seeds 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20
+```
+
+Then re-run the H2 falsification list in §5.4 against it. A GPU does not make
+the negative result in §4 go away — the collapse is a property of the
+formulation, not of the compute — but it is what turns N = 3 into a sample and
+one backbone into a comparison.
 
 ### What the GPU tests assert
 
@@ -977,6 +1055,28 @@ finding.
 [10] D. Eigen, C. Puhrsch, R. Fergus. *Depth Map Prediction from a Single Image
     using a Multi-Scale Deep Network*. NIPS 2014. arXiv:1406.2283. — source of
     the δ < 1.25 metric.
+
+---
+
+# Licence
+
+**Apache License 2.0 with the Commons Clause restriction.** See [LICENSE](LICENSE).
+
+This is **source-available, not open source**, and it is not an OSI-approved
+licence — describe it as "Apache 2.0 with Commons Clause", never as "Apache 2.0"
+alone, because the Commons Clause materially changes the grant.
+
+The Commons Clause removes the right to **sell** the software or to sell a
+service whose value derives substantially from it. It does not forbid every
+commercial activity — internal commercial use remains permitted. If the intent
+is to bar *all* commercial use, the Commons Clause is the wrong instrument and
+[PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0/)
+is the purpose-built alternative; swapping it in is a one-file change.
+
+Model checkpoints, the Copernicus DEM and the other dependencies carry their own
+terms, which this licence does not supersede — they are listed at the foot of
+[LICENSE](LICENSE). The Depth Anything V2 **Large** checkpoint in particular has
+different terms from Small/Base and should be checked before any commercial use.
 
 ---
 

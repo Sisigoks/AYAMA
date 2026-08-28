@@ -7,6 +7,11 @@ name = "ayama"
 version = "0.1.0"
 description = "Physics-anchored monocular elevation: single RGB image to metric DSM"
 requires-python = ">=3.10"
+# Source-available, not OSI open source: Apache-2.0 with the Commons Clause
+# restriction. See LICENSE. Deliberately not the bare "Apache-2.0" SPDX id,
+# which would misstate the grant.
+license = { file = "LICENSE" }
+classifiers = ["License :: Other/Proprietary License"]
 dependencies = [
     "numpy>=1.26",
     "scipy>=1.11",
