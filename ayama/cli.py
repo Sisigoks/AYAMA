@@ -855,6 +855,32 @@ def _device_available(device: str) -> tuple:
     return True, ""
 
 
+def cmd_serve(args) -> int:
+    """Run the web service: upload a scene, watch it reconstruct, view it in 3D.
+
+    Distinct from `viewer`, which serves one prebuilt tileset and runs no
+    pipeline. This one accepts uploads and runs the whole thing per request, so
+    it needs the `api` extra and it needs to be treated as a service rather than
+    a script - see the warnings in ayama/api/server.py about what it does not do.
+    """
+    from .api.server import serve
+
+    print(f"AYAMA serve   http://{args.host}:{args.port}/")
+    print(f"  jobs         {os.path.abspath(args.jobs)}")
+    print(f"  device       {args.device}")
+    print(f"  concurrency  {args.concurrency} reconstruction"
+          f"{'' if args.concurrency == 1 else 's'} at a time")
+    if args.host not in ("127.0.0.1", "localhost"):
+        print("  ! bound beyond localhost: there is no auth and no rate limiting here")
+    print()
+    try:
+        return serve(host=args.host, port=args.port, jobs_root=args.jobs,
+                     device=args.device, max_concurrent=args.concurrency)
+    except RuntimeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+
 def cmd_preflight(args) -> int:
     """Run the whole pipeline end to end on one device and report a verdict.
 
@@ -1193,6 +1219,15 @@ def build_parser() -> argparse.ArgumentParser:
                       help="where timed builds are written (default: the system temp "
                            "directory, which is usually not virus-scanned)")
     pdel.set_defaults(func=cmd_delivery)
+
+    psrv = sub.add_parser("serve", help="web service: upload an image, get a 3D reconstruction")
+    psrv.add_argument("--host", default="127.0.0.1")
+    psrv.add_argument("--port", type=int, default=8000)
+    psrv.add_argument("--jobs", default="out/jobs", help="where uploads and results live")
+    psrv.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda", "mps"])
+    psrv.add_argument("--concurrency", type=int, default=1,
+                      help="reconstructions at a time; each wants several cores")
+    psrv.set_defaults(func=cmd_serve)
 
     ppre = sub.add_parser("preflight",
                           help="run the whole pipeline end to end on one device and verdict it")

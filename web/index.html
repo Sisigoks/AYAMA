@@ -10,7 +10,104 @@
 </head>
 <body>
 
-<div id="app" class="app">
+<!-- ── landing: upload ─────────────────────────────────────────────────── -->
+<section id="landing" class="page" hidden>
+  <div class="page-inner">
+    <header class="hero">
+      <div class="brand">
+        <span class="mark" aria-hidden="true"></span>
+        <span class="name">ĀYĀMA</span>
+        <span class="deva" lang="hi">आयाम</span>
+      </div>
+      <h1>Metric elevation from a single image</h1>
+      <p class="lede">
+        Upload a nadir satellite or aerial image. ĀYĀMA estimates relative depth,
+        harvests metric anchors from the scene — a public DEM where one is
+        configured, water bodies, and cast-shadow geometry — solves a spatially
+        varying calibration, and returns a metric surface you can inspect in 3D
+        and download as GeoTIFF.
+      </p>
+
+      <div class="note critical" role="note">
+        <b>Read this before trusting a result</b>
+        <span>This is a research proof of concept with a <strong>known,
+        diagnosed failure</strong>: the calibration's scale field collapses to
+        its floor and building relief is suppressed to a few centimetres. Expect
+        good terrain and flattened structures. Every reconstruction states its
+        own defects on the result screen. See section 4 of the README.</span>
+      </div>
+    </header>
+
+    <form id="upload-form" class="upload">
+      <div id="drop" class="drop" tabindex="0" role="button"
+           aria-label="Choose or drop an image">
+        <div class="drop-title">Drop an image here, or click to choose</div>
+        <div class="drop-sub">GeoTIFF, PNG or JPEG · up to 64 MB · up to 4096 × 4096</div>
+        <div id="chosen" class="chosen"></div>
+        <input id="file" type="file" accept=".tif,.tiff,.png,.jpg,.jpeg" hidden>
+      </div>
+
+      <details class="opts">
+        <summary>Options</summary>
+        <div class="opt-grid">
+          <label>Backbone
+            <select id="backbone">
+              <option value="dav2-vits">Depth Anything V2 Small — fastest</option>
+              <option value="dav2-vitb">Depth Anything V2 Base</option>
+              <option value="dav2-vitl">Depth Anything V2 Large — best, needs a GPU</option>
+              <option value="synthetic">synthetic — no weights, plumbing check only</option>
+            </select>
+          </label>
+          <label>Chip size
+            <select id="chip">
+              <option value="512">512 px</option>
+              <option value="1024">1024 px</option>
+              <option value="518">518 px — the backbone's native size</option>
+            </select>
+          </label>
+          <label>Bootstrap resamples
+            <select id="bootstrap">
+              <option value="8">8 — quick</option>
+              <option value="12" selected>12</option>
+              <option value="24">24 — the study setting</option>
+            </select>
+          </label>
+          <label class="chk"><input type="checkbox" id="want-mesh">
+            also export a textured OBJ mesh</label>
+        </div>
+        <p class="fine">
+          A georeferenced GeoTIFF with sun angles reaches Tier A and produces the
+          best result. A plain PNG or JPEG has no CRS and no sun metadata, so it
+          drops to Tier C: trustworthy relative structure on an arbitrary datum.
+          The tier actually used is reported with the result.
+        </p>
+      </details>
+
+      <div id="upload-error" class="err" hidden></div>
+      <button id="go" type="submit" class="primary" disabled>Reconstruct</button>
+    </form>
+  </div>
+</section>
+
+<!-- ── progress ────────────────────────────────────────────────────────── -->
+<section id="progress" class="page" hidden>
+  <div class="page-inner narrow">
+    <h2>Reconstructing <code id="job-id"></code></h2>
+    <p class="lede">
+      Each stage below is a pure function over the previous one. Depth inference
+      dominates the wall time on CPU; the calibration itself takes well under a
+      second.
+    </p>
+    <div id="stage-list" class="stages"></div>
+    <div id="job-error" class="err" hidden></div>
+    <details class="log-wrap">
+      <summary>Event log</summary>
+      <div id="job-log" class="log"></div>
+    </details>
+  </div>
+</section>
+
+<div id="app" class="app" hidden>
 
   <header class="topbar">
     <div class="brand">
@@ -20,6 +117,7 @@
       <span class="phase">viewer</span>
     </div>
     <div id="scene-id" class="scene-id">loading…</div>
+    <a class="ghost" href="./" id="btn-new">New reconstruction</a>
     <button id="btn-panel" class="ghost" aria-expanded="true" aria-controls="side">Hide panel</button>
   </header>
 
@@ -111,9 +209,20 @@
         <table class="kv" id="prov"></table>
       </section>
 
+      <section class="ctl" id="job-result">
+        <h2>This reconstruction</h2>
+        <div id="job-notes" class="notes"></div>
+        <table class="kv" id="job-summary"></table>
+      </section>
+
       <section class="ctl">
         <h2>Download</h2>
         <ul class="dl" id="downloads"></ul>
+        <ul class="dl" id="job-downloads"></ul>
+        <p class="note-sm">
+          Every raster is a Cloud-Optimised GeoTIFF and opens in QGIS with no
+          ĀYĀMA installed.
+        </p>
       </section>
 
     </aside>
@@ -124,5 +233,6 @@
 </div>
 
 <script src="app.js"></script>
+<script src="upload.js"></script>
 </body>
 </html>

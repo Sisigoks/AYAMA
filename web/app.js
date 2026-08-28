@@ -241,12 +241,12 @@ function renderDownloads(manifest) {
   var host = $('#downloads');
   if (!host) return;
   host.innerHTML = '';
-  var items = [['tileset.json', 'data/tileset.json']];
+  var items = [['tileset.json', dataBase() + 'tileset.json']];
   if (manifest.mesh && manifest.mesh.obj) {
     items.push(['surface.obj — ' + (manifest.mesh.triangles || 0).toLocaleString() +
-                ' triangles', 'data/' + manifest.mesh.obj]);
-    if (manifest.mesh.mtl) items.push(['surface.mtl', 'data/' + manifest.mesh.mtl]);
-    if (manifest.mesh.texture) items.push(['surface.jpg', 'data/' + manifest.mesh.texture]);
+                ' triangles', dataBase() + manifest.mesh.obj]);
+    if (manifest.mesh.mtl) items.push(['surface.mtl', dataBase() + manifest.mesh.mtl]);
+    if (manifest.mesh.texture) items.push(['surface.jpg', dataBase() + manifest.mesh.texture]);
   }
   items.forEach(function (it) {
     var li = el('li'), a = el('a', null, it[0]);
@@ -346,6 +346,17 @@ function renderPanels(manifest, onLayer, onLod) {
 }
 
 // ── image loading and CPU decode ────────────────────────────────────────────
+
+// ── where the tiles live ────────────────────────────────────────────────────
+// One viewer, two deployments: a prebuilt tileset served beside the page by
+// `ayama viewer`, or a freshly reconstructed job served by `ayama serve`. The
+// only difference is a base URL, so it is resolved once here rather than
+// threaded through every fetch.
+function dataBase() {
+  var job = new URLSearchParams(location.search).get('job');
+  if (job && /^[a-f0-9]{6,32}$/i.test(job)) return 'api/jobs/' + job + '/tiles/';
+  return 'data/';
+}
 
 function loadImage(url) {
   return new Promise(function (resolve, reject) {
@@ -632,11 +643,12 @@ function loadLod(index) {
   state.centre = [lod.width * gsd / 2, lod.height * gsd / 2];
 
   return Promise.all(lod.tiles.map(function (t) {
-    var jobs = [loadImage('data/' + t.layers.dsm), loadImage('data/' + t.layers.normal)];
+    var base = dataBase();
+    var jobs = [loadImage(base + t.layers.dsm), loadImage(base + t.layers.normal)];
     ['ndsm', 'sigma', 'error'].forEach(function (k) {
-      jobs.push(t.layers[k] ? loadImage('data/' + t.layers[k]) : Promise.resolve(null));
+      jobs.push(t.layers[k] ? loadImage(base + t.layers[k]) : Promise.resolve(null));
     });
-    jobs.push(t.layers.texture ? loadImage('data/' + t.layers.texture) : Promise.resolve(null));
+    jobs.push(t.layers.texture ? loadImage(base + t.layers.texture) : Promise.resolve(null));
     return Promise.all(jobs).then(function (imgs) {
       var px = imagePixels(imgs[0]);
       var heights = decodeTerrainRGBA(px.data);
@@ -897,7 +909,7 @@ function lightFromSun(manifest) {
 }
 
 function boot() {
-  return fetch('data/tileset.json')
+  return fetch(dataBase() + 'tileset.json')
     .then(function (r) {
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
@@ -925,7 +937,7 @@ function boot() {
       return loadLod(idx).then(function () { return manifest; });
     })
     .catch(function (e) {
-      setStatusError('Could not load data/tileset.json.',
+      setStatusError('Could not load ' + dataBase() + 'tileset.json.',
         'Build one with: python -m ayama.cli mesh &lt;run&gt; — or serve this page with ' +
         'python -m ayama.cli viewer &lt;run&gt;. (' + e.message + ')');
       throw e;
@@ -934,7 +946,11 @@ function boot() {
 
 if (typeof document !== 'undefined' && document.addEventListener) {
   document.addEventListener('DOMContentLoaded', function () {
-    if (!window.AYAMA_NO_AUTOBOOT) boot().catch(function () { /* surfaced in the DOM */ });
+    // `serve` shows an upload form first and boots the viewer itself once a
+    // job finishes; `viewer` has a tileset sitting there and boots immediately.
+    if (window.AYAMA_NO_AUTOBOOT) return;
+    if (document.getElementById('landing') && !new URLSearchParams(location.search).get('job')) return;
+    boot().catch(function () { /* surfaced in the DOM */ });
   });
 }
 
@@ -946,7 +962,7 @@ return {
   tileGeometry: tileGeometry, gridIndices: gridIndices,
   renderPanels: renderPanels, renderNotes: renderNotes, renderLegend: renderLegend,
   sliderToExagg: sliderToExagg, exaggToSlider: exaggToSlider,
-  boot: boot, state: state,
+  boot: boot, state: state, dataBase: dataBase,
   MAX_CODE: MAX_CODE, TERRAIN_BASE: TERRAIN_BASE, TERRAIN_STEP: TERRAIN_STEP
 };
 

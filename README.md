@@ -757,7 +757,8 @@ check, never a result).
 | `python -m ayama.cli preflight --device cuda` | end-to-end verdict on one device | 20 s |
 | `python -m ayama.cli delivery results/seed7/run --out results` | §8 — `results/delivery.json` | 68 s |
 | `python -m ayama.cli viewer results/seed7/run` | interactive 3D at `localhost:8020` | 5 s |
-| `python -m pytest tests -q` | 168 passed, 7 skipped (GPU) | 102 s |
+| `python -m ayama.cli serve` | the web service: upload an image, get a 3D reconstruction | — |
+| `python -m pytest tests -q` | 181 passed, 7 skipped (GPU) | 78 s |
 
 ## 7.2 Reproduce the §4 diagnosis
 
@@ -971,8 +972,53 @@ the viewer states, unprompted, that predicted height above ground reaches only
 0.28 m and that this is a defect rather than a rendering choice. A 3D view of a
 flattened city that does not say so is worse than no 3D view.
 
-Not implemented: tile streaming, glTF, σ rendered as a volume rather than a
-layer, measurement tools.
+### The web service
+
+`ayama serve` turns the batch pipeline into something a person can use: upload a
+nadir image, watch it reconstruct, look at the result in 3D, download the
+GeoTIFFs.
+
+```bash
+pip install -e ".[api]"
+python -m ayama.cli serve --port 8000 --device auto
+```
+
+| surface | what it is |
+|---|---|
+| `/` | upload form → live progress → the 3D viewer, one page |
+| `POST /api/jobs` | multipart upload, returns `202` and a job id |
+| `GET /api/jobs/{id}/events` | **SSE**, one message per pipeline stage |
+| `GET /api/jobs/{id}/tiles/…` | the tileset, in the layout the viewer already expects |
+| `GET /api/jobs/{id}/artifacts/{name}` | the COGs, so a result can leave the browser for QGIS |
+
+Three things worth stating about the design.
+
+**The viewer is unchanged.** `web/app.js` resolves its tileset from a base URL,
+so the same renderer serves a prebuilt local tileset (`ayama viewer`) and a
+freshly reconstructed job (`?job=<id>`). Nothing in the rendering path is
+service-specific, and the result URL is shareable.
+
+**Progress is streamed, not polled.** `StageEvent` was defined for this — the
+browser watches `anchors`, then `calibration`, then `uncertainty` go past with
+their real detail lines. A two-minute wait that names its stages is an
+explanation; a spinner is not.
+
+**The result states its own defects.** `derive_notes` runs on the served surface,
+so a reconstruction that came out flat (§4) says so on the result screen rather
+than presenting a plausible-looking plain. The landing page says it before the
+upload, too.
+
+**What it deliberately is not:** no authentication, no rate limiting beyond a
+single worker slot, no persistence across restarts, no HTTPS. It is a demo
+server for a research artifact and should not be exposed to the internet
+unchanged. The upload path is the one hard edge — extension *and* magic-byte
+checks, a size cap, generated job ids, and path resolution that refuses anything
+escaping the job directory. Those are tested, including the refusals.
+
+### Not implemented
+
+Tile streaming, glTF, σ rendered as a volume rather than a layer, measurement
+tools; and on the service side, auth, quotas and durable jobs.
 
 ---
 
@@ -1093,7 +1139,8 @@ ayama/
   mesh/        encode.py, tiles.py, obj.py, build.py             <- delivery
   eval/        metrics, ablation, bench, study, figures, delivery
   api/         pipeline.py — the whole method in one function
-web/           vanilla WebGL viewer, no build step
+               server.py, jobs.py — the upload/reconstruct service
+web/           vanilla WebGL viewer + upload UI, no build step
 results/       study.json, delivery.json, figures, per-seed artifacts
 ```
 

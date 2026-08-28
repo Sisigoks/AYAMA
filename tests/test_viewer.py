@@ -226,8 +226,11 @@ def test_web_assets_exist():
 
 
 def test_every_element_the_script_reaches_for_exists_in_the_html():
+    """Both scripts: app.js draws the tileset, upload.js drives the job."""
     app, html = _read("app.js"), _read("index.html")
+    app += _read("upload.js")
     ids = set(re.findall(r"getElementById\('([\w-]+)'\)", app))
+    ids |= set(re.findall(r"\$\('([\w-]+)'\)", _read("upload.js")))
     ids |= set(re.findall(r"\$\('#([\w-]+)'\)", app))
     ids |= set(re.findall(r"querySelector\('#([\w-]+)'\)", app))
     assert ids, "found no element lookups - the extraction regex is stale"
