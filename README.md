@@ -888,6 +888,24 @@ PREFLIGHT FAILED
 That refusal path is tested; so is a full end-to-end preflight pass on CPU. What
 is **not** tested here is the CUDA success path, for the obvious reason.
 
+On a **managed notebook (Colab, Kaggle)**, do not build a virtualenv. The
+preinstalled torch is already matched to that machine's driver, and those images
+often lack `ensurepip`, so `python -m venv` half-succeeds and leaves an
+interpreter that imports nothing:
+
+```bash
+pip install -q -r requirements.txt
+python -m ayama.cli preflight --device cuda --backbone dav2-vits
+```
+
+`scripts/setup_gpu.sh` detects those environments and skips the venv on its own;
+`scripts/harness.sh` validates that its interpreter can actually import the
+package rather than assuming a `.venv` that exists is a `.venv` that works.
+[`notebooks/ayama_gpu_harness.ipynb`](notebooks/ayama_gpu_harness.ipynb) is the
+maintained Colab path.
+
+On a **machine you own**:
+
 ```bash
 bash scripts/setup_gpu.sh                    # detects CUDA, builds .venv, verifies
 python -m ayama.cli preflight --device cuda --backbone dav2-vits   # <- start here

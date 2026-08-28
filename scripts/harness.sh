@@ -12,9 +12,47 @@
 set -uo pipefail
 
 cd "$(dirname "$0")/.."
-PYBIN=${PYBIN:-.venv/bin/python}
-[ -x "$PYBIN" ] || PYBIN=${PYBIN_FALLBACK:-python}
-[ -x ".venv/Scripts/python.exe" ] && PYBIN=".venv/Scripts/python.exe"   # Windows venv
+
+# ---- pick an interpreter that actually works -----------------------------------
+# "Is the file executable" is not the question. A venv whose creation failed at
+# ensurepip - the normal outcome on Debian images without python3-venv, Colab
+# included - leaves behind a perfectly executable python that can import nothing.
+# The old check passed it happily and every one of the eight stages below then
+# failed with the same ModuleNotFoundError, which tells the reader nothing about
+# the actual problem.
+#
+# So each candidate is tried by importing what the harness needs, and if none
+# work we say so once, at the top, instead of eight times.
+usable() {
+  [ -x "$1" ] || command -v "$1" >/dev/null 2>&1 || return 1
+  "$1" -c "import numpy, scipy, ayama" >/dev/null 2>&1
+}
+
+PYBIN=""
+for cand in ${PYBIN_OVERRIDE:-} .venv/bin/python .venv/Scripts/python.exe python3 python; do
+  [ -z "$cand" ] && continue
+  if usable "$cand"; then PYBIN="$cand"; break; fi
+done
+
+if [ -z "$PYBIN" ]; then
+  echo "harness: no interpreter here can 'import numpy, scipy, ayama'." >&2
+  echo "" >&2
+  for cand in .venv/bin/python .venv/Scripts/python.exe python3 python; do
+    if [ -x "$cand" ] || command -v "$cand" >/dev/null 2>&1; then
+      why=$("$cand" -c "import numpy, scipy, ayama" 2>&1 | tail -1)
+      echo "  $cand -> $why" >&2
+    fi
+  done
+  echo "" >&2
+  echo "  Fix one of:" >&2
+  echo "    bash scripts/setup_gpu.sh          # builds or detects an environment" >&2
+  echo "    pip install -r requirements.txt    # into whatever python you are using" >&2
+  echo "    PYBIN_OVERRIDE=/path/to/python bash scripts/harness.sh" >&2
+  echo "" >&2
+  echo "  A .venv that exists but imports nothing usually means 'python -m venv'" >&2
+  echo "  failed at ensurepip: rm -rf .venv, then apt install python3-venv." >&2
+  exit 1
+fi
 
 OUT=${OUT:-out/harness}
 SIZE=${SIZE:-2048}
@@ -36,6 +74,8 @@ LOG="$OUT/harness.log"
 
 say() { echo "" | tee -a "$LOG"; echo "=== $* ===" | tee -a "$LOG"; }
 run() { echo "\$ $*" | tee -a "$LOG"; "$@" 2>&1 | tee -a "$LOG"; return "${PIPESTATUS[0]}"; }
+
+echo "harness: using $PYBIN ($("$PYBIN" --version 2>&1))"
 
 say "1/8  doctor"
 run "$PYBIN" -m ayama.cli doctor --load "$BACKBONES" --device "$DEVICE"
