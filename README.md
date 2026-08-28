@@ -194,7 +194,7 @@ $L$ is the *median* of many parallel runs marched along the anti-solar direction
 from every shaded-side boundary pixel, not one blob dimension. Each shadow
 anchor is weighted by three independent factors in $[0,1]$:
 
-$$ w \;=\; \underbrace{\operatorname{clip}\!\Big(\tfrac{\alpha-20}{10}\Big)\operatorname{clip}\!\Big(\tfrac{75-\alpha}{10}\Big)}_{\text{sun-angle gate}} \cdot \underbrace{\Big(1 - \tfrac{\operatorname{MAD}(L_i)}{\bar{L}}\Big)}_{\text{crispness}} \cdot \underbrace{\Big(1 - \tfrac{\text{neighbour px in ring}}{\text{ring px}}\Big)}_{\text{isolation}} $$
+$$ w \;=\; \underbrace{\mathrm{clip}\!\Big(\tfrac{\alpha-20}{10}\Big)\mathrm{clip}\!\Big(\tfrac{75-\alpha}{10}\Big)}_{\text{sun-angle gate}} \cdot \underbrace{\Big(1 - \tfrac{\mathrm{MAD}(L_i)}{\bar{L}}\Big)}_{\text{crispness}} \cdot \underbrace{\Big(1 - \tfrac{\text{neighbour px in ring}}{\text{ring px}}\Big)}_{\text{isolation}} $$
 
 **The absolute/relative distinction is structural, not a weighting choice.** A
 shadow measures a height, never an elevation. Relative anchors therefore
@@ -229,7 +229,7 @@ one sparse solve:
 
 $$ \big(A^{\top} W A + R + P\big)\,x \;=\; A^{\top} W h + P\,x_{\text{prior}} $$
 
-$$ R = \operatorname{blkdiag}(\lambda_a \kappa L,\; \lambda_b \kappa L), \qquad P = \operatorname{blkdiag}(\lambda_p \kappa I,\; 0), \qquad \kappa = \frac{m}{n} $$
+$$ R = \mathrm{blkdiag}(\lambda_a \kappa L,\; \lambda_b \kappa L), \qquad P = \mathrm{blkdiag}(\lambda_p \kappa I,\; 0), \qquad \kappa = \frac{m}{n} $$
 
 with $L = G^{\top}G$ the 5-point graph Laplacian on the lattice, $A$ the
 $m \times 2n$ design matrix (four bilinear entries per field per anchor; two

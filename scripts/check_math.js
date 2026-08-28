@@ -49,6 +49,27 @@ const MD_HAZARDS = [
   [/(?<!\\)~/, 'a literal ~ (markdown strikethrough) - use \\sim or \\approx'],
 ];
 
+// GitHub does not run stock KaTeX: it runs it with a restricted macro
+// allowlist, and rejects anything that can define or inject. `\operatorname` is
+// on that list. Locally-installed KaTeX accepts all of these happily, so this
+// checker passed on markup GitHub refused with
+//   "The following macros are not allowed: operatorname"
+// which is the same failure mode as the markdown-emphasis hazard above: the
+// renderer that matters is stricter than the one being tested against.
+const DENIED_MACROS = [
+  'operatorname', 'newcommand', 'renewcommand', 'providecommand',
+  'def', 'gdef', 'edef', 'let', 'includegraphics', 'href', 'url',
+  'htmlClass', 'htmlId', 'htmlStyle', 'htmlData', 'input', 'include',
+];
+const SUBSTITUTE = { operatorname: '\\mathrm' };
+
+function deniedMacro(tex) {
+  for (const mac of DENIED_MACROS) {
+    if (new RegExp('\\\\' + mac + '(?![a-zA-Z])').test(tex)) return mac;
+  }
+  return null;
+}
+
 function hazards(tex, label, i) {
   for (const pair of MD_HAZARDS) {
     if (pair[0].test(tex)) {
@@ -56,6 +77,14 @@ function hazards(tex, label, i) {
                     '\n    ' + tex.trim().slice(0, 150));
       return true;
     }
+  }
+  const mac = deniedMacro(tex);
+  if (mac) {
+    const fix = SUBSTITUTE[mac] ? ' - use ' + SUBSTITUTE[mac] + ' instead' : '';
+    problems.push(label + ' #' + (i + 1) + ': uses \\' + mac +
+                  ', which GitHub\'s KaTeX does not allow' + fix +
+                  '\n    ' + tex.trim().slice(0, 150));
+    return true;
   }
   return false;
 }
