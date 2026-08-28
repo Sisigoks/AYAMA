@@ -147,7 +147,7 @@ Let $D(p) \in [0,1]$ be the backbone's relative depth at pixel $p$, rank-
 normalised per inference chip. We seek metric elevation $H(p)$ under an affine
 model with spatially varying coefficients:
 
-$$ H(p) \;=\; a(p)\,D(p) \;+\; b(p) $$
+$$ H(p) = a(p) D(p) + b(p) $$
 
 - $a(p)$ — scale field, metres per unit of relative depth
 - $b(p)$ — offset field, metres (the local datum)
@@ -188,19 +188,19 @@ own slope exceeds 25°.
 run length in pixels, $g$ the ground sample distance and $\alpha$ the sun
 elevation:
 
-$$ h \;=\; L \cdot g \cdot \tan\alpha $$
+$$ h = L \cdot g \cdot \tan\alpha $$
 
 $L$ is the *median* of many parallel runs marched along the anti-solar direction
 from every shaded-side boundary pixel, not one blob dimension. Each shadow
 anchor is weighted by three independent factors in $[0,1]$:
 
-$$ w \;=\; \underbrace{\mathrm{clip}\!\Big(\tfrac{\alpha-20}{10}\Big)\mathrm{clip}\!\Big(\tfrac{75-\alpha}{10}\Big)}_{\text{sun-angle gate}} \cdot \underbrace{\Big(1 - \tfrac{\mathrm{MAD}(L_i)}{\bar{L}}\Big)}_{\text{crispness}} \cdot \underbrace{\Big(1 - \tfrac{\text{neighbour px in ring}}{\text{ring px}}\Big)}_{\text{isolation}} $$
+$$ w = \underbrace{\mathrm{clip}\Big(\tfrac{\alpha-20}{10}\Big)\mathrm{clip}\Big(\tfrac{75-\alpha}{10}\Big)}_{\text{sun-angle gate}} \cdot \underbrace{\Big(1 - \tfrac{\mathrm{MAD}(L_i)}{\bar{L}}\Big)}_{\text{crispness}} \cdot \underbrace{\Big(1 - \tfrac{\text{neighbour px in ring}}{\text{ring px}}\Big)}_{\text{isolation}} $$
 
 **The absolute/relative distinction is structural, not a weighting choice.** A
 shadow measures a height, never an elevation. Relative anchors therefore
 constrain a *difference*:
 
-$$ H(p_k) - H(q_k) \;=\; h_k $$
+$$ H(p_k) - H(q_k) = h_k $$
 
 where $p_k$ is the roof and $q_k$ a reference pixel at the building's foot.
 Collapsing this into an absolute constraint is how a good height anchor silently
@@ -210,15 +210,15 @@ becomes a bad datum anchor.
 
 The fields are discretised on a lattice of stride 32 px, with each anchor spread
 bilinearly over its four surrounding nodes ($\sum_j \beta_j = 1$). With $m$
-anchors and $n$ lattice nodes, the unknown is $x = [\,a; b\,] \in \mathbb{R}^{2n}$.
+anchors and $n$ lattice nodes, the unknown is $x = [ a; b ] \in \mathbb{R}^{2n}$.
 
 **Objective.**
 
-$$ E(a,b) \;=\; \underbrace{\sum_{k=1}^{m} w_k\, \rho\big(H(p_k) - h_k\big)}_{\text{data}} \;+\; \underbrace{\lambda_a \lVert \nabla a \rVert^2 + \lambda_b \lVert \nabla b \rVert^2}_{\text{smoothness}} \;+\; \underbrace{\lambda_p \lVert a - a_{\text{glob}} \rVert^2}_{\text{prior on scale only}} $$
+$$ E(a,b) = \underbrace{\sum_{k=1}^{m} w_k \rho\big(H(p_k) - h_k\big)}_{\text{data}} + \underbrace{\lambda_a \lVert \nabla a \rVert^2 + \lambda_b \lVert \nabla b \rVert^2}_{\text{smoothness}} + \underbrace{\lambda_p \lVert a - a_{\text{glob}} \rVert^2}_{\text{prior on scale only}} $$
 
 subject to
 
-$$ a(p) \;\ge\; a_{\min} $$
+$$ a(p) \ge a_{\min} $$
 
 $\rho$ is the Huber loss; $a_{\text{glob}}$ is a robust global affine fit used
 only as a weak prior. **$b$ carries no prior**: the datum is exactly what the
@@ -227,9 +227,9 @@ anchors exist to determine.
 **Normal equations.** All terms are quadratic in $x$, so each IRLS iteration is
 one sparse solve:
 
-$$ \big(A^{\top} W A + R + P\big)\,x \;=\; A^{\top} W h + P\,x_{\text{prior}} $$
+$$ \big(A^{\top} W A + R + P\big) x = A^{\top} W h + P x_{\text{prior}} $$
 
-$$ R = \mathrm{blkdiag}(\lambda_a \kappa L,\; \lambda_b \kappa L), \qquad P = \mathrm{blkdiag}(\lambda_p \kappa I,\; 0), \qquad \kappa = \frac{m}{n} $$
+$$ R = \mathrm{blkdiag}(\lambda_a \kappa L, \lambda_b \kappa L), \qquad P = \mathrm{blkdiag}(\lambda_p \kappa I, 0), \qquad \kappa = \frac{m}{n} $$
 
 with $L = G^{\top}G$ the 5-point graph Laplacian on the lattice, $A$ the
 $m \times 2n$ design matrix (four bilinear entries per field per anchor; two
@@ -242,9 +242,9 @@ affine fit it was built to replace.
 
 **Robustness.** IRLS with Huber reweighting, 3 iterations:
 
-$$ w_k^{(t+1)} \;=\; w_k^{(0)} \cdot \min\!\left(1,\ \frac{\delta}{\lvert r_k^{(t)} \rvert}\right), \qquad \delta = 2.0\ \text{m} $$
+$$ w_k^{(t+1)} = w_k^{(0)} \cdot \min\left(1,\ \frac{\delta}{\lvert r_k^{(t)} \rvert}\right), \qquad \delta = 2.0\ \text{m} $$
 
-An anchor whose weight falls below $0.25\,w_k^{(0)}$ is reported as rejected.
+An anchor whose weight falls below $0.25 w_k^{(0)}$ is reported as rejected.
 
 **Positivity.** The constraint $a \ge a_{\min}$ is enforced by projection after
 each IRLS step, followed by re-solving $b$ with the clamped $a$ held fixed
@@ -259,12 +259,12 @@ $\delta = 2.0$ m, 3 IRLS iterations, lattice stride 32 px, $a_{\min} = 0.05$.
 
 Three independent terms in quadrature:
 
-$$ \sigma^2 \;=\; \sigma_{\text{calib}}^2 + \sigma_{\text{model}}^2 + \sigma_{\text{ref}}^2 $$
+$$ \sigma^2 = \sigma_{\text{calib}}^2 + \sigma_{\text{model}}^2 + \sigma_{\text{ref}}^2 $$
 
 $\sigma_{\text{calib}}$ is the spread of $B = 24$ AGMC solves, each on a
 uniform 70% resample of the anchor set, accumulated by Welford's method [8]:
 
-$$ \sigma_{\text{calib}}^2 \;=\; \frac{1}{B-1}\sum_{i=1}^{B}\big(s_i - \bar{s}\big)^2 $$
+$$ \sigma_{\text{calib}}^2 = \frac{1}{B-1}\sum_{i=1}^{B}\big(s_i - \bar{s}\big)^2 $$
 
 $\sigma_{\text{model}}$ is the spread between backbones ($\tfrac{1}{2}|s_1-s_2|$
 for two). $\sigma_{\text{ref}}$ is the auxiliary DEM's datasheet 1σ as a constant
@@ -277,7 +277,7 @@ Gaussian of radius ≈ 60 m and discard the low band:
 
 $$ D_{\text{lo}} = G_\sigma \ast D, \qquad D_{\text{hi}} = D - D_{\text{lo}} $$
 
-$$ H(p) \;=\; \underbrace{b(p)}_{\substack{\text{terrain} \\ \text{DEM, GCP, water anchors}}} \;+\; \underbrace{a(p)\, D_{\text{hi}}(p)}_{\substack{\text{structure} \\ \text{shadow anchors}}} $$
+$$ H(p) = \underbrace{b(p)}_{\text{terrain: DEM, GCP, water anchors}} + \underbrace{a(p) D_{\text{hi}}(p)}_{\text{structure: shadow anchors}} $$
 
 The operative change is *what $a$ is fitted against*. Under the current model it
 must serve terrain and structure simultaneously and ~3840 terrain anchors
@@ -366,7 +366,7 @@ dilation; report $F_1 = 2PR/(P+R)$.
 **δ < 1.25.** Computed on **height above ground**, not elevation, over pixels
 where both predicted and reference nDSM exceed 0.5 m:
 
-$$ \delta_1 \;=\; \frac{1}{|\Omega|}\sum_{i \in \Omega} \mathbf{1}\!\left(\max\!\left(\frac{\hat{h}_i}{h^{\star}_i}, \frac{h^{\star}_i}{\hat{h}_i}\right) < 1.25\right), \quad \Omega = \{i : \hat{h}_i > 0.5 \wedge h^{\star}_i > 0.5\} $$
+$$ \delta_1 = \frac{1}{|\Omega|}\sum_{i \in \Omega} \mathbf{1}\left(\max\left(\frac{\hat{h}_i}{h^{\star}_i}, \frac{h^{\star}_i}{\hat{h}_i}\right) < 1.25\right), \quad \Omega = \lbrace i : \hat{h}_i > 0.5 \wedge h^{\star}_i > 0.5 \rbrace $$
 
 A ratio metric is meaningless on absolute elevation, where a 400 m datum makes
 every ratio ≈ 1.
@@ -375,7 +375,7 @@ every ratio ≈ 1.
 compare realised RMS error against mean promised σ; weight by bin population.
 Returned **in metres**:
 
-$$ \mathrm{ECE} \;=\; \frac{1}{N}\sum_{j=1}^{10} n_j \left\lvert \sqrt{\tfrac{1}{n_j}\textstyle\sum_{i \in j} e_i^2} \;-\; \tfrac{1}{n_j}\textstyle\sum_{i \in j}\sigma_i \right\rvert $$
+$$ \mathrm{ECE} = \frac{1}{N}\sum_{j=1}^{10} n_j \left\lvert \sqrt{\tfrac{1}{n_j}\textstyle\sum_{i \in j} e_i^2} - \tfrac{1}{n_j}\textstyle\sum_{i \in j}\sigma_i \right\rvert $$
 
 ## 2.5 Statistical treatment
 
@@ -551,7 +551,7 @@ ground: predicted **+0.07 m**, true **+6.81 m**.
 Because $D \in [0,1]$ and $a$ is pinned at $a_{\min}$, the maximum relief the
 depth model can contribute anywhere in the scene is
 
-$$ a_{\min} \cdot \big(\max D - \min D\big) \;=\; 0.05 \times 1.0 \;=\; 0.05\ \text{m} $$
+$$ a_{\min} \cdot \big(\max D - \min D\big) = 0.05 \times 1.0 = 0.05\ \text{m} $$
 
 — exactly the observed building height. Meanwhile $b$, which carries no prior
 (§1.4), is free and spans 21.62 m, reproducing the terrain unaided.

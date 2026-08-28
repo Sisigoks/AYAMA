@@ -49,6 +49,22 @@ const MD_HAZARDS = [
   [/(?<!\\)~/, 'a literal ~ (markdown strikethrough) - use \\sim or \\approx'],
 ];
 
+// CommonMark: "Any ASCII punctuation character may be backslash-escaped." The
+// markdown pass therefore strips the backslash from \; \, \! \{ \} \\ and KaTeX
+// never sees the command - `a \; = \; b` reaches it as `a ; = ; b`, which is why
+// stray semicolons appeared in every equation. Letter-based commands (\quad,
+// \lbrace, \cdot) are unaffected, so those are the substitutes.
+const PUNCT_ESCAPES = /\\([!"#$%&'()*+,\-./:;<=>?@\[\]^_`{|}~\\])/;
+const PUNCT_FIX = {
+  ';': 'drop it, or use \\quad',
+  ',': 'drop it, or use \\quad',
+  ':': 'drop it, or use \\quad',
+  '!': 'drop it',
+  '{': 'use \\lbrace',
+  '}': 'use \\rbrace',
+  '\\': 'restructure so no line break is needed',
+};
+
 // GitHub does not run stock KaTeX: it runs it with a restricted macro
 // allowlist, and rejects anything that can define or inject. `\operatorname` is
 // on that list. Locally-installed KaTeX accepts all of these happily, so this
@@ -78,6 +94,15 @@ function hazards(tex, label, i) {
       return true;
     }
   }
+  const esc = PUNCT_ESCAPES.exec(tex);
+  if (esc) {
+    const fix = PUNCT_FIX[esc[1]] || 'use a letter-based command instead';
+    problems.push(label + ' #' + (i + 1) + ': contains \\' + esc[1] +
+                  ' - markdown strips the backslash before KaTeX sees it; ' + fix +
+                  '\n    ' + tex.trim().slice(0, 150));
+    return true;
+  }
+
   const mac = deniedMacro(tex);
   if (mac) {
     const fix = SUBSTITUTE[mac] ? ' - use ' + SUBSTITUTE[mac] + ' instead' : '';
