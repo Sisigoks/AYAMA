@@ -1,3 +1,0 @@
-# Depth backbones. CPU wheels; add --index-url https://download.pytorch.org/whl/cu121 for CUDA.
-torch>=2.2
-transformers>=4.40
