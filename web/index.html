@@ -60,7 +60,6 @@
               <option value="dav2-vits">Depth Anything V2 Small — fastest</option>
               <option value="dav2-vitb">Depth Anything V2 Base</option>
               <option value="dav2-vitl">Depth Anything V2 Large — best, needs a GPU</option>
-              <option value="synthetic">synthetic — no weights, plumbing check only</option>
             </select>
           </label>
           <label>Chip size
@@ -192,6 +191,19 @@
         </div>
         <label class="chk"><input type="checkbox" id="wire"> wireframe</label>
         <label class="chk"><input type="checkbox" id="shade" checked> shade from normals</label>
+        <label class="chk"><input type="checkbox" id="fog" checked> aerial perspective</label>
+      </section>
+
+      <section class="ctl">
+        <h2>Flythrough</h2>
+        <div class="row">
+          <button id="fly" class="wide">Fly through</button>
+        </div>
+        <p class="note-sm" id="fly-note">
+          Descends to eye level and crosses the scene low, where the parallax
+          between near and far structure is strongest. Press <kbd>F</kbd>, or
+          touch the view to stop.
+        </p>
       </section>
 
       <section class="ctl" id="sun-ctl" hidden>

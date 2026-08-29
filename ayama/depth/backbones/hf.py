@@ -8,13 +8,13 @@ ones. The metric variants carry a scale prior fitted to ground-level outdoor
 scenes, which is actively wrong for nadir imagery. We want the clean unitless
 surface and our own calibration on top of it (see ayama.chhaya).
 
-GPU notes, because this is where the throughput is:
-  - chips are batched, so a 4k tile is a handful of forward passes and not
-    thirty-six;
-  - autocast to fp16 on CUDA, which is roughly a 2x win on this workload and
-    changes the depth field by far less than the calibration residual;
-  - the batch size that fits is a function of chip size and VRAM, so
-    `suggest_batch_size` estimates it rather than making the user guess.
+Inference runs on the CPU. That is a measured decision rather than a
+limitation nobody got round to lifting: an order of magnitude more backbone
+moved recovered relief from 0.05 m to 0.17 m against a true 14.4 m, because the
+bottleneck is metric scale rather than perception (README section 3.2). The
+thing that actually recovers structure - a scale fitted once over a dataset,
+`ayama.learn` - costs milliseconds. Carrying device selection, autocast and VRAM
+budgeting for a speed-up that changes no result is upkeep with no return.
 """
 from __future__ import annotations
 
@@ -38,13 +38,23 @@ _ACTIVATION_MB = {"dav2-vits": 260, "dav2-vitb": 620, "dav2-vitl": 1400,
 
 
 class HFDepthBackbone(DepthBackbone):
+    """A frozen Hugging Face depth checkpoint, run on the CPU.
+
+    ĀYĀMA is CPU-only by design, not by accident. The one component that could
+    profit from a GPU is inference, and measuring it showed the profit does not
+    reach the result: an order of magnitude more backbone moved recovered relief
+    from 0.05 m to 0.17 m against a true 14.4 m, because the bottleneck is the
+    metric scale, not perception. What actually fixed it - a scale fitted once
+    over a dataset, `ayama.learn` - is a handful of dot products. So the device
+    machinery is gone rather than left as an unused option that has to be kept
+    working and honestly documented.
+    """
+
     def __init__(self, name: str, checkpoint: str, native: int = 518,
-                 device: str = "auto", dtype: str = "auto"):
+                 dtype: str = "float32"):
         self.name = name
         self.checkpoint = checkpoint
         self.native = native
-        self._device_pref = device
-        self._dtype_pref = dtype
         self._model = None
         self._processor = None
         self.device = "cpu"
@@ -61,11 +71,10 @@ class HFDepthBackbone(DepthBackbone):
             raise RuntimeError(
                 f"backbone '{self.name}' needs torch + transformers.\n"
                 "  pip install -r requirements-torch.txt\n"
-                "Until then run with --backbone synthetic to exercise the pipeline."
+                "There is no weightless fallback: a placeholder that fabricates "
+                "a depth field is how an invented number reaches a results table."
             ) from exc
 
-        self.device = resolve_device(self._device_pref)
-        self.dtype_name = resolve_dtype(self._dtype_pref, self.device)
 
         self._processor = AutoImageProcessor.from_pretrained(self.checkpoint)
         self._model = AutoModelForDepthEstimation.from_pretrained(self.checkpoint)
@@ -86,15 +95,8 @@ class HFDepthBackbone(DepthBackbone):
             return []
         sizes = [(p.shape[0], p.shape[1]) for p in patches]
         inputs = self._processor(images=list(patches), return_tensors="pt")
-        inputs = {k: v.to(self.device) for k, v in inputs.items()}
-
-        use_amp = self.dtype_name == "float16" and self.device.startswith("cuda")
         with torch.no_grad():
-            if use_amp:
-                with torch.autocast(device_type="cuda", dtype=torch.float16):
-                    out = self._model(**inputs).predicted_depth
-            else:
-                out = self._model(**inputs).predicted_depth
+            out = self._model(**inputs).predicted_depth
         out = out.float()
         if out.ndim == 3:
             out = out.unsqueeze(1)
@@ -120,40 +122,12 @@ class HFDepthBackbone(DepthBackbone):
         return d
 
     def suggest_batch_size(self, chip: int) -> int:
-        """Largest batch that should fit, or 1 on CPU where batching rarely pays."""
-        if not self.device.startswith("cuda"):
-            return 1
-        import torch
-
-        free, _total = torch.cuda.mem_get_info()
-        budget_mb = free / (1024 ** 2) * 0.6          # leave headroom
-        per_chip = _ACTIVATION_MB.get(self.name, 800) * (max(chip, 1) / 518.0) ** 2
-        if self.dtype_name == "float16":
-            per_chip *= 0.55
-        return int(np.clip(budget_mb // max(per_chip, 1.0), 1, 16))
+        """One. Batching a transformer on CPU rarely pays and can thrash cache."""
+        return 1
 
 
-def resolve_device(pref: str = "auto") -> str:
-    import torch
-
-    if pref and pref != "auto":
-        return pref
-    if torch.cuda.is_available():
-        return "cuda"
-    if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
-        return "mps"
-    return "cpu"
-
-
-def resolve_dtype(pref: str, device: str) -> str:
-    """fp16 on CUDA by default; fp32 everywhere else, where fp16 is slower."""
-    if pref and pref != "auto":
-        return pref
-    return "float16" if device.startswith("cuda") else "float32"
-
-
-def make(name: str, device: str = "auto", dtype: str = "auto") -> HFDepthBackbone:
+def make(name: str) -> HFDepthBackbone:
     if name not in CHECKPOINTS:
         raise KeyError(name)
     native = 518 if name.startswith("dav2") else 384
-    return HFDepthBackbone(name, CHECKPOINTS[name], native=native, device=device, dtype=dtype)
+    return HFDepthBackbone(name, CHECKPOINTS[name], native=native)

@@ -218,6 +218,39 @@ def _resample_to_scene(path: str, scene: Scene) -> np.ndarray:
     return out
 
 
+def _fitted_scale(cfg, depth, dem_m):
+    """The structural scale, fitted offline, or None to solve from anchors.
+
+    Loads the calibration shipped with the package unless the caller asked for
+    something else. Returns None - and so changes nothing - when the model is
+    absent, when the caller disabled it, or when the frequency split it was
+    fitted under does not match the one this run will use, because a scale in
+    metres per unit of high-band depth is only meaningful under the split that
+    produced it.
+    """
+    setting = cfg.extras.get("scale_model", "auto")
+    if setting in (False, "off", "none", "no"):
+        return None
+    if isinstance(setting, (int, float)) and not isinstance(setting, bool):
+        return float(setting)
+
+    from ..learn.scale import ScaleModel, load_bundled, scene_features
+
+    model = ScaleModel.load(setting) if isinstance(setting, str) and \
+        setting not in ("auto", "on", "bundled") else load_bundled()
+    if model is None:
+        return None
+
+    radius = float(cfg.extras.get("hp_radius_m", 60.0))
+    if abs(float(model.radius_m) - radius) > 1e-6:
+        return None
+
+    gsd = float(getattr(depth.meta, "gsd_m", 0) or cfg.extras.get("gsd_m", 1.0))
+    feats = scene_features(depth.relative, dem_m, gsd, radius)
+    value = model.predict(feats)
+    return float(value) if np.isfinite(value) and value > 0 else None
+
+
 def run(
     image_path: str,
     cfg: Optional[Config] = None,
@@ -243,7 +276,7 @@ def run(
     total = n_chips(scene.shape, cfg.chip, cfg.overlap)
     with clock.stage("depth", total=total, unit="chip") as st:
         st.task and st.task.note("loading weights")
-        model = get_backbone(cfg.backbone, device=cfg.extras.get("device", "auto"))
+        model = get_backbone(cfg.backbone)
         model.load()
         depth = predict_depth(
             scene, model, chip=cfg.chip, overlap=cfg.overlap,
@@ -284,7 +317,9 @@ def run(
 
     # ---- calibration and uncertainty ------------------------------------
     with clock.stage("calibration") as st:
-        calib = solve_agmc(depth, anchors, cfg, tier=decision.tier)
+        scale_prior = _fitted_scale(cfg, depth, dem_m)
+        calib = solve_agmc(depth, anchors, cfg, tier=decision.tier,
+                           scale_prior=scale_prior)
         surface = apply_calibration(depth, calib)
         res.anchors_used = calib.n_anchors_used
         res.anchors_rejected = calib.n_anchors_rejected
@@ -299,6 +334,7 @@ def run(
                 depth, anchors, cfg, n_boot=cfg.n_bootstrap,
                 workers=int(cfg.extras.get("workers", 0)),
                 on_progress=lambda d, t: st.progress(d, t),
+                scale_prior=scale_prior,
             )
             surface = mean_surface
         else:

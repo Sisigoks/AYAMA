@@ -79,7 +79,7 @@ def cmd_depth(args) -> int:
     h, w = scene.shape
     print(f"ingest    {w} x {h}   {scene.meta.describe()}")
 
-    model = get_backbone(args.backbone, device=args.device)
+    model = get_backbone(args.backbone)
     model.load()
     total = n_chips(scene.shape, args.chip, args.overlap)
     print(f"backbone  {model.describe()}   {total} chip(s) of {args.chip} px, {int(args.overlap*100)}% overlap")
@@ -152,36 +152,47 @@ def _save_rgb(path: str, rgb: np.ndarray) -> None:
     im.save(path)
 
 
-def cmd_synth(args) -> int:
-    """Write a synthetic town with a known DSM, so every stage has test data."""
+def cmd_sample(args) -> int:
+    """Write the bundled real sample scene to disk, with its lidar truth.
+
+    Replaces the old `synth`, which rendered a town. Nothing in this project
+    runs on invented pixels any more, so the scene every quick start reaches for
+    is a real one - a crop of central Zurich with airborne lidar DSM and DTM.
+    See ayama/data/fixture/ATTRIBUTION.md for the swisstopo licence.
+    """
+    from .data.sample import load_sample_scene
     from .dsm.cog import write_cog, write_png_preview, write_rgb
-    from .eval.synthetic_scene import make_scene
 
     t0 = time.time()
-    sc = make_scene(size=args.size, gsd_m=args.gsd, seed=args.seed,
-                    sun_azimuth_deg=args.sun_az, sun_elevation_deg=args.sun_el)
+    sun = (args.sun_az, args.sun_el) if args.sun_az is not None else None
+    sc = load_sample_scene(size=args.size, sun=sun)
     stem = os.path.splitext(args.out)[0]
-    write_rgb(args.out, sc.rgb, sc.meta, tags={"AYAMA_STAGE": "synthetic_rgb"})
-    write_cog(f"{stem}_dsm.tif", sc.dsm_m, sc.meta, description="ground-truth DSM (m)",
+    write_rgb(args.out, sc.rgb, sc.meta,
+              tags={"AYAMA_SOURCE": "swisstopo sample scene"})
+    write_cog(f"{stem}_dsm.tif", sc.dsm_m, sc.meta,
+              description="swissSURFACE3D lidar DSM (m)",
               tags={"AYAMA_STAGE": "reference_dsm", "AYAMA_UNITS": "m"})
-    write_cog(f"{stem}_dtm.tif", sc.dtm_m, sc.meta, description="ground-truth DTM (m)")
+    write_cog(f"{stem}_dtm.tif", sc.dtm_m, sc.meta,
+              description="swissALTI3D lidar DTM (m)")
     write_cog(f"{stem}_sem.tif", sc.sem.astype(np.float32), sc.meta, dtype="uint8",
-              nodata=255, description="semantic class ids")
+              nodata=255, description="derived labels (colour heuristic)")
     write_png_preview(f"{stem}_dsm.png", sc.dsm_m, cmap="terrain")
-    write_png_preview(f"{stem}_shadow.png", sc.shadow.astype(np.float32), cmap="gray",
-                      vmin=0, vmax=1)
-    rel = sc.dsm_m - sc.dtm_m
+
+    nd = sc.ndsm_m
     print(f"wrote     {args.out} and {stem}_[dsm|dtm|sem].tif")
-    print(f"scene     {args.size} x {args.size} @ {args.gsd} m   "
+    print(f"scene     {args.size} x {args.size} @ 0.5 m   "
           f"elev {sc.dsm_m.min():.1f}-{sc.dsm_m.max():.1f} m   "
-          f"max object height {rel.max():.1f} m   shadow {sc.shadow.mean()*100:.1f}%")
+          f"max height above ground {nd.max():.1f} m")
+    if sun is None:
+        print("sun       none - swisstopo publishes no acquisition time for these")
+        print("          products, so shadow physics will be disabled.")
+        print("          Pass --sun-az/--sun-el to assume one.")
+    else:
+        print(f"sun       {args.sun_az:.1f} az / {args.sun_el:.1f} el   "
+              f"(ASSUMED, not measured)   shadow {sc.shadow.mean()*100:.1f}%")
+    print("source    swisstopo OGD; see ayama/data/fixture/ATTRIBUTION.md")
     print(f"done      {time.time() - t0:.1f}s")
     return 0
-
-
-ABLATION_VARIANTS = ("dem_only", "global_affine", "agmc_no_gate", "agmc_no_shadow",
-                     "agmc_no_water", "agmc", "agmc_bootstrap")
-SUN_ELEVATIONS = (15, 20, 25, 30, 40, 50, 60, 70, 75, 80)
 
 
 def _load_gcps(path: Optional[str]) -> list:
@@ -208,25 +219,67 @@ def _load_gcps(path: Optional[str]) -> list:
     return out
 
 
-def _stage_printer():
-    """Render the pipeline as it executes. The pipeline is the technical story."""
-    seen = {}
+def cmd_fit(args) -> int:
+    """Fit the structural scale over a dataset and write it out.
 
-    def emit(ev):
-        mark = {"running": "..", "done": "OK", "failed": "!!", "skipped": "--"}.get(ev.status, "  ")
-        if ev.status == "running" and ev.stage in seen:
-            sys.stdout.write(f"\r  {mark} {ev.stage:<14} {ev.detail[:60]:<60}")
-            sys.stdout.flush()
-            return
-        if ev.status == "running":
-            seen[ev.stage] = True
-            sys.stdout.write(f"  {mark} {ev.stage:<14} {ev.detail[:60]}")
-            sys.stdout.flush()
-            return
-        sys.stdout.write(f"\r  {mark} {ev.stage:<14} {ev.detail[:70]:<70}\n")
-        sys.stdout.flush()
+    This is the only part of AYAMA that learns anything, and what it learns is
+    one number: how many metres of height above ground a unit of high-frequency
+    relative depth is worth. It has to be learned rather than solved because the
+    anchor ladder cannot observe it - on real imagery every anchor is a ground
+    anchor (README section 3.4), so the branch that scales structure gets no
+    constraints at all.
 
-    return emit
+    It needs a completed study, not a fresh one: the depth is read back from
+    each scene's artifacts, so fitting four scenes takes about a second.
+    """
+    from .data import discover
+    from .learn.collect import collect
+    from .learn.scale import fit
+
+    kw = {}
+    for key in ("image", "reference", "semantics", "dem"):
+        val = getattr(args, f"suffix_{key}", None)
+        if val:
+            kw.setdefault("suffixes", {})[key] = val
+    scenes = discover(args.root, layout=args.layout, **kw)
+    print(f"AYAMA fit   {args.layout}  {args.root}")
+    print(f"  found        {len(scenes)} scene(s)")
+    print(f"  runs         {args.runs}")
+
+    def on_scene(name, sample, why):
+        if sample is None:
+            print(f"    {name:<12} skipped - {why}")
+        else:
+            print(f"    {name:<12} a* {sample.target:8.1f}   "
+                  f"nDSM MAE at that scale {sample.ndsm_mae_at_target:5.2f} m "
+                  f"(floor {sample.floor_mae:5.2f} m)")
+
+    samples, rasters, skipped = collect(scenes, args.runs, radius_m=args.radius,
+                                        on_scene=on_scene)
+    if not samples:
+        print("\nerror: no scene could supply a target. Height above ground needs\n"
+              "       either an nDSM reference or a DSM with a bare-earth DTM.",
+              file=sys.stderr)
+        return 1
+    if len(samples) < 3:
+        print(f"\n  ! only {len(samples)} scene(s). A scale fitted on this few is a\n"
+              "    guess with error bars nobody has measured. It is written anyway,\n"
+              "    and the model file records how few it saw.")
+
+    model = fit(samples, rasters=rasters, radius_m=args.radius)
+    print()
+    print(model.describe())
+    if np.isfinite(model.loo_mae_alt_m) and model.loo_mae_alt_m != float("inf"):
+        alt = "constant" if model.kind == "linear" else "one-feature"
+        print(f"  the {alt} alternative scored {model.loo_mae_alt_m:.2f} m and lost")
+    if skipped:
+        print(f"  {len(skipped)} scene(s) skipped")
+
+    path = model.save(args.out)
+    print(f"\nwrote     {path}")
+    print("          the pipeline loads this automatically; --scale-model off "
+          "disables it")
+    return 0
 
 
 def cmd_run(args) -> int:
@@ -239,10 +292,12 @@ def cmd_run(args) -> int:
         dem_source=args.dem, reference=args.ref, gcp_file=args.gcps,
         n_bootstrap=args.bootstrap, lattice_stride=args.stride,
         lam_a=args.lam, lam_b=args.lam,
-        extras={"device": args.device, "batch_size": args.batch,
+        extras={"batch_size": args.batch,
                 "workers": args.workers,
                 "segmentation": "raster" if args.sem else "heuristic",
-                "segmentation_path": args.sem},
+                "segmentation_path": args.sem,
+                "scale_model": args.scale_model,
+                "dual_branch": args.scale_model not in ("off", "none", "no")},
     )
     from .core.progress import Live
 
@@ -296,7 +351,7 @@ def cmd_bench(args) -> int:
         backbones=args.backbones.split(","),
         chips=[int(c) for c in args.chips.split(",")],
         batches=[int(b) for b in args.batches.split(",")],
-        overlap=args.overlap, device=args.device, dtype=args.dtype,
+        overlap=args.overlap,
         repeats=args.repeats, on_case=on_case,
     )
     print()
@@ -320,13 +375,13 @@ def cmd_ablate(args) -> int:
     cfg = Config(backbone=args.backbone, chip=args.chip, overlap=args.overlap,
                  dem_source=args.dem, n_bootstrap=args.bootstrap,
                  lattice_stride=args.stride, lam_a=args.lam, lam_b=args.lam,
-                 extras={"device": args.device, "batch_size": args.batch})
+                 extras={"batch_size": args.batch})
 
     t0 = time.time()
     scene = ingest(args.image)
     print(f"scene     {scene.shape[1]} x {scene.shape[0]}   {scene.meta.describe()}")
 
-    model = get_backbone(args.backbone, device=args.device)
+    model = get_backbone(args.backbone)
     model.load()
     print(f"backbone  {model.describe()}")
     depth = predict_depth(scene, model, chip=args.chip, overlap=args.overlap,
@@ -349,327 +404,6 @@ def cmd_ablate(args) -> int:
         save(rows, args.json)
         print(f"\nwrote     {args.json} and {os.path.splitext(args.json)[0]}.md")
     print(f"\ntotal     {time.time() - t0:.1f}s")
-    return 0
-
-
-def cmd_study(args) -> int:
-    """Run the whole study and write reproducible results to disk."""
-    from .core.progress import Live
-    from .eval import study as S
-    from .eval.bench import format_bench, sweep
-
-    out = args.out
-    os.makedirs(out, exist_ok=True)
-    seeds = [int(s) for s in args.seeds.split(",")]
-    t0 = time.time()
-    live = Live(mode=args.progress)
-
-    print(f"AYAMA study -> {out}/")
-    env = S.environment()
-    S.save_json(env, os.path.join(out, "environment.json"))
-    print(f"  {live.banner()}   torch {env.get('torch')}   {env['platform']}")
-    print(f"  {len(seeds)} scenes at {args.size}x{args.size}, backbone {args.backbone}, "
-          f"{args.bootstrap} bootstrap resamples")
-
-    scenes, ablations = [], {}
-    sun, lam = [], []
-
-    def checkpoint(bench_block=None, note=""):
-        """Write whatever is finished. A later crash then costs a stage, not the run."""
-        payload = {
-            "environment": env,
-            "config": {"backbone": args.backbone, "size": args.size, "chip": args.chip,
-                       "seeds": seeds, "bootstrap": args.bootstrap, "gsd_m": 0.5},
-            "aggregate": S.aggregate(scenes) if scenes else {},
-            "scenes": scenes, "ablation": ablations,
-            "sun_sweep": sun, "lambda_sweep": lam,
-            "bench": bench_block or {"environment": env, "source": "pending", "results": []},
-            "wall_s": round(time.time() - t0, 1),
-        }
-        S.save_json(payload, os.path.join(out, "study.json"))
-        if scenes:
-            _write_study_markdown(payload, os.path.join(out, "README.md"))
-        if note:
-            print(f"  checkpointed {out}/study.json {note}")
-        return payload
-
-    with live.task("study", len(seeds), "scene") as overall:
-        for seed in seeds:
-            s = S.scene_experiment(out, seed, size=args.size, backbone=args.backbone,
-                                   chip=args.chip, device=args.device, batch=args.batch,
-                                   n_bootstrap=args.bootstrap, log=live.log, live=live)
-            scenes.append(s)
-            with live.task("ablation", len(ABLATION_VARIANTS), "variant") as ab:
-                ablations[str(seed)] = S.ablation_experiment(
-                    os.path.join(out, f"seed{seed}"), seed, backbone=args.backbone,
-                    chip=args.chip, n_bootstrap=args.bootstrap, log=live.log,
-                    on_variant=lambda name, i, n: ab.set(i, n, name))
-            S.release_backbone()
-            checkpoint(note=f"({len(scenes)}/{len(seeds)} scenes)")
-            overall.advance(1, f"seed {seed} MAE {s['metrics'].get('mae_m', float('nan')):.2f} m")
-
-    print("\nsun elevation sweep (shadow physics, no inference)")
-    with live.task("sun sweep", len(SUN_ELEVATIONS), "angle") as t:
-        sun = S.sun_sweep(size=args.sun_size, log=live.log,
-                          on_step=lambda i, n, el: t.set(i, n, f"{el:.0f} deg"))
-    checkpoint()
-
-    print("\nlambda sensitivity (cached depth)")
-    with live.task("lambda", None, "fit") as t:
-        lam = S.lambda_sweep(os.path.join(out, f"seed{seeds[0]}"), log=live.log,
-                             on_step=lambda i, n, v: t.set(i, n, f"lam {v}"))
-    checkpoint(note="before the throughput sweep")
-
-    print("\nthroughput")
-    cases = (len(args.backbone.split(",")) * len(args.chips.split(","))
-             * len(args.batches.split(",")))
-    with live.task("throughput", cases, "case") as t:
-        seen = {"n": 0}
-
-        def _case(b, c, n):
-            t.set(seen["n"], cases, f"{b} chip={c} batch={n}")
-            seen["n"] += 1
-
-        bench = sweep(image=os.path.join(out, f"seed{seeds[0]}", "scene.tif"),
-                      backbones=args.backbone.split(","),
-                      chips=[int(c) for c in args.chips.split(",")],
-                      batches=[int(b) for b in args.batches.split(",")],
-                      device=args.device, on_case=_case)
-    print()
-    print(format_bench(bench))
-
-    study = checkpoint(bench)
-    agg = study["aggregate"]
-
-    if not args.no_figures:
-        from .eval.figures import render_all
-
-        print("\nfigures")
-        with live.task("figures", None, "figure") as t:
-            written = render_all(study, os.path.join(out, "figures"),
-                                 scenes_dir=out,
-                                 on_step=lambda i, n, name: t.set(i, n, name))
-        print(f"  {len(written)} figures + LaTeX tables in {out}/figures/")
-
-    print(f"\n{'':=<70}")
-    print(f"MAE      {agg['mae_m']['mean']:.2f} +/- {agg['mae_m']['std']:.2f} m "
-          f"over {agg['n_scenes']} scenes")
-    print(f"baseline {agg['baseline_mae_m']['mean']:.2f} +/- "
-          f"{agg['baseline_mae_m']['std']:.2f} m (global affine)")
-    print(f"wrote    {out}/study.json and {out}/README.md")
-    print(f"total    {time.time() - t0:.0f}s")
-    return 0
-
-
-def _write_study_markdown(study: dict, path: str) -> None:
-    a = study["aggregate"]
-    env = study["environment"]
-    cfg = study["config"]
-
-    def pm(key):
-        v = a.get(key)
-        return "-" if not v else f"{v['mean']:.2f} ± {v['std']:.2f}"
-
-    lines = [
-        "# ĀYĀMA results",
-        "",
-        f"Generated {env['timestamp_utc']} by `python -m ayama.cli study`.",
-        "",
-        "Every number here is measured against synthetic scenes whose exact DSM is",
-        "known, using only the RGB image plus a simulated public DEM as input. They",
-        "test the method end to end; they are **not** a claim about real satellite",
-        "imagery, which needs a scene with a reference DSM we do not yet have.",
-        "",
-        "## Environment",
-        "",
-        f"- {env['platform']}, python {env['python']}, {env['cpu_count']} cpus",
-        f"- torch {env.get('torch')} · CUDA available: {env.get('cuda_available')}"
-        + (f" · {env.get('gpu')} ({env.get('vram_total_gb')} GB)" if env.get("gpu") else ""),
-        f"- rasterio {env.get('rasterio')} · GDAL {env.get('gdal')}",
-        f"- backbone `{cfg['backbone']}`, {cfg['size']}x{cfg['size']} px at "
-        f"{cfg['gsd_m']} m, chip {cfg['chip']}, {len(cfg['seeds'])} scenes",
-        "",
-        "## Headline",
-        "",
-        "| metric | AGMC | global affine | DEM alone (floor) |",
-        "|---|---|---|---|",
-        f"| MAE (m) | **{pm('mae_m')}** | {pm('baseline_mae_m')} | {pm('dem_mae_m')} |",
-        f"| RMSE (m) | {pm('rmse_m')} | {pm('baseline_rmse_m')} | {pm('dem_rmse_m')} |",
-        f"| Pearson r | **{pm('pearson_r')}** | {pm('baseline_pearson_r')} | {pm('dem_pearson_r')} |",
-        f"| Spearman rho | {pm('spearman_r')} | - | - |",
-        f"| bias (m) | {pm('bias_m')} | - | - |",
-        f"| 1σ coverage | {pm('coverage_1s')} | - | - |",
-        f"| ECE (m) | {pm('ece_m')} | - | - |",
-        f"| δ < 1.25 | {pm('delta1')} | - | - |",
-        f"| edge F1 | {pm('edge_f1')} | - | - |",
-        f"| slope MAE (deg) | {pm('slope_mae_deg')} | - | - |",
-        "",
-        "1σ coverage is the honest test of the uncertainty field: for a Gaussian it",
-        "should sit near 0.68. A σ that does not predict error is decoration.",
-        "",
-        "**Read the third column first.** `DEM alone` is the public DEM resampled onto",
-        "the image grid, with no depth model involved at all. If the method does not",
-        "clear that floor by a clear margin on more than one metric, the depth model is",
-        "contributing little and the other two columns are measuring a DEM interpolator.",
-        "",
-        "`edge F1` and `δ < 1.25` are the rows that expose this. Both describe structure:",
-        "edge F1 asks whether height discontinuities land in the right place, and δ is a",
-        "ratio of heights above ground. A surface that reproduces terrain and flattens every",
-        "building scores well on MAE and collapses on both of those.",
-        "",
-        "## Error by class",
-        "",
-        "| class | MAE (m) |",
-        "|---|---|",
-    ]
-    for name, v in sorted(a.get("by_class_mae_m", {}).items(), key=lambda kv: kv[1]["mean"]):
-        lines.append(f"| {name} | {v['mean']:.2f} ± {v['std']:.2f} |")
-    lines += [
-        "",
-        "Terrain is close to solved; buildings and canopy dominate the error. That is",
-        "where a monocular method fails and saying so is the point of this table.",
-        "",
-        "## Ablation",
-        "",
-        "One inference per scene, every variant re-solving only the calibration, so",
-        "each row sees the identical depth field.",
-        "",
-        "| variant | MAE (m) | RMSE (m) | r | anchors |",
-        "|---|---|---|---|---|",
-    ]
-    by_variant: dict = {}
-    for rows in study["ablation"].values():
-        for r in rows:
-            if "mae_m" in r:
-                by_variant.setdefault(r["variant"], []).append(r)
-    for variant, rows in by_variant.items():
-        mae = np.mean([r["mae_m"] for r in rows])
-        rmse = np.mean([r["rmse_m"] for r in rows])
-        rr = np.mean([r["pearson_r"] for r in rows])
-        n = int(np.mean([r["n_anchors"] for r in rows]))
-        lines.append(f"| `{variant}` | {mae:.2f} | {rmse:.2f} | {rr:.3f} | {n} |")
-
-    lines += [
-        "",
-        "## Shadow physics window",
-        "",
-        "Shadow-derived building height against sun elevation, with no depth model",
-        "involved. The usable band the literature quotes is roughly 20-75 degrees.",
-        "",
-        "| sun elev (deg) | shadow F1 | anchors | median height error (m) | mean weight |",
-        "|---|---|---|---|---|",
-    ]
-    def cell(v, spec=".2f"):
-        """A missing measurement is None here, not NaN.
-
-        Strict JSON has no NaN token, so anything non-finite comes back from
-        study.json as null. Formatting has to accept both, or regenerating the
-        report from a saved study crashes on the sun elevations where no anchor
-        survived — which are exactly the rows that carry the finding.
-        """
-        if v is None:
-            return "-"
-        try:
-            return "-" if not np.isfinite(float(v)) else format(float(v), spec)
-        except (TypeError, ValueError):
-            return "-"
-
-    for r in study["sun_sweep"]:
-        lines.append(
-            f"| {cell(r.get('sun_elevation_deg'), '.0f')} | {cell(r.get('f1'))} | "
-            f"{r.get('n_anchors', '-')} | {cell(r.get('median_abs_height_error_m'))} | "
-            f"{cell(r.get('mean_anchor_weight'))} |"
-        )
-
-    lines += [
-        "",
-        "## Calibration parameter sensitivity",
-        "",
-        "AGMC has one free parameter, the smoothness weight. If it needed tuning per",
-        "scene it would not be a method, it would be a knob.",
-        "",
-        "| lambda | MAE (m) | r |",
-        "|---|---|---|",
-    ]
-    for r in study["lambda_sweep"]:
-        lam = "baseline" if r["lam"] is None else f"{r['lam']}"
-        lines.append(f"| {lam} | {r['mae_m']:.2f} | {r['pearson_r']:.3f} |")
-
-    lines += [
-        "",
-        "## Throughput",
-        "",
-        "| backbone | chip | batch | chips | wall (s) | s/chip | MPix/s | peak VRAM (MB) |",
-        "|---|---|---|---|---|---|---|---|",
-    ]
-    for r in study["bench"]["results"]:
-        if "error" in r:
-            lines.append(f"| {r['backbone']} | {r['chip']} | {r['batch_size']} | "
-                         f"{r['error']} | | | | |")
-            continue
-        vram = r.get("peak_vram_mb")
-        lines.append(
-            f"| {r['backbone']} | {r['chip']} | {r['batch_size']} | {r['n_chips']} | "
-            f"{r['wall_s']:.2f} | {r['s_per_chip']:.3f} | {r['mpix_per_s']:.2f} | "
-            f"{'-' if vram is None else f'{vram:.0f}'} |")
-
-    lines += [
-        "",
-        "## Mean stage timings",
-        "",
-        "| stage | seconds |",
-        "|---|---|",
-    ]
-    for k, v in a.get("timings_s", {}).items():
-        lines.append(f"| {k} | {v:.1f} |")
-
-    lines += [
-        "",
-        "## Reproducing this",
-        "",
-        "```bash",
-        "bash scripts/setup_gpu.sh          # or scripts/setup.ps1 on Windows",
-        f"python -m ayama.cli study --backbone {cfg['backbone']} "
-        f"--size {cfg['size']} --seeds {','.join(str(s) for s in cfg['seeds'])} --out results",
-        "```",
-        "",
-        f"Took {study['wall_s']:.0f}s on the machine above. Every artifact is a COG that",
-        "opens in QGIS without ĀYĀMA installed.",
-        "",
-    ]
-    with open(path, "w", encoding="utf-8") as fh:
-        fh.write("\n".join(lines))
-
-
-def cmd_figures(args) -> int:
-    """Render presentation figures and LaTeX tables from a saved study.
-
-    Separate from `study` because plotting is cheap and inference is not: a
-    caption or a colour can be changed in seconds without spending a GPU hour.
-    """
-    import json
-
-    from .core.progress import Live
-    from .eval.figures import render_all
-
-    with open(args.study, encoding="utf-8") as fh:
-        study = json.load(fh)
-
-    scenes_dir = args.scenes or os.path.dirname(os.path.abspath(args.study))
-    out = args.out or os.path.join(scenes_dir, "figures")
-    live = Live(mode=args.progress)
-
-    t0 = time.time()
-    print(f"AYAMA figures -> {out}/")
-    with live.task("figures", None, "figure") as t:
-        written = render_all(study, out, scenes_dir=scenes_dir,
-                             on_step=lambda i, n, name: t.set(i, n, name))
-    pngs = [w for w in written if w.endswith(".png")]
-    tex = [w for w in written if w.endswith(".tex")]
-    print(f"  {len(pngs)} figures (PNG at 300 dpi + vector PDF), {len(tex)} LaTeX tables")
-    for w in written:
-        print(f"    {w}")
-    print(f"done      {time.time() - t0:.1f}s")
     return 0
 
 
@@ -832,27 +566,131 @@ def cmd_delivery(args) -> int:
     return 1 if bad else 0
 
 
-def _device_available(device: str) -> tuple:
-    """(is it usable, why not). Never raises - the caller wants a verdict."""
+def cmd_dataset(args) -> int:
+    """Run the pipeline over a real dataset and aggregate the metrics.
+
+    The counterpart to `study`, which generates its own scenes. Everything this
+    project has measured so far came from a renderer it wrote; this is the
+    command that changes that, and until it has been run against real imagery
+    every number in the README carries the caveat in section 2.6.
+
+    Downloads nothing. Point --root at data you already have.
+    """
+    from .core.jsonio import save_json
+    from .core.progress import Live
+    from .core.types import Config
+    from .data import aggregate, discover, run_scene
+
+    suffixes = {}
+    for key, val in (("image", args.suffix_image),
+                     ("reference", args.suffix_reference),
+                     ("semantics", args.suffix_semantics),
+                     ("dem", args.suffix_dem)):
+        if val:
+            suffixes[key] = val
+
+    kw = {"suffixes": suffixes} if suffixes else {}
+    if args.layout == "us3d" and args.dem_dir:
+        kw["dem_dir"] = args.dem_dir
+
     try:
-        import torch
-    except ImportError:
-        return False, "torch is not installed"
-    if device == "cuda":
-        if not torch.cuda.is_available():
-            built = getattr(torch.version, "cuda", None)
-            return False, (
-                f"CUDA is not available to torch {torch.__version__}"
-                + (f" (built against CUDA {built})" if built
-                   else " - this is a CPU-only build")
+        scenes = discover(args.root, layout=args.layout, **kw)
+    except (FileNotFoundError, KeyError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    if args.limit:
+        scenes = scenes[: args.limit]
+
+    print(f"AYAMA dataset   {args.layout}  {args.root}")
+    print(f"  found        {len(scenes)} scenes")
+    have_ref = sum(1 for s in scenes if s.reference)
+    have_dem = sum(1 for s in scenes if s.dem)
+    have_sem = sum(1 for s in scenes if s.semantics)
+    print(f"  reference    {have_ref}/{len(scenes)}"
+          f"   dem {have_dem}/{len(scenes)}   semantics {have_sem}/{len(scenes)}")
+    if not have_ref:
+        print("  ! no reference rasters: metrics cannot be computed, only artifacts")
+    if not have_dem:
+        print("  ! no DEM: scenes will drop to a lower calibration tier (see README 2.1)")
+
+    if args.list:
+        for s in scenes:
+            print(f"    {s.describe()}")
+        return 0
+
+    os.makedirs(args.out, exist_ok=True)
+    live = Live(mode=args.progress)
+    t0 = time.time()
+    records, failures = [], []
+
+    with live.task("dataset", len(scenes), "scene") as overall:
+        for i, ref in enumerate(scenes, 1):
+            cfg = Config(
+                backbone=args.backbone, chip=args.chip, n_bootstrap=args.bootstrap,
+                extras={"batch_size": args.batch,
+                        "workers": args.workers,
+                        "dual_branch": bool(args.dual_branch) or
+                        args.scale_model not in ("off", "none", "no"),
+                        "scale_model": args.scale_model},
             )
-        return True, ""
-    if device == "mps":
-        backend = getattr(torch.backends, "mps", None)
-        if backend is None or not backend.is_available():
-            return False, "MPS is not available to this torch build"
-        return True, ""
-    return True, ""
+            out_dir = os.path.join(args.out, ref.name)
+            try:
+                rec = run_scene(ref, out_dir, cfg)
+                records.append(rec)
+                m = rec.get("metrics") or {}
+                mae = m.get("mae_m")
+                live.log(f"  {ref.name}  tier {rec['tier']}  "
+                         f"MAE {'-' if mae is None else f'{mae:.2f} m'}")
+            except Exception as exc:                    # one bad tile must not end the run
+                failures.append({"name": ref.name, "error": f"{type(exc).__name__}: {exc}"})
+                live.log(f"  {ref.name}  FAILED  {type(exc).__name__}: {exc}")
+            overall.set(i, len(scenes), ref.name)
+
+    payload = {
+        "ayama_dataset_version": 1,
+        "root": os.path.abspath(args.root),
+        "layout": args.layout,
+        "config": {"backbone": args.backbone, "chip": args.chip,
+                   "bootstrap": args.bootstrap,
+                   "dual_branch": bool(args.dual_branch)},
+        "n_found": len(scenes), "n_ok": len(records), "n_failed": len(failures),
+        "aggregate": aggregate(records) if records else {},
+        "scenes": records, "failures": failures,
+        "wall_s": round(time.time() - t0, 1),
+    }
+    path = save_json(payload, os.path.join(args.out, "dataset.json"))
+
+    agg = payload["aggregate"]
+    print()
+    if agg.get("mae_m"):
+        print(f"  MAE          {agg['mae_m']['mean']:.2f} +/- {agg['mae_m']['std']:.2f} m")
+    if agg.get("edge_f1"):
+        print(f"  edge F1      {agg['edge_f1']['mean']:.3f}")
+    for label, key in (("DEM floor", "dem_metrics_mae_m"),
+                       ("global affine", "baseline_metrics_mae_m"),
+                       ("flat ground", "zero_baseline_metrics_mae_m")):
+        if agg.get(key):
+            print(f"  {label:<15}MAE {agg[key]['mean']:.2f} m")
+
+    # Elevation MAE flatters this pipeline: most of a scene is ground, and the
+    # DEM already knows the ground. Where a bare-earth DTM ships, print the
+    # quantity actually being claimed - height above ground - beside the floor
+    # that any method must clear to be reconstructing anything at all.
+    if agg.get("ndsm_metrics_mae_m"):
+        print("\n  nDSM (height above ground)")
+        print(f"    MAE          {agg['ndsm_metrics_mae_m']['mean']:.2f} m")
+        if agg.get("zero_baseline_metrics_mae_m"):
+            print(f"    flat ground  {agg['zero_baseline_metrics_mae_m']['mean']:.2f} m"
+                  "   <- predicting zero everywhere")
+        if agg.get("true_mean_height_m") and agg.get("pred_mean_height_m"):
+            t, q = agg["true_mean_height_m"]["mean"], agg["pred_mean_height_m"]["mean"]
+            print(f"    relief       {q:.2f} m recovered of {t:.2f} m true"
+                  f"  ({100 * q / t:.0f}%)")
+    if failures:
+        print(f"  ! {len(failures)} scene(s) failed")
+    print(f"\ndone      {time.time() - t0:.1f}s   {path}")
+    return 1 if failures and not records else 0
 
 
 def cmd_serve(args) -> int:
@@ -867,7 +705,6 @@ def cmd_serve(args) -> int:
 
     print(f"AYAMA serve   http://{args.host}:{args.port}/")
     print(f"  jobs         {os.path.abspath(args.jobs)}")
-    print(f"  device       {args.device}")
     print(f"  concurrency  {args.concurrency} reconstruction"
           f"{'' if args.concurrency == 1 else 's'} at a time")
     if args.host not in ("127.0.0.1", "localhost"):
@@ -875,25 +712,22 @@ def cmd_serve(args) -> int:
     print()
     try:
         return serve(host=args.host, port=args.port, jobs_root=args.jobs,
-                     device=args.device, max_concurrent=args.concurrency)
+                     max_concurrent=args.concurrency)
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
 
 def cmd_preflight(args) -> int:
-    """Run the whole pipeline end to end on one device and report a verdict.
+    """Run the whole pipeline end to end and report a verdict.
 
-    The question "does this work on a GPU" cannot be answered by inspection, and
-    it cannot be answered on a machine without one. So it is answered by a
-    command: this runs synth -> depth -> anchors -> AGMC -> uncertainty ->
-    artifacts -> tileset on whatever device is selected, checks the device that
-    was *actually* used rather than the one requested, and fails loudly.
+    "Does this install actually work" cannot be answered by inspection, so it is
+    answered by a command: sample -> depth -> anchors -> AGMC -> uncertainty ->
+    artifacts -> tileset, on the bundled real scene, with the fitted structural
+    scale in play.
 
-    On a CUDA box:  python -m ayama.cli preflight --device cuda --backbone dav2-vits
-
-    Exit status is 0 only if every stage ran, the device matched the request,
-    every headline metric came back finite, and the artifacts are on disk.
+    Exit status is 0 only if every stage ran, every headline metric came back
+    finite, and the artifacts are on disk.
     """
     import tempfile
 
@@ -902,74 +736,49 @@ def cmd_preflight(args) -> int:
     from .api.pipeline import run as run_pipeline
     from .core.types import Config
     from .eval.bench import device_report
-    from .eval.synthetic_scene import make_scene
+    from .data.sample import load_sample_scene
     from .mesh.build import build_tileset
     from .dsm.cog import write_cog, write_rgb
 
     rep = device_report()
     print("AYAMA preflight\n")
-    print(f"  requested device   {args.device}")
-    print(f"  torch              {rep.get('torch')}   CUDA available: {rep.get('cuda_available')}")
-    if rep.get("gpu"):
-        print(f"  gpu                {rep['gpu']}  {rep.get('vram_total_gb')} GB")
-
-    # Fail here, clearly, rather than 40 lines deep inside torch. "Is my GPU
-    # set up" is the question this command exists to answer, so an unavailable
-    # device is a verdict, not a traceback.
-    want = args.device
-    if want in ("cuda", "mps") and args.backbone != "synthetic":
-        available, why = _device_available(want)
-        if not available:
-            print("\n  device used        UNAVAILABLE")
-            print("\nPREFLIGHT FAILED")
-            print(f"  ! {why}")
-            print("  ! install a CUDA build of torch, e.g.")
-            print("      pip install torch torchvision "
-                  "--index-url https://download.pytorch.org/whl/cu124")
-            return 1
+    print(f"  torch              {rep.get('torch')}")
+    print(f"  cpu                {rep.get('cpu_count')} cores, "
+          f"{rep.get('threads')} thread(s)")
 
     failures = []
     work = tempfile.mkdtemp(prefix="ayama-preflight-")
     t0 = time.time()
 
-    # ---- a scene with known truth, so the metrics mean something ----------
-    sc = make_scene(size=args.size, gsd_m=0.5, seed=11)
+    # ---- a real scene with lidar truth, so the metrics mean something ----
+    sc = load_sample_scene(size=args.size)
     img = os.path.join(work, "scene.tif")
-    write_rgb(img, sc.rgb, sc.meta, tags={"AYAMA_STAGE": "synthetic_rgb"})
+    write_rgb(img, sc.rgb, sc.meta, tags={"AYAMA_SOURCE": "swisstopo sample scene"})
     dsm_p = os.path.join(work, "scene_dsm.tif")
     dtm_p = os.path.join(work, "scene_dtm.tif")
     write_cog(dsm_p, sc.dsm_m, sc.meta, description="reference DSM (m)")
     write_cog(dtm_p, sc.dtm_m, sc.meta, description="reference DTM (m)")
-    print(f"  scene              {args.size} x {args.size} px at 0.5 m")
+    print(f"  scene              {args.size} x {args.size} px at 0.5 m"
+          "   (bundled swisstopo sample, real lidar truth)")
 
     # ---- the full pipeline on the requested device -----------------------
     cfg = Config(
         backbone=args.backbone, chip=min(args.chip, args.size), reference=dsm_p,
         dem_source=f"sim:{dtm_p}", n_bootstrap=args.bootstrap,
-        extras={"device": args.device, "batch_size": args.batch,
+        extras={"batch_size": args.batch,
                 "workers": args.workers},
     )
     out_dir = os.path.join(work, "run")
     print("\n  running the pipeline ...")
     res = run_pipeline(img, cfg=cfg, out_dir=out_dir, write_artifacts=True)
 
-    # ---- did it use the device we asked for? -----------------------------
-    used = "unknown"
-    try:
-        from .depth.backbones import get_backbone
+    # ---- did the fitted scale reach the surface? -------------------------
+    from .learn.scale import load_bundled
 
-        m = get_backbone(args.backbone, device=args.device)
-        m.load()
-        used = m.stats().get("device", "unknown")
-        dtype = m.stats().get("dtype", "?")
-    except Exception as exc:                       # synthetic backbone has no device
-        dtype = "-"
-        used = "n/a" if args.backbone == "synthetic" else f"error: {exc}"
-
-    print(f"\n  device used        {used} / {dtype}")
-    if args.device not in ("auto", "cpu") and args.backbone != "synthetic":
-        if not str(used).startswith(args.device):
-            failures.append(f"asked for {args.device} but the backbone ran on {used}")
+    model = load_bundled()
+    print("\n  scale model        " +
+          (f"{model.kind}, a = {model.value:.1f}, fitted on {model.n_scenes} scene(s)"
+           if model else "none bundled - structure will not be scaled"))
 
     # ---- every stage must have run ---------------------------------------
     print("\n  stage timings")
@@ -1011,7 +820,7 @@ def cmd_preflight(args) -> int:
         for f in failures:
             print(f"  ! {f}")
         return 1
-    print(f"\nPREFLIGHT OK - the full pipeline runs end to end on {used}")
+    print("\nPREFLIGHT OK - the full pipeline runs end to end on this machine")
     return 0
 
 
@@ -1024,12 +833,8 @@ def cmd_doctor(args) -> int:
     print(f"  platform        {rep['platform']}")
     print(f"  python          {rep['python']}   cpus {rep['cpu_count']}")
     print(f"  torch           {rep.get('torch') or 'NOT INSTALLED'}")
-    if rep.get("cuda_available"):
-        print(f"  gpu             {rep['gpu']}   {rep['vram_total_gb']} GB "
-              f"({rep['vram_free_gb']} GB free)   cc {rep['gpu_capability']}")
-        print(f"  cuda            {rep['cuda']}")
-    else:
-        print("  gpu             none detected - inference will run on CPU")
+    print(f"  threads         {rep.get('threads') or '-'}"
+          "   (AYAMA is CPU-only by design - see ayama/depth/backbones/hf.py)")
     print(f"  rasterio        {rep.get('rasterio') or 'NOT INSTALLED'}"
           + (f"   gdal {rep['gdal']}" if rep.get("rasterio") else ""))
 
@@ -1043,7 +848,7 @@ def cmd_doctor(args) -> int:
     try:
         import transformers  # noqa: F401
     except ImportError:
-        print("  transformers    NOT INSTALLED - only --backbone synthetic will run")
+        print("  transformers    NOT INSTALLED - no backbone can run")
         ok = False
 
     if args.load:
@@ -1052,7 +857,7 @@ def cmd_doctor(args) -> int:
         for name in args.load.split(","):
             try:
                 t0 = time.time()
-                m = get_backbone(name, device=args.device).load()
+                m = get_backbone(name).load()
                 print(f"  loaded          {m.describe()}   {time.time() - t0:.1f}s   {m.stats()}")
             except Exception as exc:
                 print(f"  FAILED          {name}: {type(exc).__name__}: {exc}")
@@ -1077,7 +882,6 @@ def build_parser() -> argparse.ArgumentParser:
     pd.add_argument("image")
     pd.add_argument("--out", default="out/depth.tif")
     pd.add_argument("--backbone", default="dav2-vits")
-    pd.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
     pd.add_argument("--chip", type=int, default=1024)
     pd.add_argument("--overlap", type=float, default=0.25)
     pd.add_argument("--max-side", type=int, default=0,
@@ -1086,20 +890,34 @@ def build_parser() -> argparse.ArgumentParser:
     pd.add_argument("--cmap", default="magma")
     pd.set_defaults(func=cmd_depth)
 
-    ps = sub.add_parser("synth", help="generate a synthetic town with a known DSM")
-    ps.add_argument("--out", default="data/sample.tif")
-    ps.add_argument("--size", type=int, default=1024)
-    ps.add_argument("--gsd", type=float, default=0.5)
-    ps.add_argument("--seed", type=int, default=7)
-    ps.add_argument("--sun-az", type=float, default=138.4)
-    ps.add_argument("--sun-el", type=float, default=61.2)
-    ps.set_defaults(func=cmd_synth)
+    psm = sub.add_parser("sample",
+                         help="write the bundled real sample scene, with lidar truth")
+    psm.add_argument("--out", default="data/sample.tif")
+    psm.add_argument("--size", type=int, default=576)
+    psm.add_argument("--sun-az", type=float, default=None,
+                     help="ASSUME a sun azimuth; none is published for this scene")
+    psm.add_argument("--sun-el", type=float, default=45.0)
+    psm.set_defaults(func=cmd_sample)
+
+    pfit = sub.add_parser("fit",
+                          help="fit the structural scale over a dataset (the only learning step)")
+    pfit.add_argument("root", help="the scene directory the study ran on")
+    pfit.add_argument("--runs", required=True,
+                      help="where that study wrote its per-scene artifacts")
+    pfit.add_argument("--layout", default="generic", choices=["generic", "us3d"])
+    pfit.add_argument("--out", default="ayama/learn/calibration.json")
+    pfit.add_argument("--radius", type=float, default=60.0,
+                      help="frequency split, metres; must match the runs")
+    pfit.add_argument("--suffix-image", default=None)
+    pfit.add_argument("--suffix-reference", default=None)
+    pfit.add_argument("--suffix-semantics", default=None)
+    pfit.add_argument("--suffix-dem", default=None)
+    pfit.set_defaults(func=cmd_fit)
 
     pr = sub.add_parser("run", help="full pipeline: depth -> anchors -> metric DSM (Phase 2)")
     pr.add_argument("image")
     pr.add_argument("--out", default="out/run", help="artifact directory")
     pr.add_argument("--backbone", default="dav2-vits")
-    pr.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda", "mps"])
     pr.add_argument("--batch", type=int, default=0,
                     help="chips per forward pass; 0 = pick from free VRAM")
     pr.add_argument("--workers", type=int, default=0,
@@ -1117,19 +935,20 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--stride", type=int, default=32, help="AGMC lattice stride in pixels")
     pr.add_argument("--lam", type=float, default=1.0,
                     help="AGMC smoothness weight; results are flat over roughly 0.25-4")
+    pr.add_argument("--scale-model", default="auto",
+                    help="fitted structural scale: auto, off, a number, or a path")
     pr.add_argument("--json", default=None, help="write the run summary here")
     pr.add_argument("--progress", default="auto", choices=["auto", "rich", "plain", "none"])
     pr.set_defaults(func=cmd_run)
 
     pbn = sub.add_parser("bench", help="throughput sweep over backbones, chip and batch sizes")
-    pbn.add_argument("--image", default=None, help="real image; omit for a synthetic scene")
-    pbn.add_argument("--size", type=int, default=1024, help="synthetic scene side")
+    pbn.add_argument("--image", default=None,
+                     help="scene to bench; omit for the bundled sample (see ayama/data/sample.py)")
+    pbn.add_argument("--size", type=int, default=1024, help="scene side, tiled from the sample")
     pbn.add_argument("--backbones", default="dav2-vits")
     pbn.add_argument("--chips", default="512,1024")
     pbn.add_argument("--batches", default="1")
     pbn.add_argument("--overlap", type=float, default=0.25)
-    pbn.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda", "mps"])
-    pbn.add_argument("--dtype", default="auto", choices=["auto", "float32", "float16"])
     pbn.add_argument("--repeats", type=int, default=1)
     pbn.add_argument("--json", default="out/bench.json")
     pbn.set_defaults(func=cmd_bench)
@@ -1140,7 +959,6 @@ def build_parser() -> argparse.ArgumentParser:
     pa.add_argument("--dem", default=None)
     pa.add_argument("--sem", default=None)
     pa.add_argument("--backbone", default="dav2-vits")
-    pa.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda", "mps"])
     pa.add_argument("--batch", type=int, default=0)
     pa.add_argument("--chip", type=int, default=1024)
     pa.add_argument("--overlap", type=float, default=0.25)
@@ -1150,33 +968,6 @@ def build_parser() -> argparse.ArgumentParser:
     pa.add_argument("--variants", default=None, help="comma-separated subset")
     pa.add_argument("--json", default="out/ablation.json")
     pa.set_defaults(func=cmd_ablate)
-
-    pst = sub.add_parser("study", help="run the whole study and write reproducible results")
-    pst.add_argument("--out", default="results")
-    pst.add_argument("--seeds", default="7,21,33", help="one independent scene per seed")
-    pst.add_argument("--size", type=int, default=1024)
-    pst.add_argument("--chip", type=int, default=512)
-    pst.add_argument("--backbone", default="dav2-vits")
-    pst.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda", "mps"])
-    pst.add_argument("--batch", type=int, default=1)
-    pst.add_argument("--bootstrap", type=int, default=16)
-    pst.add_argument("--chips", default="512,1024", help="bench sweep chip sizes")
-    pst.add_argument("--batches", default="1", help="bench sweep batch sizes")
-    pst.add_argument("--sun-size", type=int, default=512,
-                     help="scene size for the sun elevation sweep")
-    pst.add_argument("--progress", default="auto", choices=["auto", "rich", "plain", "none"],
-                     help="live display: rich for a terminal, plain for logs/notebooks")
-    pst.add_argument("--no-figures", action="store_true",
-                     help="skip the presentation figures and LaTeX tables")
-    pst.set_defaults(func=cmd_study)
-
-    pf = sub.add_parser("figures", help="presentation figures + LaTeX tables from a study")
-    pf.add_argument("--study", default="results/study.json")
-    pf.add_argument("--scenes", default=None,
-                    help="directory holding seed*/ (defaults to the study's own directory)")
-    pf.add_argument("--out", default=None)
-    pf.add_argument("--progress", default="auto", choices=["auto", "rich", "plain", "none"])
-    pf.set_defaults(func=cmd_figures)
 
     pm = sub.add_parser("mesh", help="Phase 3: run directory -> browser tileset + OBJ mesh")
     pm.add_argument("run", help="a directory written by `ayama run` (contains dsm.tif)")
@@ -1207,7 +998,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     pdel = sub.add_parser("delivery",
                           help="Phase 3/4 CPU benchmark: build cost, payload, viewer CPU")
-    pdel.add_argument("run", nargs="?", default="results/seed7/run",
+    pdel.add_argument("run", nargs="?", default="results/cpu/real_vitl_h1/zurich",
                       help="a directory written by `ayama run`")
     pdel.add_argument("--out", default="results", help="where delivery.json lands")
     pdel.add_argument("--tile", type=int, default=512, help="tile size for the reference build")
@@ -1220,20 +1011,42 @@ def build_parser() -> argparse.ArgumentParser:
                            "directory, which is usually not virus-scanned)")
     pdel.set_defaults(func=cmd_delivery)
 
+    pds = sub.add_parser("dataset",
+                         help="run the pipeline over a REAL dataset and aggregate metrics")
+    pds.add_argument("root", help="directory you already have; nothing is downloaded")
+    pds.add_argument("--layout", default="generic", choices=["generic", "us3d"])
+    pds.add_argument("--out", default="results/dataset")
+    pds.add_argument("--list", action="store_true", help="show what was found and stop")
+    pds.add_argument("--limit", type=int, default=0, help="first N scenes only")
+    pds.add_argument("--dem-dir", default=None, help="us3d: where <TILE>_DEM.tif live")
+    pds.add_argument("--suffix-image", default=None)
+    pds.add_argument("--suffix-reference", default=None)
+    pds.add_argument("--suffix-semantics", default=None)
+    pds.add_argument("--suffix-dem", default=None)
+    pds.add_argument("--backbone", default="dav2-vits")
+    pds.add_argument("--chip", type=int, default=512)
+    pds.add_argument("--bootstrap", type=int, default=12)
+    pds.add_argument("--batch", type=int, default=0)
+    pds.add_argument("--workers", type=int, default=0)
+    pds.add_argument("--scale-model", default="auto",
+                     help="fitted structural scale: auto, off, a number, or a path")
+    pds.add_argument("--dual-branch", action="store_true",
+                     help="experimental H2 calibration (README 5.5)")
+    pds.add_argument("--progress", default="auto", choices=["auto", "rich", "plain", "none"])
+    pds.set_defaults(func=cmd_dataset)
+
     psrv = sub.add_parser("serve", help="web service: upload an image, get a 3D reconstruction")
     psrv.add_argument("--host", default="127.0.0.1")
     psrv.add_argument("--port", type=int, default=8000)
     psrv.add_argument("--jobs", default="out/jobs", help="where uploads and results live")
-    psrv.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda", "mps"])
     psrv.add_argument("--concurrency", type=int, default=1,
                       help="reconstructions at a time; each wants several cores")
     psrv.set_defaults(func=cmd_serve)
 
     ppre = sub.add_parser("preflight",
                           help="run the whole pipeline end to end on one device and verdict it")
-    ppre.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda", "mps"])
-    ppre.add_argument("--backbone", default="synthetic",
-                      help="use a real backbone (dav2-vits) to exercise the GPU path")
+    ppre.add_argument("--backbone", default="dav2-vits",
+                      help="the backbone whose device path is being verified")
     ppre.add_argument("--size", type=int, default=384)
     ppre.add_argument("--chip", type=int, default=384)
     ppre.add_argument("--batch", type=int, default=0)
@@ -1244,7 +1057,6 @@ def build_parser() -> argparse.ArgumentParser:
     pdoc = sub.add_parser("doctor", help="check this machine is ready, and how fast it is")
     pdoc.add_argument("--load", default=None,
                       help="comma-separated backbones to actually load and time")
-    pdoc.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda", "mps"])
     pdoc.set_defaults(func=cmd_doctor)
 
     return p

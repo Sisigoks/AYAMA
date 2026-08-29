@@ -7,8 +7,9 @@
 #   SIZE=4096 CHIPS=1024 BATCHES=1,2,4,8 bash scripts/harness.sh
 #   IMAGE=data/real.tif REF=data/lidar_dsm.tif DEM=data/copernicus.tif bash scripts/harness.sh
 #
-# With no IMAGE it generates a synthetic town with known ground truth, so the
-# harness produces real metrics on any machine with no data to download.
+# With no IMAGE it writes out the bundled real sample scene - a lidar crop of
+# central Zurich with a swissSURFACE3D DSM and a swissALTI3D DTM - so the
+# harness produces real metrics on any machine with nothing to download.
 set -uo pipefail
 
 cd "$(dirname "$0")/.."
@@ -45,7 +46,7 @@ if [ -z "$PYBIN" ]; then
   done
   echo "" >&2
   echo "  Fix one of:" >&2
-  echo "    bash scripts/setup_gpu.sh          # builds or detects an environment" >&2
+  echo "    python -m venv .venv && .venv/bin/pip install -r requirements.txt" >&2
   echo "    pip install -r requirements.txt    # into whatever python you are using" >&2
   echo "    PYBIN_OVERRIDE=/path/to/python bash scripts/harness.sh" >&2
   echo "" >&2
@@ -59,8 +60,6 @@ SIZE=${SIZE:-2048}
 BACKBONES=${BACKBONES:-dav2-vits}
 CHIPS=${CHIPS:-512,1024}
 BATCHES=${BATCHES:-1,2,4}
-DEVICE=${DEVICE:-auto}
-DTYPE=${DTYPE:-auto}
 BOOTSTRAP=${BOOTSTRAP:-24}
 PRIMARY=${PRIMARY:-${BACKBONES%%,*}}
 
@@ -78,11 +77,11 @@ run() { echo "\$ $*" | tee -a "$LOG"; "$@" 2>&1 | tee -a "$LOG"; return "${PIPES
 echo "harness: using $PYBIN ($("$PYBIN" --version 2>&1))"
 
 say "1/8  doctor"
-run "$PYBIN" -m ayama.cli doctor --load "$BACKBONES" --device "$DEVICE"
+run "$PYBIN" -m ayama.cli doctor --load "$BACKBONES"
 
 if [ -z "$IMAGE" ]; then
-  say "2/8  synthetic scene (${SIZE}x${SIZE}, known ground truth)"
-  run "$PYBIN" -m ayama.cli synth --out "$OUT/scene.tif" --size "$SIZE"
+  say "2/8  bundled sample scene (${SIZE}x${SIZE}, real lidar truth)"
+  run "$PYBIN" -m ayama.cli sample --out "$OUT/scene.tif" --size "$SIZE"
   IMAGE="$OUT/scene.tif"
   REF="$OUT/scene_dsm.tif"
   DEM="sim:$OUT/scene_dtm.tif"
@@ -96,12 +95,12 @@ run "$PYBIN" -m pytest tests -q
 
 say "4/8  throughput sweep"
 run "$PYBIN" -m ayama.cli bench --image "$IMAGE" --backbones "$BACKBONES" \
-    --chips "$CHIPS" --batches "$BATCHES" --device "$DEVICE" --dtype "$DTYPE" \
+    --chips "$CHIPS" --batches "$BATCHES" \
     --json "$OUT/bench.json"
 
 say "5/8  full pipeline run"
 CMD=("$PYBIN" -m ayama.cli run "$IMAGE" --out "$OUT/run" --backbone "$PRIMARY"
-     --device "$DEVICE" --batch 0 --bootstrap "$BOOTSTRAP" --json "$OUT/run_summary.json")
+     --batch 0 --bootstrap "$BOOTSTRAP" --json "$OUT/run_summary.json")
 [ -n "$DEM" ] && CMD+=(--dem "$DEM")
 [ -n "$REF" ] && CMD+=(--ref "$REF")
 run "${CMD[@]}"
@@ -109,7 +108,7 @@ run "${CMD[@]}"
 if [ -n "$REF" ]; then
   say "6/8  ablation table"
   ABL=("$PYBIN" -m ayama.cli ablate "$IMAGE" --ref "$REF" --backbone "$PRIMARY"
-       --device "$DEVICE" --batch 0 --bootstrap "$BOOTSTRAP" --json "$OUT/ablation.json")
+       --batch 0 --bootstrap "$BOOTSTRAP" --json "$OUT/ablation.json")
   [ -n "$DEM" ] && ABL+=(--dem "$DEM")
   run "${ABL[@]}"
 else

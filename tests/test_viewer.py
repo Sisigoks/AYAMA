@@ -28,7 +28,8 @@ from ayama.mesh.encode import decode_linear, decode_terrain_rgb
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.path.join(ROOT, "web")
-REAL_RUN = os.path.join(ROOT, "results", "seed7", "run")
+REAL_RUN = os.path.join(ROOT, "results", "cpu", "real_vitl_h1", "zurich")
+LEARNED_RUN = os.path.join(ROOT, "results", "cpu", "real_vitl_learned", "zurich")
 
 
 # --------------------------------------------------------------------- fixture
@@ -56,7 +57,7 @@ def fake_run(tmp_path_factory):
     write_cog(str(d / "sem.tif"), sem, meta, dtype="uint8", nodata=255)
     write_rgb(str(d / "texture.jpg"), np.full((h, w, 3), 128, np.uint8))
     with open(d / "provenance.json", "w", encoding="utf-8") as fh:
-        json.dump({"backbone": "synthetic", "segmentation": "heuristic",
+        json.dump({"backbone": "dav2-vits", "segmentation": "heuristic",
                    "dem": "simulated copernicus", "tier": "A"}, fh)
     return str(d), {"dsm": dsm, "ndsm": ndsm, "sigma": sigma, "sem": sem}
 
@@ -290,29 +291,34 @@ def test_colour_ramps_match_the_png_previews():
 
 
 # --------------------------------------------------- against the real Phase 2
-@pytest.mark.skipif(not os.path.isdir(REAL_RUN), reason="results/seed7/run not present")
+@pytest.mark.skipif(not os.path.isdir(REAL_RUN), reason="results/cpu/real_vitl_h1/zurich not present")
 def test_the_real_phase2_run_tiles_and_reports_its_own_defect(tmp_path):
     """End to end on the CPU study's own output, not a fixture.
 
-    This is the run the README reports, so the tileset it produces must carry
-    the same numbers - and must raise the flat-surface note, because that run
-    really does have one.
+    This is the Zurich run the README reports, so the tileset it produces must
+    carry the same numbers - and must raise the flat-surface note, because that
+    run really does have one.
     """
     m = build_tileset(REAL_RUN, str(tmp_path / "t"), tile=512, write_mesh=False)
     assert m["grid"]["width"] == 1024 and m["grid"]["gsd_m"] == pytest.approx(0.5)
-    assert m["crs"] == "EPSG:32644"
+    assert m["crs"] == "EPSG:2056", "swisstopo publishes in LV95"
 
-    nd = m["layers"]["ndsm"]["stats"]
-    assert nd["max"] < 1.0, "the run stopped being flat - update README section 5"
-    assert [n for n in m["notes"] if n["id"] == "flat_surface"]
+    # This arm has no structural scale, so it delivers almost no relief and the
+    # tileset must say so unprompted. The check is deliberately truth-free and
+    # segmentation-free - see the comment on derive_notes.
+    ids = {n["id"] for n in m["notes"]}
+    assert ids & {"flat_surface", "low_relief"}, \
+        "a run with 99% of its surface under 3 m must raise a relief note"
+    assert m["layers"]["ndsm"]["stats"]["max"] < 10.0, \
+        "the un-fitted arm stopped being flat - update README sections 3.2 and 4"
 
-    # Metrics come from the study, unchanged.
+    # Metrics come from the study's dataset.json, unchanged.
     assert m["tier"] == "A"
-    assert m["metrics"]["mae_m"] == pytest.approx(3.394, abs=0.01)
-    assert m["metrics"]["edge_f1"] == pytest.approx(0.276, abs=0.01)
+    assert m["metrics"]["mae_m"] == pytest.approx(7.680, abs=0.01)
+    assert m["metrics"]["edge_f1"] == pytest.approx(0.530, abs=0.01)
 
-    # And the sun the viewer lights from is the scene's own.
-    assert m["provenance"]["sun_elevation_deg"] == pytest.approx(61.2, abs=0.1)
+    # No sun is published for these products, and none may be invented.
+    assert m["provenance"].get("sun_elevation_deg") is None
 
 
 # ------------------------------------------------ the published web tileset
@@ -356,8 +362,13 @@ def test_the_published_demo_tileset_is_web_sized_and_intact():
 
     total = sum(os.path.getsize(os.path.join(b, f))
                 for b, _, fs in os.walk(DEMO) for f in fs)
-    assert total < 6e6, f"demo tileset is {total / 1e6:.1f} MB; too heavy for a page"
-    assert m["mesh"] is None, "the demo must not ship the 139 MB OBJ"
+    # 8 MB for the whole pyramid, not for a page load: the viewer fetches one
+    # LOD, so first paint costs a fraction of this. The budget was 6 MB while
+    # the demo surface was flat - a flat sheet compresses to almost nothing -
+    # and grew when the fitted structural scale put real structure into the
+    # height layer. That is the payload doing its job, not bloat.
+    assert total < 8e6, f"demo tileset is {total / 1e6:.1f} MB; too heavy for a page"
+    assert m["mesh"] is None, "the demo must not ship the OBJ; it is 34 MB alone"
     assert m["grid"]["quantise_bits"] == 12
 
     for lod in m["lods"]:
@@ -365,6 +376,33 @@ def test_the_published_demo_tileset_is_web_sized_and_intact():
             for rel in t["layers"].values():
                 assert os.path.exists(os.path.join(DEMO, rel)), rel
 
-    # The flat-surface note is the whole reason the demo is honest.
-    assert [n for n in m["notes"] if n["id"] == "flat_surface"]
-    assert m["metrics"]["mae_m"] == pytest.approx(3.394, abs=0.01)
+    # The demo now ships the fitted arm, which recovers real structure, so it
+    # must NOT be claiming a flat surface. That is the assertion that would have
+    # caught the false alarm this check produced when it keyed on the colour
+    # heuristic's building class.
+    ids = {n["id"] for n in m["notes"]}
+    assert not (ids & {"flat_surface", "low_relief"}), ids
+    assert m["layers"]["ndsm"]["stats"]["max"] > 30.0
+
+    # Metrics come out of the study's dataset.json, so the demo cannot drift
+    # away from the numbers the README reports for the same scene.
+    assert m["metrics"]["mae_m"] == pytest.approx(8.717, abs=0.01)
+    assert m["tier"] == "A"
+
+
+@pytest.mark.skipif(not os.path.isdir(LEARNED_RUN),
+                    reason="results/cpu/real_vitl_learned/zurich not present")
+def test_the_fitted_run_recovers_relief_and_stops_warning(tmp_path):
+    """The other direction, which matters just as much.
+
+    A relief warning that never clears is decoration. With the fitted structural
+    scale the same scene delivers real structure, and the tileset must stop
+    claiming a defect - otherwise the warning carries no information.
+    """
+    m = build_tileset(LEARNED_RUN, str(tmp_path / "t"), tile=512, write_mesh=False)
+    st = m["layers"]["ndsm"]["stats"]
+    assert st["max"] > 30.0, "the fitted arm should carry real structure"
+    assert st["p99"] > 8.0
+    ids = {n["id"] for n in m["notes"]}
+    assert not (ids & {"flat_surface", "low_relief"}), \
+        f"relief warning fired on a surface with {st['max']:.0f} m of structure: {ids}"

@@ -410,3 +410,22 @@ th .dim { color: var(--ink-3); font-weight: 400; }
 @media (max-width: 700px) {
   .viewer-frame { height: 78vh; }
 }
+
+/* ── real-study panels ──────────────────────────────────────────────────────
+   Added when the site moved off the synthetic study. The relief metric is the
+   one that carries the finding, so it gets a colour of its own rather than
+   sitting in the same grey as everything else. */
+.metric.bad .v { color: var(--bad, #d1495b); }
+
+table.data th { text-align: left; font-weight: 600; color: var(--ink-2); }
+table.data td, table.data th { padding: .38rem .6rem; border-bottom: 1px solid var(--line); }
+table.data td { font-family: var(--mono); font-size: .88rem; }
+table.data td:first-child, table.data th:first-child { font-family: inherit; }
+table.data tr.sel { background: var(--panel); }
+table.data td.zero { color: var(--bad, #d1495b); font-weight: 600; }
+
+.linkish {
+  background: none; border: 0; padding: 0; cursor: pointer;
+  font: inherit; color: var(--accent, #3d7bfd); text-decoration: underline;
+}
+.linkish:hover { opacity: .8; }

@@ -78,7 +78,7 @@ def detect_shadow(
     """Boolean cast-shadow mask.
 
     A shadowed surface is blue-shifted *and* dark. Thresholding the chromatic
-    index alone flags every blue-leaning pixel in the scene: on the synthetic
+    index alone flags every blue-leaning pixel in the scene: on the sample
     benchmark that was 42-46% of the image at a precision of 0.08-0.15. Adding
     the darkness term takes it to precision 0.95-0.97 at recall 0.83-0.86,
     F1 0.89-0.91 over five scenes, and shadow-derived building heights land

@@ -9,19 +9,28 @@ completed work at the very last stage. Each case now runs in a child process.
 from __future__ import annotations
 
 
+import pytest
+
 from ayama.eval.bench import device_report, format_bench, sweep
+
+# The weightless placeholder backbone has been removed along with everything
+# else that produced invented pixels, so every case here loads real weights.
+# That makes the sweep tests slow rather than instant - the isolation behaviour
+# they check is only meaningful with a model that can actually die.
+pytestmark = pytest.mark.slow
+BACKBONE = "dav2-vits"
 
 
 def test_device_report_describes_the_machine():
     rep = device_report()
     assert "platform" in rep and "python" in rep
-    assert "cuda_available" in rep
+    assert "cpu_count" in rep
     # torch may be absent in a bare install; the report must still be renderable.
     assert rep.get("torch") is None or isinstance(rep["torch"], str)
 
 
-def test_sweep_runs_the_weightless_backbone():
-    rep = sweep(size=256, backbones=["synthetic"], chips=[256], batches=[1])
+def test_sweep_runs_a_backbone_end_to_end():
+    rep = sweep(size=256, backbones=[BACKBONE], chips=[256], batches=[1])
     assert len(rep["results"]) == 1
     r = rep["results"][0]
     assert "error" not in r, r.get("error")
@@ -33,7 +42,7 @@ def test_sweep_runs_the_weightless_backbone():
 
 def test_a_failing_case_is_recorded_and_the_sweep_continues():
     """One bad cell must not cost the cells around it."""
-    rep = sweep(size=256, backbones=["synthetic", "no-such-backbone", "synthetic"],
+    rep = sweep(size=256, backbones=[BACKBONE, "no-such-backbone", BACKBONE],
                 chips=[256], batches=[1])
     assert len(rep["results"]) == 3
     assert "error" not in rep["results"][0]
@@ -43,8 +52,8 @@ def test_a_failing_case_is_recorded_and_the_sweep_continues():
 
 def test_isolated_and_inline_paths_agree():
     """Isolation is a scheduling decision; it must not change the measurement."""
-    iso = sweep(size=256, backbones=["synthetic"], chips=[256], batches=[1], isolate=True)
-    inline = sweep(size=256, backbones=["synthetic"], chips=[256], batches=[1], isolate=False)
+    iso = sweep(size=256, backbones=[BACKBONE], chips=[256], batches=[1], isolate=True)
+    inline = sweep(size=256, backbones=[BACKBONE], chips=[256], batches=[1], isolate=False)
     a, b = iso["results"][0], inline["results"][0]
     assert a["n_chips"] == b["n_chips"]
     assert a["image_px"] == b["image_px"]
@@ -62,10 +71,10 @@ def test_format_bench_renders_errors_without_crashing():
 def test_repeated_model_loads_survive_in_one_sweep():
     """The exact shape of the crash: several cases, each loading a model.
 
-    Uses the weightless backbone so it is fast; the isolation it exercises is
-    the same code path the real backbones take.
+    Four cases, each loading a model into the same sweep. This is the exact
+    shape that used to take the interpreter down at the last stage.
     """
-    rep = sweep(size=256, backbones=["synthetic"], chips=[128, 256], batches=[1, 2])
+    rep = sweep(size=256, backbones=[BACKBONE], chips=[128, 256], batches=[1, 2])
     assert len(rep["results"]) == 4
     assert all("error" not in r for r in rep["results"]), \
         [r.get("error") for r in rep["results"]]

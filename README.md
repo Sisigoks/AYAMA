@@ -4,16 +4,24 @@
 reconstruction** — an anchor-graph calibration formulation, a controlled
 negative result, and a diagnosed failure mode.
 
-> ### Research status — proof of concept, failure diagnosed
+> ### Research status — failure diagnosed, and partly repaired
 >
 > ĀYĀMA demonstrates reproducible spatially-varying metric calibration on
-> synthetic scenes, and **does not yet produce a usable Digital Surface Model.**
-> The central failure is *scale-field collapse*: terrain-dominated calibration
-> drives the spatial scale field to its positivity floor and suppresses building
-> relief to 0.05 m against a true 12.4 m. We isolate the mechanism, show why the
-> positivity constraint is behaving correctly, measure the high-frequency depth
-> signal that survives, and formulate a dual-frequency calibration hypothesis
-> that has **not yet been tested end to end**.
+> **real imagery with airborne lidar ground truth**, and **does not yet produce
+> a usable Digital Surface Model.**
+>
+> Calibrated from anchors alone it is indistinguishable from a flat sheet across
+> four European city centres — **1.2% of true relief**, 1% better than
+> predicting zero height everywhere. The cause is measured: on real imagery
+> every anchor is a *ground* anchor, terrain needs a scale **51× smaller** than
+> buildings do, and one affine field per neighbourhood serves the majority.
+>
+> Supplying that missing scale — **one constant, fitted once over the dataset**
+> — recovers **36% of true relief** and beats the flat-ground floor by **29%**,
+> while elevation MAE gets *worse*. That trade is the finding: on this problem
+> the headline metric and reconstruction quality point in opposite directions.
+> The surface has stopped being flat; it has not started being right.
+
 
 ---
 
@@ -37,13 +45,15 @@ the two scalars with two smooth *fields* over a lattice should reduce error.
 
 **H2 — frequency separation.** Terrain elevation and object height occupy
 different spatial-frequency regimes, and a monocular backbone's low-frequency
-output is not merely noisy but *anti-correlated* with terrain. Metric grounding
-should therefore decompose depth by frequency and constrain each band with the
-source that observes it — terrain from a DEM, structure from shadows.
+output carries terrain and structure at scales that demand very different
+metric factors. Metric grounding should therefore decompose depth by frequency
+and constrain each band with the source that observes it — terrain from a DEM,
+structure from an observation of structure.
 
-**Status: H1 tested and supported. H2 formulated from the failure of H1,
-implemented, and run end to end — its mechanism is confirmed and its scale
-estimator is not solved (§5.5).**
+**Status: both tested on real imagery with airborne lidar truth. H1 is
+supported. H2 is implemented and run end to end; it moves structure and not
+scale, because on real data its scale branch received no anchors at all
+(§5.2).**
 
 ## Contributions
 
@@ -53,33 +63,44 @@ estimator is not solved (§5.5).**
 2. **Explicit absolute/relative anchor semantics** — shadow-derived height
    constraints enter the linear system as a *difference of two rows*, which
    structurally prevents a height measurement being read as an elevation.
-3. **A calibration failure diagnosis** — terrain-dominated fitting drives the
-   scale field to its positivity floor at 100% of lattice nodes, reducing the
-   method to a DEM interpolator.
-4. **A frequency-domain explanation** — the backbone's depth is anti-correlated
-   with terrain at low frequency (r = −0.27, −0.26, +0.04) while retaining
-   structural information at high frequency (r = +0.43 … +0.52).
-5. **A dual-frequency calibration formulation** derived from that diagnosis.
-6. **An evaluation protocol designed to expose degenerate reconstructions**
-   rather than rely on global MAE — a DEM-only floor baseline, an edge-structure
-   metric, and a ratio metric on height-above-ground. All three fired on a
-   result that MAE reported as an improvement.
+3. **A calibration failure diagnosis, measured on real imagery** — terrain
+   supplies every anchor and needs a scale 51× smaller than the buildings do, so
+   one affine field per neighbourhood serves terrain and flattens structure,
+   reducing the method to a DEM interpolator.
+4. **A frequency-domain account** — terrain and structure occupy different
+   spatial-frequency bands, and only the high band carries object signal that
+   survives to the output.
+5. **A dual-frequency calibration formulation** derived from that diagnosis,
+   implemented and run — together with a precise account of why it is not
+   sufficient alone (its scale branch is fitted from object anchors, and real
+   imagery without published acquisition times yields none), and a fitting step
+   that supplies what the anchors cannot observe.
+6. **A protocol designed to expose degenerate reconstructions** rather than
+   rely on global MAE — a DEM-only floor, a flat-ground floor on height above
+   ground, an edge-structure metric, and a ratio metric. All of them fired on a
+   surface that MAE called an improvement.
 
-Contribution 6 is the one we would defend hardest: **MAE improved while the
-product became useless**, and the protocol caught it.
+Contribution 6 is the one we would defend hardest, and §3.1 is why: the repair
+in §5 makes elevation MAE **worse** while tripling correlation and raising δ₁
+25-fold. **A project steering by the headline number would reject the only
+change that recovered any structure.**
 
 ## Status at a glance
 
 | | |
 |---|---|
 | Formulation | spatially varying scale + offset fields, IRLS/Huber, lattice-discretised |
-| Evaluation | 3 synthetic scenes, N=3, exact ground truth, CPU only |
-| H1 (spatial > global) | **supported** — MAE 3.30 vs 5.49 m |
-| Clears DEM-only floor? | **no** — 3.30 vs 3.49 m MAE, *worse* RMSE, identical *r* |
-| Structure recovered | **no** — 0.05 m of a true 12.4 m |
-| Uncertainty calibrated | **at scene level** — 1σ coverage 0.674 (ideal 0.683) |
-| H2 (frequency split) | **implemented and run**: mechanism confirmed (floor 100%→0%, edge F1 0.25→0.78), scale estimator unsolved (2-4x over) |
-| Real imagery | **none** |
+| Evaluation | **4 real city centres**, N=4, airborne lidar truth |
+| Imagery | **aerial, not satellite** — swisstopo open geodata (§2.8) |
+| Compute | **CPU only, by design** — no GPU path exists (§7.3) |
+| Learned | **one constant**: the structural scale, fitted over the dataset (§5) |
+| H1 (spatial > global) | **supported** — MAE 8.39 vs 11.18 m |
+| Clears DEM-only floor? | **no** — 8.39 vs 8.47 m, a 0.9% margin on a 1.35 m spread |
+| Clears flat-ground floor? | **yes, with the fitted scale** — 5.41 vs 7.59 m (−29%); without it, no (−1%) |
+| Structure recovered | **36%** — 5.25 m of a true 14.38 m. Was 1.2% |
+| Structure *accurate*? | **no** — Zürich overshoots its tallest by 45%, Geneva undershoots by 27% |
+| Uncertainty calibrated | **no** — 1σ coverage 0.43, and blind to the bias that dominates |
+| Phases 3 & 4 | **run on CPU** on the real scene (§3.6) |
 
 ---
 
@@ -98,7 +119,7 @@ flowchart TB
     AUX["public DEM · GCPs<br/>optional"]:::inp
 
     subgraph PH1["PHASE 1 · relative depth"]
-        DEP["tiled backbone inference<br/>rank-normalise · harmonise · blend<br/><b>the only GPU stage</b>"]:::p1
+        DEP["tiled backbone inference<br/>rank-normalise · harmonise · blend<br/><b>the slow stage</b>"]:::p1
     end
 
     subgraph PH2["PHASE 2 · metric calibration — the research core"]
@@ -271,22 +292,32 @@ $\sigma_{\text{model}}$ is the spread between backbones ($\tfrac{1}{2}|s_1-s_2|$
 for two). $\sigma_{\text{ref}}$ is the auxiliary DEM's datasheet 1σ as a constant
 field (3.0 m for Copernicus GLO-30 [4]).
 
-## 1.6 Proposed: frequency-separated calibration (H2)
+## 1.6 Frequency-separated calibration, and the one fitted number
 
-Derived from §4, **not yet evaluated end to end.** Decompose depth with a
-Gaussian of radius ≈ 60 m and discard the low band:
+Derived from §4 and evaluated end to end in §5. Decompose depth with a Gaussian
+of radius ≈ 60 m and scale only the high band:
 
 $$ D_{\text{lo}} = G_\sigma \ast D, \qquad D_{\text{hi}} = D - D_{\text{lo}} $$
 
 $$ H(p) = \underbrace{b(p)}_{\text{terrain: DEM, GCP, water anchors}} + \underbrace{a(p) D_{\text{hi}}(p)}_{\text{structure: shadow anchors}} $$
 
-The operative change is *what $a$ is fitted against*. Under the current model it
-must serve terrain and structure simultaneously and ~3840 terrain anchors
-outvote ~65 shadow anchors. Under H2 it never sees terrain.
+The operative change is *what $a$ is fitted against*. Under the single-field
+model it must serve terrain and structure at once, and the thousands of terrain
+anchors outvote everything else. Under this split it never sees terrain.
 
-This is not new machinery: `DepthField.terrain`, `DepthField.objects` and the
-`branch` field on `Anchor` already exist in
-[`ayama/core/types.py`](ayama/core/types.py) and are unused.
+**Which leaves it with nothing to see at all.** On real imagery the shadow
+branch yields zero anchors (§3.4), so $a$ is determined by its prior — and §5.1
+measures the consequence: the split moves structure and not scale.
+
+So $a$ is supplied from outside the image:
+
+$$ a^\star = \arg\min_a \lVert a \cdot \max(D_{\text{hi}}, 0) - \mathrm{nDSM}_{\text{true}} \rVert^2 $$
+
+fitted once over a dataset by `ayama fit` and held fixed at inference, where
+nothing in the scene can argue with it. This is the only quantity in ĀYĀMA
+learned from data outside the image it is applied to, and the calibration field
+records it as such (`scale_source: "fitted"`) so a supplied number can never be
+mistaken for a solved one. §5 is the whole of it.
 
 ---
 
@@ -297,12 +328,12 @@ This is not new machinery: `DepthField.terrain`, `DepthField.objects` and the
 | | |
 |---|---|
 | OS / CPU | Windows 11 (10.0.26200), AMD64, 8 logical cores |
-| Python / torch | 3.13.5 / 2.13.0+cpu — **CUDA unavailable** |
+| Python / torch | 3.13.5 / 2.13.0+cpu — CPU only, by design (§7.3) |
 | Raster stack | rasterio 1.5.1, GDAL 3.12.4 |
 | Backbone | `depth-anything/Depth-Anything-V2-Small-hf` [1], 24.8 M params, float32 |
 | Threads | 4 (torch) |
 
-Recorded per run in [`results/study.json`](results/study.json) → `environment`.
+Recorded per run in each `dataset.json` → `config`, and by `ayama doctor`.
 
 ### Models
 
@@ -310,7 +341,7 @@ Recorded per run in [`results/study.json`](results/study.json) → `environment`
 runtime. Nothing is trained here.** There is no `nn.Module` of our own, no loss,
 no optimiser and no saved weights anywhere in the repository — the depth
 backbone is the only thing carrying parameters, and it is used as-is. That is
-why §5.5's conclusion matters: predicting the structural scale would be the
+why §5.4's conclusion matters: predicting the structural scale would be the
 first component this project actually trains.
 
 Registry is [`ayama/depth/backbones/__init__.py`](ayama/depth/backbones/__init__.py);
@@ -318,20 +349,19 @@ select with `--backbone <key>`.
 
 | key | checkpoint | native input | status in this study |
 |---|---|---|---|
-| **`dav2-vits`** | `depth-anything/Depth-Anything-V2-Small-hf` | 518 px | **every committed number**, 24.8 M params, fp32 on CPU |
+| **`dav2-vitl`** | `depth-anything/Depth-Anything-V2-Large-hf` | 518 px | **primary — every headline number**, fp32 on CPU |
+| `dav2-vits` | `depth-anything/Depth-Anything-V2-Small-hf` | 518 px | cross-backbone check (§3.2, §5.1), 24.8 M params |
 | `dav2-vitb` | `depth-anything/Depth-Anything-V2-Base-hf` | 518 px | registered, never run |
-| `dav2-vitl` | `depth-anything/Depth-Anything-V2-Large-hf` | 518 px | registered, never run — needs a GPU |
 | `dpt-large` | `Intel/dpt-large` [6] | 384 px | registered, never run |
 | `dpt-hybrid` | `Intel/dpt-hybrid-midas` [2] | 384 px | registered, never run |
-| `synthetic` | — no weights at all | — | plumbing tests and CI only |
 
-Parameter counts are given only where measured. `dav2-vits` at 24.8 M comes out
-of [`results/study.json`](results/study.json) → `bench`; the rest were never
-loaded on this machine and are not guessed at here.
+Parameter counts are given only where measured. `dav2-vits` at 24.8 M was
+counted on this machine by `ayama bench`; the rest were not loaded here and are
+not guessed at.
 
-Two things this table is meant to make impossible to miss. **The whole study
-rests on one 24.8 M-parameter model** — which is why "test a second backbone"
-is item 5 of the roadmap and one of the four ways §5.4 could falsify H2. And
+Two things this table is meant to make impossible to miss. **Every backbone
+here is used off the shelf and frozen** — no weights were trained, fine-tuned or
+adapted, so no row represents a model this project produced. And
 the code's own dropdown label calls `dav2-vitl` the *primary* backbone, which
 is an intention rather than a fact: it has never been run.
 
@@ -348,22 +378,35 @@ Large; check the model cards before any commercial use, and see
 
 ## 2.2 Scenes and ground truth
 
-Synthetic scenes with exactly known ground truth, generated by
-[`ayama/eval/synthetic_scene.py`](ayama/eval/synthetic_scene.py).
+Four Swiss city centres, fetched by
+[`scripts/fetch_swisstopo.py`](scripts/fetch_swisstopo.py) (§2.7). Every raster
+is real measurement: the imagery is an airborne orthophoto, and both the surface
+and the bare earth are airborne lidar.
 
 | | |
 |---|---|
-| Scenes | **N = 3**, seeds 7 / 21 / 33 |
-| Resolution | 1024 × 1024 px |
+| Scenes | **N = 4** — Zürich, Bern, Geneva, Lausanne |
+| Resolution | 1024 × 1024 px, resampled to the lidar grid |
 | GSD | 0.5 m (512 × 512 m extent) |
-| CRS | EPSG:32644 |
-| Sun | 138.4° azimuth / 61.2° elevation |
-| Ground truth | exact DSM, DTM, nDSM, semantic mask, ray-marched shadow mask |
-| Auxiliary DEM | simulated Copernicus GLO-30: true DTM at 30 m posting, bilinear upsample, spatially correlated noise at 3 m 1σ |
-| Building cover | 3.1% of pixels |
+| CRS | EPSG:2056 (LV95) |
+| Imagery | SWISSIMAGE 10 cm orthophoto, averaged to 0.5 m |
+| Ground truth | swissSURFACE3D lidar DSM, swissALTI3D lidar DTM |
+| Auxiliary DEM | swissALTI3D degraded to Copernicus GLO-30 posting and noise, so the anchors are no better than a free global DEM would give (§2.8) |
+| Sun | **none** — the published timestamp is a year marker, not an acquisition instant (§2.7). Shadow physics is disabled |
+| Semantics | RGB heuristic only; no labels ship with these tiles |
 
-Shadows are ray-marched from the true DSM using the same geometry the physics
-module inverts, so `harvest_shadow` can be validated against truth.
+| scene | tile | centre | elevation | true nDSM max | mean height >2 m |
+|---|---|---|---|---|---|
+| Zürich | 2682-1246 | 47.366 N 8.528 E | 407.6–459.1 m | 37.0 m | 13.7 m |
+| Bern | 2600-1199 | 46.949 N 7.442 E | 495.8–605.7 m | 63.0 m | 16.2 m |
+| Geneva | 2499-1117 | 46.204 N 6.133 E | 367.8–439.8 m | 56.5 m | 15.7 m |
+| Lausanne | 2537-1151 | 46.514 N 6.621 E | 376.8–470.5 m | 43.6 m | 11.9 m |
+
+These are dense European city centres: **44–64% of pixels carry more than 2 m
+of height** (Geneva 43.7, Lausanne 49.0, Zürich 52.0, Bern 64.3) — the fraction
+counts trees and walls as well as roofs. There is a great deal of structure here
+to recover, which is what makes §3.2 a strong result rather than a shortage of
+signal.
 
 ## 2.3 Baselines
 
@@ -375,15 +418,21 @@ module inverts, so `harvest_shadow` can be validated against truth.
 | AGMC − shadow | contribution of shadow anchors | fields |
 | AGMC − water | contribution of the flat-water constraint | fields |
 | AGMC − semantic gate | contribution of anchor filtering | fields |
-| *Dual-frequency (H2)* | *tests H2 — **not yet run end to end*** | *$b(p)$ + $a(p)D_{\text{hi}}$* |
+| **Dual-frequency (H2)** | tests H2 (§5) | $b(p)$ + $a(p)D_{	ext{hi}}$ |
 
 The global-affine baseline admits **only absolute anchors**. A relative water
 anchor read as an elevation would drag the datum to zero, which would make the
 comparison a straw man.
 
-The **DEM-only floor** is the load-bearing baseline. A monocular method anchored
-to a DEM can score well by ignoring the image entirely; without this column that
-is invisible.
+The **DEM-only floor** is the load-bearing baseline for elevation. A monocular
+method anchored to a DEM can score well by ignoring the image entirely; without
+this column that is invisible.
+
+**And elevation needs a second floor.** Where a bare-earth DTM ships alongside
+the reference, height above ground is scored against **flat ground — predict
+zero everywhere**. Most of a city scene *is* ground, so an elevation metric
+cannot tell a reconstruction from a resurfaced DEM; this one can, and §3.2 is
+the reason it is not optional.
 
 ## 2.4 Metrics
 
@@ -423,10 +472,10 @@ $$ \mathrm{ECE} = \frac{1}{N}\sum_{j=1}^{10} n_j \left\lvert \sqrt{\tfrac{1}{n_j
 ## 2.5 Statistical treatment
 
 > **All `±` values are the population standard deviation (`numpy.std`,
-> `ddof = 0`) of the per-scene metric across N = 3 scenes.** They are a
+> `ddof = 0`) of the per-scene metric across N = 4 scenes.** They are a
 > descriptive spread, **not** a standard error and **not** a confidence
-> interval. At N = 3 no inferential interval is warranted, and none is claimed.
-> Per-scene values are in [`results/study.json`](results/study.json) → `scenes`.
+> interval. At N = 4 no inferential interval is warranted, and none is claimed.
+> Per-scene values are in each `dataset.json` → `scenes`.
 
 Seeds are fixed (7 / 21 / 33) and the pipeline is deterministic given a seed;
 re-running reproduces the table exactly. Differences between methods are
@@ -437,379 +486,544 @@ effects.
 
 Stated up front because it bounds every claim below:
 
-- **N = 3 scenes.** Far too few for a statistical claim about method superiority.
-- **Synthetic imagery only.** One renderer, one generation pipeline. Performance
-  on real imagery is **unmeasured**.
+- **N = 4 scenes.** Far too few for a statistical claim about method superiority.
+- **Aerial imagery, not satellite.** Real surfaces and real geometry, but not
+  satellite viewing geometry or radiometry (§2.8).
+- **One country, one sensor programme.** Four Swiss city centres from the same
+  national survey. No cross-domain evidence at all.
+- **No sun.** No acquisition time is published, so shadow physics is disabled
+  and the shadow branch contributes nothing (§3.4).
 - **Fixed resolution and GSD.** 1024², 0.5 m. No scale-generalisation evidence.
 - **Simulated auxiliary DEM.** A degradation model, not a real Copernicus tile.
-- **No external benchmark.** No comparison against a published DSM dataset.
-- **No cross-domain test**, no held-out scene family, no urban-density sweep.
-- **Heuristic segmentation**, not a trained model.
+- **No external benchmark.** No comparison against a published DSM leaderboard.
+- **Heuristic segmentation**, not a trained model — and on real imagery it does
+  not work (§3.4).
+
+---
+
+## 2.7 Running it
+
+Nothing here has ever been trained — asserted by `test_the_project_trains_nothing`
+and by the model table in §2.1 — with one exception, named as such: the
+structural scale in §5, which is fitted over a dataset rather than solved per
+scene, and which is the only number in this repository that came from data
+outside the image it is applied to.
+
+```bash
+# fetch one real scene with its lidar truth (~91 MB), then run the study
+python scripts/fetch_swisstopo.py --out data/real/zurich --bbox 8.530,47.365,8.545,47.375
+python -m ayama.cli dataset data/real --layout generic     --backbone dav2-vitl --out results/cpu/real_vitl_h1
+```
+
+Two points of discipline live in that fetcher. The survey-grade DTM is
+**degraded to Copernicus GLO-30 posting and noise** before it is used as the
+anchor DEM (§2.8). And swisstopo's STAC `datetime` is a nominal year marker
+rather than an acquisition instant; fed to a solar model it puts the sun 65°
+*below* the horizon, so **no sun angles are written at all** rather than a
+fabricated number dressed as metadata. §3.4 measures what that costs and shows
+the conclusion does not depend on it.
+
+### Any other dataset you already have
+
+The same command reads directories you supply. It downloads nothing — a pipeline
+that quietly proceeds with data it failed to fetch is worse than one that stops.
+
+```bash
+python -m ayama.cli dataset /data/dfc2019/Track1 --layout us3d --list   # what did it find?
+python -m ayama.cli dataset /data/dfc2019/Track1 --layout us3d \\
+    --out results/cpu/us3d --backbone dav2-vitl
+```
+
+| layout | expects | reference is |
+|---|---|---|
+| `us3d` | `<TILE>_RGB.tif` + `_AGL.tif` + optional `_CLS.tif` | **height above ground** |
+| `generic` | `<name>.tif` + `_dsm.tif` / `_dtm.tif` / `_dem.tif` / `_sem.tif` | elevation |
+
+Suffixes are overridable (`--suffix-image`, `--suffix-reference`, …) because
+they are the one thing likely to differ between a dataset's documentation and
+the copy you actually downloaded. An empty directory reports what it expected
+rather than finding zero scenes in silence.
+
+**The reference kind is carried explicitly, not inferred.** US3D ships `_AGL`,
+a height above ground; comparing a predicted *elevation* against it is a ~400 m
+error that would read as catastrophic model failure rather than a units bug.
+
+**And an elevation reference is not let off that hook.** Where a bare-earth
+`_dtm.tif` ships alongside the DSM, the run *also* reports height-above-ground
+metrics, the flat-ground floor and the fraction of true relief recovered. §3.2
+is what that machinery found, and none of it is visible in MAE.
+
+Individual scenes also work through `run` with ordinary file paths:
+
+```bash
+python -m ayama.cli run scene.tif --out out/run     --dem copernicus_tile.tif --ref lidar_dsm.tif --sem labels.tif
+```
+
+**What is still missing.** No Copernicus tile fetcher for arbitrary scenes
+(supply the DEM yourself, or drop to Tier C). No trained segmentation head. And
+no satellite imagery — see §2.8 for why, and for what it would take.
+
+---
+
+## 2.8 Datasets and attribution
+
+Everything measured in this repository comes from the products below. Nothing
+else is used, and nothing is generated: the renderer this project once evaluated
+on has been removed, along with the weightless placeholder backbone, so there is
+no path by which an invented pixel can reach a table here.
+
+### Used, and the source of every number in §3–§5
+
+| product | what it provides | resolution | licence |
+|---|---|---|---|
+| **SWISSIMAGE 10 cm** | airborne orthophoto — the only image input | 0.1 m, resampled to 0.5 m | Swiss OGD |
+| **swissSURFACE3D Raster** | airborne lidar DSM — the reference | 0.5 m | Swiss OGD |
+| **swissALTI3D** | airborne lidar DTM — bare earth, for nDSM and for the degraded anchor DEM | 0.5 m | Swiss OGD |
+
+All three are published by the **Federal Office of Topography swisstopo** [11] and
+retrieved through its public STAC API by
+[`scripts/fetch_swisstopo.py`](scripts/fetch_swisstopo.py). No registration and
+no account are required.
+
+> **Attribution.** Source: Federal Office of Topography swisstopo
+> (<https://www.swisstopo.admin.ch>). Used under the Swiss Open Government Data
+> terms, which permit free use including commercial use provided the source is
+> named: <https://www.swisstopo.admin.ch/en/terms-of-use-free-geodata-and-geoservices>.
+>
+> The 576 × 576 crop bundled in [`ayama/data/fixture/`](ayama/data/fixture/) is
+> redistributed under those same terms; its provenance is recorded in
+> [`ayama/data/fixture/ATTRIBUTION.md`](ayama/data/fixture/ATTRIBUTION.md).
+
+**Copernicus GLO-30** is referenced but not downloaded. `simulate_public_dem`
+degrades the survey-grade swissALTI3D DTM to GLO-30's 30 m posting and 3 m
+correlated noise, so the anchor DEM is no better than a freely available global
+DEM would be. Anchoring to survey-grade lidar directly would be a far easier
+problem than the one the method claims to solve, and artifacts built that way
+are stamped `sim:` in their provenance so the two can never be confused.
+
+### Considered and not used
+
+| dataset | why not |
+|---|---|
+| **DFC2019 Track 1 / US3D** [12] | The best match for the problem — WorldView-3 satellite imagery with co-registered AGL rasters and semantic labels. Behind a registration wall, so no script can fetch it and no claim built on it is reproducible by one command. The `us3d` layout is implemented and tested; point `--root` at your own copy |
+| **IARPA MVS3DM** | Multi-view by construction; this project is monocular |
+| **ISPRS Vaihingen / Potsdam** | Aerial, with DSMs, but small and long superseded by the Swiss products for this purpose |
+| **OpenStreetMap building heights** | Sparse, inconsistently attributed, and not co-registered to any particular acquisition |
+
+**The consequence, stated plainly: this study is aerial, not satellite.** It
+tests the calibration against real surfaces, real materials and real building
+geometry, but not against satellite viewing geometry or satellite radiometry.
+Any claim about satellite imagery would require the DFC2019 run, which the code
+supports and this repository has not done.
+
+### Models
+
+No dataset was used for training, because nothing here was trained. The depth
+backbones in §2.1 are pretrained checkpoints loaded frozen from the Hugging Face
+Hub; their own training data is described in their respective papers ([1], [2],
+[6]) and is not redistributed here.
 
 ---
 
 # 3. Results
 
-Full data: [`results/study.json`](results/study.json). Regenerate in 450 s:
-`python -m ayama.cli study --out results`.
+Four real city centres, real airborne orthophotos, airborne lidar truth (§2.2).
+No training and no fine-tuning anywhere. CPU only — the reference machine
+is CPU-only by design, so every timing here is CPU (§7.3).
+
+Full data: [`results/cpu/real_vitl_h1/dataset.json`](results/cpu/real_vitl_h1/dataset.json)
+and its three sibling arms. Regenerate with the two commands in §2.7.
 
 ## 3.1 Headline
 
-| metric | **AGMC** | global affine | **DEM-only (floor)** |
-|---|---|---|---|
-| MAE (m) | **3.30 ± 0.08** | 5.49 ± 0.85 | 3.49 ± 0.05 |
-| RMSE (m) | 5.49 ± 0.14 | 7.80 ± 0.82 | **5.37 ± 0.12** |
-| Pearson *r* | 0.709 ± 0.086 | 0.162 ± 0.145 | 0.708 ± 0.094 |
-| bias (m) | −0.60 ± 0.08 | — | — |
-| **edge F1** | **0.264 ± 0.014** | **0.780** | 0.196 |
-| 1σ coverage | 0.674 ± 0.023 | — | — |
-| ECE (m) | 2.36 ± 0.14 | — | — |
-| **δ < 1.25** | **undefined — 0 valid px** | — | — |
+Two arms of the same pipeline on the same four scenes: `dav2-vitl` calibrated
+from anchors alone, and the same run with the structural scale supplied by
+`ayama fit` (§5). ± is the population SD over the four scenes, not a standard
+error (§2.5).
 
-**H1 is supported:** spatial calibration beats scalar calibration by a wide
-margin (MAE 3.30 vs 5.49 m; *r* 0.71 vs 0.16).
-
-**But the third column withdraws the result.** AGMC beats the DEM it was
-anchored to by 5% on MAE, *loses* by 2% on RMSE, and matches its correlation to
-three decimals. **The anchor graph is carrying the entire result.**
-
-**And the last two rows say what kind of surface this is.** edge F1 of 0.264,
-and a δ₁ that could not be computed at all — because across three scenes not one
-pixel had a *predicted* height above ground exceeding 0.5 m.
-
-## 3.2 Error by class
-
-| class | MAE (m) | bias (m) | 1σ cov | % px |
+| metric | **anchors only** | **+ fitted scale** | global affine | DEM-only (floor) |
 |---|---|---|---|---|
-| road | 1.79 ± 0.15 | −0.07 | 0.807 | 5.3 |
-| bare ground | 2.79 ± 0.12 | −0.47 | 0.725 | 85.8 |
-| vegetation | 5.51 ± 0.23 | −5.42 | 0.234 | 1.9 |
-| water | 7.93 ± 0.39 | **+7.76** | 0.106 | 3.9 |
-| **building** | **12.94 ± 0.27** | **−12.94** | **0.021** | 3.1 |
+| MAE (m) | **8.39 ± 1.35** | 9.04 ± 1.74 | 11.18 ± 1.95 | **8.47 ± 1.48** |
+| RMSE (m) | 11.63 ± 1.45 | 11.46 ± 1.82 | — | — |
+| Pearson *r* | 0.634 ± 0.173 | **0.769 ± 0.078** | — | — |
+| Spearman ρ | 0.571 ± 0.139 | **0.795 ± 0.041** | — | — |
+| bias (m) | −6.65 ± 1.58 | −6.63 ± 1.61 | — | — |
+| edge F1 | 0.411 ± 0.199 | **0.604 ± 0.095** | — | — |
+| 1σ coverage | 0.537 ± 0.071 | 0.426 ± 0.092 | — | — |
+| ECE (m) | 5.50 ± 1.46 | 5.40 ± 1.85 | — | — |
+| **δ < 1.25** | **0.007 ± 0.009** | **0.174 ± 0.049** | — | — |
 
-![Error by class](results/figures/fig2_error_by_class.png)
+**H1 is supported.** Spatial calibration beats a single global `a·D + b` by a
+wide margin — 8.39 against 11.18 m, a 25% reduction. The anchor graph is doing
+real work relative to the scalar fit.
 
-Building `bias = −MAE` **exactly**: the error is entirely one-sided, every
-building under-predicted by its full height. σ is honest on average (0.674) and
-meaningless where it matters (0.021 on buildings) — a scene-level reliability
-number is dominated by whichever class dominates the scene.
+**The last column withdraws that result.** The anchors-only arm lands 0.9% below
+the DEM it was anchored to, on N=4 with a 1.35 m spread. That is not a margin.
+**The anchor graph is carrying essentially the entire elevation result.**
 
-## 3.3 Ablation
+**And the two arms disagree in opposite directions.** Adding the fitted scale
+makes elevation MAE *worse* (8.39 → 9.04) while correlation, edge F1 and δ₁ all
+improve sharply. That is not a contradiction; it is the central finding of this
+project, and §3.2 is where it becomes legible. **On this problem MAE and
+reconstruction quality point opposite ways**, so a headline metric alone will
+reliably select the wrong surface.
 
-One inference per scene; every variant re-solves only the calibration, so all
-rows see an identical depth field.
+## 3.2 Height above ground — the result that matters
 
-| variant | MAE (m) | RMSE (m) | *r* | **edge F1** | anchors |
-|---|---|---|---|---|---|
-| DEM-only | 3.49 | **5.37** | 0.708 | 0.196 | 4021 |
-| global affine | 5.50 | 7.80 | 0.162 | **0.780** | 4021 |
-| AGMC − gate | 3.30 | 5.50 | 0.709 | 0.263 | 4232 |
-| AGMC − shadow | 3.30 | 5.49 | 0.711 | 0.263 | 3956 |
-| AGMC − water | 3.35 | 5.59 | 0.692 | 0.251 | 3951 |
-| **AGMC (full)** | **3.30** | 5.49 | **0.711** | 0.263 | 4021 |
+Elevation MAE flatters this pipeline, and on real city scenes it flatters it
+harder than any renderer did. Around half of every scene is ground; the anchor
+DEM already knows the ground; an 8 m elevation error is dominated by terrain
+that was supplied, not inferred. The quantity ĀYĀMA claims is **height above
+ground**, and it is measurable here because a bare-earth lidar DTM ships with
+every tile.
 
-![Ablation](results/figures/fig1_ablation.png)
-
-**The global-affine row is the most informative line in this study.** Worst MAE
-by 67%, best edge F1 by a factor of three. A single scalar applied to the raw
-depth field places height discontinuities correctly 78% of the time — the depth
-model *does* know where the buildings are, and AGMC discards that while
-improving the pixelwise average. This observation motivates §4 and §5.
-
-Component ablations are near-null and we report them as such: removing shadow
-anchors changes nothing measurable, because ~65 shadow anchors are outvoted by
-~3840 DEM anchors. Removing the semantic gate costs little *at 3.1% building
-cover*; this would not hold in a dense city.
-
-## 3.4 Shadow physics, isolated
-
-Building height from shadow length with **no depth model involved** — a direct
-test of the relation in §1.3.
-
-| sun elevation | shadow F1 | anchors | median height error |
+| | anchors only | anchors only | **+ fitted scale** |
 |---|---|---|---|
-| 15–20° | 0.29–0.34 | 0 | — |
-| 25° | 0.46 | 3 | 8.69 m |
-| 30° | 0.71 | 50 | 6.41 m |
-| 40° | 0.75 | 57 | 4.44 m |
-| **50°** | **0.81** | 57 | **1.68 m** |
-| **60°** | **0.81** | 58 | **1.70 m** |
-| 70° | 0.73 | 48 | 2.33 m |
-| 75–80° | 0.38–0.60 | 0 | — |
+| | ViT-S H1 | **ViT-L H1** | **ViT-L, `ayama fit`** |
+| nDSM MAE (m) | 7.573 | 7.513 | **5.413 ± 0.584** |
+| **flat ground — predict 0 everywhere (m)** | 7.592 | 7.592 | 7.592 |
+| **vs that floor** | −0.3% | −1.0% | **−28.7%** |
+| mean height recovered (m) | 0.058 | 0.170 | **5.246 ± 1.509** |
+| true mean height (m) | 14.376 | 14.376 | 14.376 |
+| **fraction of relief recovered** | 0.4% | 1.2% | **36.5%** |
+| edge F1 | 0.210 | 0.411 | **0.604 ± 0.095** |
+| δ < 1.25 | 0.009 | 0.007 | **0.174 ± 0.049** |
 
-![Sun window](results/figures/fig3_sun_window.png)
+> **The anchor graph alone cannot reconstruct.** Both backbones, both
+> calibrations, four cities: under 1.3% of the true relief, statistically
+> indistinguishable from a flat sheet, in scenes where 44–64% of pixels stand
+> more than 2 m above ground and buildings reach 63 m.
+>
+> **Supplying one fitted number changes that.** The same pipeline with a
+> structural scale fitted over the dataset (§5) recovers **36% of true relief**
+> and beats the flat-ground floor by **29%**. δ₁ rises 25-fold.
 
-The strongest positive result here. At 50–60° the relation recovers building
-height to **1.7 m median absolute error**. The two failure modes are
-qualitatively different — low sun retains precision (0.98) and loses recall as
-shadows merge; high sun retains recall and loses precision as shadows fall below
-resolution — which is consistent with the physics rather than with a fitted
-curve. **This branch works and the pipeline cannot currently use it** (§4).
+Per scene, with the fitted scale:
+
+| scene | nDSM MAE | flat floor | mean height | true | predicted max | true max |
+|---|---|---|---|---|---|---|
+| Bern | 6.17 m | 10.45 m | 7.55 m | 16.2 m | **65.0 m** | 63.0 m |
+| Geneva | 5.14 m | 6.90 m | 5.53 m | 15.7 m | 41.3 m | 56.5 m |
+| Lausanne | 4.63 m | 5.86 m | 3.52 m | 11.9 m | 32.0 m | 43.6 m |
+| Zürich | 5.72 m | 7.16 m | 4.38 m | 13.7 m | 53.6 m | 37.0 m |
+
+**This is not accuracy, and the table says so.** Bern's tallest structure comes
+back at 65.0 m against a true 63.0 m; Zürich's at 53.6 m against a true 37.0 m —
+a 45% overshoot on the same scene where Geneva undershoots by 27%. The surface
+has stopped being flat. It has not started being right. A 5.4 m nDSM MAE on
+14 m structures is not a usable product, and §6 says what would be needed.
+
+**And elevation MAE gets worse.** 8.39 → 9.04 m, which is the honest cost of the
+trade: putting imperfectly-placed relief into a surface increases absolute error
+against the reference while making the surface a reconstruction rather than a
+resurfaced DEM. Any project that optimises the headline number will choose the
+flat sheet. That is the argument for §2.3's second floor, in one line.
+
+## 3.3 Error by class
+
+`dav2-vitl` H1, mean over the four scenes. Classes come from the colour
+heuristic — no labels ship with these tiles, and §3.4 shows the heuristic is
+unreliable on real imagery, so read these as strata rather than as truth.
+
+| class | MAE (m) |
+|---|---|
+| water | 3.47 |
+| building | 6.07 |
+| vegetation | 6.73 |
+| road | 7.55 |
+| bare ground | 8.66 |
+
+The ordering is the opposite of the one a working reconstruction would produce.
+Water — flat, at a known height, heavily anchored — is best. Bare ground is
+worst, because the DEM's own error dominates there and nothing corrects it.
+Buildings score *better* than ground not because their heights are recovered but
+because a flat prediction sitting at roof-adjacent terrain height is closer to a
+roof than the DEM's terrain error is to the true terrain.
+
+## 3.4 What the calibration had to work with
+
+The anchor ladder, per scene, `dav2-vitl` H1:
+
+| scene | DEM | water | **shadow** | total |
+|---|---|---|---|---|
+| Zürich | 2734 | 41 | **0** | 2775 |
+| Bern | 3516 | 124 | **0** | 3640 |
+| Geneva | 2497 | 84 | **0** | 2581 |
+| Lausanne | 2352 | 7 | **0** | 2359 |
+
+**Not one object-height anchor in the entire study.** Shadow physics is disabled
+because swisstopo publishes no acquisition time (§2.2), so 100% of constraints
+are ground constraints — and a calibration constrained only by ground can only
+learn ground.
+
+**Is the missing sun the cause?** No, and it would be a comfortable excuse.
+Sweeping six plausible acquisition times over Zürich, reusing the depth already
+inferred so only the sun changes:
+
+| assumed acquisition | azimuth | elevation | shadow anchors | relief recovered |
+|---|---|---|---|---|
+| 2019-03-15 10:00Z | 150° | 36.3° | 46 of 2821 | −0.02 m |
+| 2019-06-15 08:00Z | 102° | 42.7° | 49 of 2824 | −0.02 m |
+| 2019-06-15 11:00Z | 165° | 65.4° | 48 of 2823 | −0.02 m |
+| 2019-06-15 14:00Z | 245° | 51.1° | 46 of 2821 | −0.02 m |
+| 2019-09-15 11:00Z | 172° | 45.4° | 48 of 2823 | −0.02 m |
+| 2019-12-15 12:00Z | 189° | 18.8° | 0 (sun gate) | −0.02 m |
+
+These angles are **assumed, not measured**; the point is to test whether the
+conclusion depends on the unknown, and it does not. Even granting a daylight
+sun, shadow anchors reach 1.7% of the ladder and the recovered relief does not
+move.
+
+**The shadow detector itself is sound but narrow.** On the bundled Zürich crop
+it flags 15.1% of pixels at mean luminance 27 against 90 outside, so it is
+finding genuinely dark pixels. Scored against shadows ray-marched from the lidar
+DSM, precision peaks at **0.72 at azimuth 210°** — a physically sensible
+afternoon sun, recovered from the imagery rather than assumed. But recall at
+that peak is **0.30**: geometric shadow includes self-shaded façades and shadows
+falling on other roofs, and a radiometric detector sees only the dark ones.
+
+**And the segmentation has no labels.** On real imagery the colour heuristic's
+`building` class is, by lidar, no taller than its `bare ground` class. This is
+pinned by a test (`test_the_colour_heuristic_does_not_find_buildings_on_real_imagery`)
+so it cannot be quietly forgotten. Every semantics-dependent anchor in this study
+was gated by a classifier that does not work here.
 
 ## 3.5 Uncertainty calibration
 
-| | measured | ideal |
+| | value | ideal |
 |---|---|---|
-| 1σ coverage | **0.674 ± 0.023** | 0.683 |
-| 2σ coverage | 0.850 | 0.954 |
-| ECE | 2.36 ± 0.14 m | 0 |
-| mean σ | 3.00 m | — |
+| 1σ coverage | 0.537 ± 0.071 | 0.683 |
+| ECE (m) | 5.50 ± 1.46 | 0 |
 
-Well calibrated at 1σ. The 2σ shortfall indicates error tails heavier than
-Gaussian, consistent with a small population of catastrophically wrong pixels
-(buildings, canopy) inside a well-behaved bulk.
+σ is **not calibrated on real data**. Coverage of 0.537 against a nominal 0.683
+means the error bars are too narrow: the field is more confident than it has any
+right to be. This is worse than it looks, because the dominant error — missing
+relief on every structure — is a *bias*, and the variance decomposition in §1.5
+has no term for a systematically absent signal. σ cannot see the failure that
+matters, which is the honest general lesson: an uncertainty model built from
+residual spread cannot report a component the model never attempts.
 
-## 3.6 Parameter sensitivity
+## 3.6 Phase 3 and Phase 4 on the real scene, CPU
 
-MAE varies 3.24–3.35 m across a 10× range of the smoothness weight
-(λ = 0.05 → 0.5) and degrades monotonically outside it, so λ is not a per-scene
-knob. Caveat: the sweep records MAE but not edge F1, and §4 gives reason to
-expect the λ minimising MAE is not the λ preserving structure.
+Both delivery phases run on the real Zürich reconstruction. Artifacts: [`results/cpu/phase3_tiles`](results/cpu/phase3_tiles) and
+[`results/cpu/phase4_delivery`](results/cpu/phase4_delivery).
+
+```
+mesh      1024 x 1024 px at 0.5 m -> 4 LODs, 7 tiles of 512 px (+1 px pad)
+          layers  dsm  error  ndsm  normal  sigma  texture
+          mesh    mesh/surface.obj   262,144 vertices, 522,242 triangles
+          45.6 s
+          ! Height above ground reaches 4.80 m; structures look under-built.
+```
+
+That warning is derived from the data, not typed in — the tiler computes it from
+the nDSM range it was handed, so §3.2's finding propagates into the delivered
+artifact instead of being lost at the hand-off.
+
+| delivery sweep | result |
+|---|---|
+| build | 7.35 s tiles, 13.92 s with the OBJ (0.14 Mpix/s) |
+| payload | 44.9 MB total, **5.18 MB before first paint** |
+| tile size 128 / 256 / 512 / 1024 | 10.94 / 10.84 / 10.83 / 10.85 MB — flat |
+| mesh stride 2 → 4 | 522,242 → 130,050 triangles, 33.6 → 7.8 MB |
+| quantisation, 24-bit → 12-bit | nDSM 1274→576 kB (worst error 0.00175 m); σ 2365→538 kB; error 2745→1196 kB |
+| round trip | 16/16 layer-LOD pairs within half a step |
+| viewer | 66 ms before first paint (browser rasterisation not measured) |
+
+Tile size is irrelevant to payload over a 16× range, so it is a latency and
+cache decision rather than a bandwidth one. 12-bit quantisation costs 1.75 mm on
+a layer whose true content spans 37 m — the encoding is not what is losing the
+structure.
 
 ---
 
-# 4. Failure analysis: terrain-dominated scale-field collapse
+# 4. Failure analysis: terrain and structure demand different scales
 
 ## 4.1 Observation
 
-The scale field is saturated at its constraint boundary across the entire
-lattice, and the predicted surface contains essentially no relief above ground.
+The delivered surface contains essentially no relief above ground (§3.2), while
+the depth field it was built from clearly separates buildings from streets.
 
 ```
-seed7, solved calibration fields
-  a(p):  min 0.0500   median 0.0500   max 0.0500
-         lattice nodes at the a_min floor:  100%
-  b(p):  387.93 .. 409.55            (range 21.62 m)
+Zurich, dav2-vitl H1, measured on the delivered outputs
 
-predicted height above ground, all three scenes
-  max:   0.28 / 0.27 / 0.24 m        true max: 42.54 / 41.04 / 40.48 m
-  mean on building pixels: 0.05 m    true: 12.40 / 12.45 / 13.19 m
+  object minus ground, same pixels
+    relative depth       +0.1287
+    true height          +15.04 m
+    predicted height      +0.07 m
+
+  predicted height above ground
+    max   4.80 m          true max   37.0 m
+    mean on object px     0.17 m     true      13.7 m
 ```
 
-Measured directly on seed7, buildings against a 15 px ring of surrounding
-ground: predicted **+0.07 m**, true **+6.81 m**.
+The signal is present in the input and absent from the output. The calibration
+is where it is lost.
 
 ## 4.2 Mechanism
 
-Because $D \in [0,1]$ and $a$ is pinned at $a_{\min}$, the maximum relief the
-depth model can contribute anywhere in the scene is
-
-$$ a_{\min} \cdot \big(\max D - \min D\big) = 0.05 \times 1.0 = 0.05\ \text{m} $$
-
-— exactly the observed building height. Meanwhile $b$, which carries no prior
-(§1.4), is free and spans 21.62 m, reproducing the terrain unaided.
-
-**The surface is $b$ plus 5 cm of noise. ĀYĀMA is not calibrating a depth field;
-it is interpolating a DEM** — precisely the degeneracy the DEM-only floor
-baseline exists to detect.
-
-## 4.3 Evidence
-
-The unconstrained robust global fit asks for a **negative** scale:
+Fit the scale the delivered surface actually applied — regress predicted
+elevation on relative depth in 128 px blocks — and compare it with the scale the
+buildings would have needed:
 
 ```
-robust global affine on the raw depth field:   a = -14.50,  b = 407.15
+  effective scale a, measured from the delivered surface
+      p10 -16.35     median 2.31     p90 17.70     m per unit depth
+      lattice nodes at the a_min floor:  0%
+
+  scale the terrain anchors supply      2.3  m per unit depth
+  scale the objects would require     116.9  m per unit depth
+  mismatch                               51x
 ```
 
-Correlation of the backbone's depth against truth explains why:
+`H(p) = a(p)·D(p) + b(p)` fits **one** scale per neighbourhood. Terrain — which
+supplies 100% of the anchors (§3.4) — needs about 2.3 m of height per unit of
+depth. Buildings need about 117. A single `a(p)` cannot serve both, so it serves
+the constituency that pays for it, and the structures flatten.
 
-| | seed7 | seed21 | seed33 |
-|---|---|---|---|
-| corr(*D*, true DSM) — terrain | **−0.271** | **−0.258** | +0.043 |
-| corr(*D*, true nDSM) — structure | +0.236 | +0.266 | +0.253 |
+Two smaller effects finish the job. Even the terrain scale, applied to the
++0.129 object-to-ground depth gap, would only yield **0.30 m** of relief. The
+smooth offset field `b(p)` is free to track the DSM and absorbs **0.22 m** of
+that, leaving the 0.07 m observed.
 
-```mermaid
-flowchart LR
-    classDef c fill:#fdece6,stroke:#eb6834,color:#7a2f10
-    classDef e fill:#fbe4e4,stroke:#d03b3b,color:#7a1616
-    classDef g fill:#e6f7f1,stroke:#1baf7a,color:#0b4f38
+## 4.3 Why the headline metric did not catch it
 
-    D["relative depth D"]:::c
-    LO["LOW frequency<br/>perspective ramp<br/>corr with terrain = -0.27"]:::e
-    HI["HIGH frequency<br/>building structure<br/>corr with nDSM = +0.25"]:::g
-    FIT["ONE scale field a(p)<br/>3840 terrain anchors<br/>vs 65 shadow anchors"]:::c
-    NEG["unconstrained fit: a = -14.5<br/>terrain fits, city inverts"]:::e
-    CLAMP["projection: a := max(a, 0.05)"]:::c
-    FLAT["city flattened<br/>0.05 m of relief"]:::e
+A scene that is half ground, scored in absolute elevation against a reference
+that is also mostly ground, cannot distinguish a reconstruction from a
+resurfaced DEM. Flattening every building in Zürich moves MAE by less than the
+scene-to-scene spread. §3.1 and §3.2 are the same runs; only the second one can
+see the failure.
 
-    D --> LO --> FIT
-    D --> HI --> FIT
-    FIT --> NEG --> CLAMP --> FLAT
-```
+Three properties are needed to catch this class of bug, and all three are now
+computed automatically whenever a bare-earth DTM is present:
 
-**Figure 2.** Depth Anything applies a ground-level perspective ramp to nadir
-imagery. At low spatial frequency that ramp anti-correlates with terrain, so a
-fit dominated by 3840 terrain anchors concludes the surface is inverted. At high
-frequency the same field is correct.
+1. **the flat-ground floor** — MAE of predicting zero height everywhere;
+2. **relief recovered** — predicted mean height on object pixels, over true;
+3. **δ₁ on nDSM** — which collapses to 0.007 here.
 
 ## 4.4 Consequence
 
-The positivity projection prevents the inverted solution and, in doing so,
-collapses structural amplitude to the constraint boundary.
+ĀYĀMA does not currently produce a usable nDSM on real imagery, and no claim of
+state of the art is made or implied. What it does produce is a resurfaced public
+DEM with an uncertainty field that does not know it is wrong.
 
-**The guard is correct and the design is incomplete.** Without the clamp: an
-inverted city, roofs rendered as pits, while MAE still improves. With it: a
-flattened city. Both are symptoms of one cause — a single scale field asked to
-serve two frequency regimes whose relationship to the truth has opposite sign.
-Neither is reachable by tuning $\lambda$ or $\delta$.
+## 4.5 Failure inventory
 
-## 4.5 Why the headline metric did not catch it
-
-MAE improved from 3.49 → 3.30 m while the product became useless. Buildings are
-3.1% of pixels, so flattening every one costs ≈ 0.4 m of MAE — less than the
-gain from smoothing the DEM's correlated noise.
-
-| diagnostic | caught it? | how |
-|---|---|---|
-| DEM-only floor baseline | **yes** | 5% better MAE, *worse* RMSE, identical *r* |
-| edge F1 | **yes** | 0.264 vs 0.780 for a plain global affine |
-| δ < 1.25 on nDSM | **yes** | undefined — zero qualifying pixels |
-| per-class bias | **yes** | building bias = −MAE exactly |
-| per-class σ coverage | **yes** | 0.021 on buildings vs 0.674 scene-wide |
-| MAE / RMSE / *r* / *ρ* | **no** | all improved or held |
-
-This is the protocol working. A floor baseline earns its cost precisely when the
-headline number is flattering.
-
-## 4.6 Failure inventory
-
-| failure | evidence | status |
-|---|---|---|
-| Scale-field collapse | 100% of lattice nodes at $a_{\min}$ | **diagnosed** (§4) |
-| Building flattening | 0.05 m predicted vs 12.4 m true | **unresolved** — H2 proposed |
-| Terrain bias | bare-ground bias −0.47 m | partially understood |
-| Water bias | +7.76 m; flat-water uses the DEM's smoothed median | diagnosed |
-| Vegetation bias | −5.42 m | characterised, not diagnosed |
-| Low-sun shadows | recall 0.17 at 15° | characterised |
-| High-sun shadows | precision 0.29 at 80° | characterised |
-| Heavy-tailed uncertainty | 2σ coverage 0.850 vs 0.954 | characterised |
-| Shadow anchors inert | ablation null; 65 vs 3840 anchors | diagnosed, addressed by H2 |
+| # | failure | evidence | status |
+|---|---|---|---|
+| 1 | Structure scale is set by terrain, 51× too small | §4.2 | **open — the core problem** |
+| 2 | No object-height anchors exist on real imagery | §3.4 | **open** |
+| 3 | Colour heuristic does not find buildings | §3.4, pinned by test | **open** |
+| 4 | σ is over-confident and blind to bias | §3.5 | **open** |
+| 5 | Shadow detector recall 0.30 against geometry | §3.4 | known limit |
+| 6 | No acquisition time published → no shadow branch | §2.2 | data limit |
+| 7 | Aerial imagery, not satellite | §2.2 | scope limit |
 
 ---
 
-# 5. Hypothesis test: frequency-separated calibration (H2)
+# 5. Learning the structural scale
 
-> ## ⚠️ ORACLE RESULT — NOT END-TO-END PERFORMANCE
->
-> **Everything in this section fits the structural scale $a$ against ground
-> truth.** These are **upper bounds on the signal available** in the depth
-> field, not measurements of a working method. In deployment $a$ must come from
-> shadow anchors, whose own accuracy is 1.7 m median (§3.4). No end-to-end
-> dual-frequency result exists. Do not read "8.80 m of a true 12.40 m" as
-> "recovers 71% of building height."
+H2 splits the depth field by spatial frequency so terrain and structure can be
+scaled separately: `D = D_lo + D_hi`, `H = b(p) + a(p)·D_hi(p)`, with terrain
+anchors constraining `b` and object anchors constraining `a` (§1.6). §4.2 is
+precisely the condition it was designed for.
 
-## 5.1 Does a structural signal survive?
+## 5.1 H2 alone does not work, and the reason is not the split
 
-High-passing at 60 m roughly doubles structural correlation, stably across
-cutoffs (30 m and 60 m agree to three decimals):
-
-| scene | corr(*D*, true nDSM) | **corr(*D*<sub>hi</sub>, true nDSM)** |
+| | ViT-S H1 → H2 | ViT-L H1 → H2 |
 |---|---|---|
-| seed7 | +0.236 | **+0.431** |
-| seed21 | +0.266 | **+0.490** |
-| seed33 | +0.253 | **+0.523** |
+| MAE (m) | 8.527 → 8.522 | 8.389 → 8.512 |
+| **edge F1** | **0.210 → 0.315** | 0.411 → 0.397 |
+| nDSM MAE (m) | 7.573 → 7.568 | 7.513 → 7.563 |
+| relief recovered | 0.4% → 0.4% | 1.2% → 0.5% |
 
-## 5.2 How much height could it support? *(oracle)*
+The mechanism engages — on `dav2-vits` the split raises edge F1 by half — and
+the scale does not follow.
 
-| scene | current pipeline | **oracle-scaled $D_{\text{hi}}$** | truth |
-|---|---|---|---|
-| seed7 | 0.05 m | 8.80 m | 12.40 m |
-| seed21 | 0.04 m | 8.58 m | 12.45 m |
-| seed33 | 0.05 m | 10.20 m | 13.19 m |
+**Why, precisely.** H2's object branch is fitted from object anchors, and §3.4
+shows there were **zero** of them in every scene. The `a` branch received no
+data at all: it was determined entirely by its prior and its smoothness term.
+H2 was not refuted here, it was starved.
 
-## 5.3 What it would do to the metrics *(oracle)*
+That is a sharper statement than a null result. The open problem is not "does
+frequency separation help" but **where the structural scale comes from** — and
+it cannot come from the anchor ladder, which observes only ground.
 
-Constructing $\mathrm{DEM} + \max(a D_{\text{hi}}, 0)$ on seed7:
+## 5.2 So it is learned, once, and shipped
 
-| | DEM-only | current | **oracle H2** |
-|---|---|---|---|
-| MAE (m) | 3.47 | 3.39 | 3.40 |
-| **edge F1** | 0.244 | 0.276 | **0.730** |
+`ayama fit` reads a completed study and solves, per scene, the one number the
+ladder cannot see:
 
-```mermaid
-flowchart LR
-    classDef a fill:#f7f6f3,stroke:#52514e,color:#0b0b0b
-    classDef b fill:#fbe4e4,stroke:#d03b3b,color:#7a1616
-    classDef c fill:#e6f7f1,stroke:#1baf7a,color:#0b4f38
+$$a^\star = \arg\min_a \lVert a \cdot \max(D_{\mathrm{hi}}, 0) - \mathrm{nDSM}_{\mathrm{true}} \rVert^2$$
 
-    G["ground truth<br/>buildings 12.4 m<br/>edge F1 = 1.00"]:::a
-    N["current AGMC<br/>buildings 0.05 m<br/>edge F1 0.276<br/>MAE 3.39"]:::b
-    O["oracle H2<br/>buildings 8.80 m<br/>edge F1 0.730<br/>MAE 3.40"]:::c
+a closed form, and then fits a model across scenes. The result is not weights.
+It is a **calibration constant** — metres of height per unit of high-band depth
+— supplied to the branch that has no anchors, and held there because nothing in
+the scene can argue with it (`scale_source: "fitted"`).
 
-    G --- N --- O
+```bash
+python -m ayama.cli fit data/real --runs results/cpu/real_vitl_h1
 ```
 
-**Figure 3.** The structural metric moves 2.6×; the pixelwise metric does not
-move at all. **If MAE remains the headline, a correct fix is indistinguishable
-from a regression.** This is the single strongest argument for the evaluation
-protocol in §2.4.
-
-## 5.5 H2 implemented and run end to end — mechanism confirmed, estimator not
-
-`solve_agmc(..., dual_branch=True)` implements §1.6 and is off by default. Run on
-the same three scenes with **no oracle anywhere** — the scale comes from the
-shadow anchors, as it would at inference:
-
-| seed | mode | MAE (m) | edge F1 | median `a` | nodes at floor | building height | true |
-|---|---|---|---|---|---|---|---|
-| 7 | single | 3.27 | 0.254 | 0.05 | **100%** | 0.07 m | 12.40 m |
-| 7 | **dual** | 13.32 | **0.804** | 190.8 | **0%** | 27.03 m | 12.40 m |
-| 21 | single | 3.24 | 0.272 | 0.05 | **100%** | 0.07 m | 12.45 m |
-| 21 | **dual** | 22.60 | **0.783** | 326.0 | **0%** | 47.71 m | 12.45 m |
-| 33 | single | 3.19 | 0.228 | 0.05 | 97.6% | 0.08 m | 13.19 m |
-| 33 | **dual** | 6.08 | **0.764** | 87.6 | **0%** | 12.00 m | 13.19 m |
-
-**The mechanism is confirmed.** Routing terrain anchors to the offset field
-alone releases the scale field completely — floor saturation goes 100% → 0% on
-every scene — and structure comes back: edge F1 rises from ~0.25 to **0.78**,
-which is the global-affine figure from §3.3, the one that showed the depth model
-does know where the buildings are. §4's diagnosis was correct and the fix
-addresses it.
-
-**The estimator is not solved.** The scale overshoots by 2–4×, so MAE gets
-much worse. The cause is measurable and specific: a shadow anchor pairs a roof
-pixel with a reference 2 px beyond the building edge, and in the high-pass band
-that gap is
-
 ```
-depth gap, roof vs foot:  median +0.003        with 22-31 of ~65 anchors NEGATIVE
-implied a = h / gap:      2515 / 4439 / 20929  against an oracle answer near 20-35
+bern       a*    101.9   nDSM MAE at that scale  5.21 m (floor 10.45 m)
+geneva     a*    129.9   nDSM MAE at that scale  4.03 m (floor  6.90 m)
+lausanne   a*     95.2   nDSM MAE at that scale  4.46 m (floor  5.86 m)
+zurich     a*     88.7   nDSM MAE at that scale  5.37 m (floor  7.16 m)
+
+constant a = 103.9 m per unit of high-band depth
+  fitted on 4 scene(s), held-out nDSM MAE 4.83 m vs a flat-ground floor
+  of 7.59 m (36% better)
+  the one-feature alternative scored 4.92 m and lost
 ```
 
-A 2-pixel probe cannot measure a band whose filter is 60 m wide; it measures
-noise, and a third of the anchors report the roof as *lower* than the ground
-beside it. A scale-matched probe — each building blob's median high-pass against
-a surrounding ground ring — does not rescue it either: implied `a` comes out at
-171 / 181 / 178 with an interquartile range of 30 to 460, from only 7–13 usable
-blobs per scene.
+**The fitter chooses its own model, and it chose the simpler one.** Two families
+are considered — a constant, and a linear model on one inference-time feature —
+and the winner is picked by leave-one-out in metres of nDSM error. On four
+scenes the extra parameter loses, and that is recorded in the model file rather
+than decided in code, so adding scenes can change it without anyone editing
+anything. This is the whole of the learning: a handful of dot products over
+scene-level summaries, on the CPU, in about a second.
 
-**What this changes.** The oracle in §5.2–5.3 fitted one scale by least squares
-over every pixel against ground truth. That information does not exist at
-inference, and the geometric substitutes tested here are one to three orders of
-magnitude too noisy. So the open problem is no longer "does a structural signal
-survive" — §5.1 answered that — but **"where does the structural scale come
-from"**, and the honest answer is that it will not come from 65 point pairs.
+## 5.3 What it buys, held out
 
-That is a well-posed supervised problem with a real target, and it is the first
-thing in this project that genuinely needs a GPU and training data: predict
-`a(p)` from image evidence, supervised on nDSM ground truth. §10 lists the
-datasets that provide it.
+Every number in the fitted column of §3.1 and §3.2 comes from a constant fitted
+on the same four scenes it is then evaluated on, which is a real caveat and is
+why the fitter reports a leave-one-out figure alongside it: **4.83 m held out
+against a 7.59 m floor**, on scenes the constant had never seen. The mechanism
+survives the honest split.
 
-## 5.4 What would falsify H2
+| | anchors only | + fitted scale |
+|---|---|---|
+| relief recovered | 1.2% | **36.5%** |
+| nDSM MAE vs flat-ground floor | −1.0% | **−28.7%** |
+| edge F1 | 0.411 | **0.604** |
+| δ < 1.25 | 0.007 | **0.174** |
+| elevation MAE | **8.39 m** | 9.04 m |
 
-H2 is not established. It predicts, and can be refuted by:
+## 5.4 What it does not buy
 
-1. ~~**End-to-end run with shadow-derived $a$** (no oracle).~~ **Run — see
-   §5.5.** edge F1 rose to 0.78, so H2 survives this test on structure. It fails
-   a second one it implied: the scale magnitude is 2-4x too large, because the
-   shadow branch cannot resolve it.
-2. **Scenes with low shadow yield** — dense blocks, low sun. H2 depends on the
-   shadow branch, which §3.4 shows is narrow-band.
-3. **A different backbone.** If the low-frequency anti-correlation is specific to
-   Depth Anything V2 on this renderer, the diagnosis generalises less than
-   claimed. Testing `dav2-vitl` and a second family (e.g. Marigold [3]) is the
-   cheapest available check.
-4. **Real imagery**, where the perspective ramp may differ in magnitude or sign.
+A single constant cannot vary within a scene, so it cannot distinguish a tower
+from a tree, and §3.2 shows the consequence: Zürich overshoots its tallest
+structure by 45% while Geneva undershoots by 27%. The surface is no longer flat
+and is not yet right.
+
+The next rung is the one this project has always pointed at: **predict `a(p)`
+per pixel from image evidence**, supervised on nDSM truth. That is a genuine
+supervised learning problem, and the oracle bound for it is worth stating —
+fitting `a` per 128 px block against ground truth recovers **84%** of true
+relief, against the 36% a global constant delivers. The signal is in the depth
+field; only the assignment is missing.
+
+## 5.5 What would falsify this
+
+| test | verdict |
+|---|---|
+| **Real imagery** | **Run (§3).** The premise holds: terrain and structure demand scales 51× apart |
+| **A different backbone** | **Run.** Both backbones flatten without a fitted scale; the failure is not backbone-specific |
+| **Scenes with low shadow yield** | **Run, unintentionally.** Yield was zero, and H2's scale branch had nothing to fit |
+| **A constant that does not transfer** | **Partly run.** Leave-one-out holds across four Swiss cities. It is untested on other sensors, other GSDs and other countries, and §6 says so |
+| **Object anchors from a source that is not shadow** | **Not run.** Still the live question |
 
 ---
 
@@ -819,14 +1033,16 @@ Beyond the protocol limits in §2.6:
 
 - **The headline claim is a negative result.** ĀYĀMA does not currently produce
   a usable DSM, and no claim of state of the art is made or implied.
-- **H2 is untested end to end.** §5 is an oracle signal test.
-- **The diagnosis is single-backbone.** Verified for `dav2-vits` only.
-- **σ is validated at scene level only.** Per-class it is unreliable (0.021 on
-  buildings).
+- **σ is not calibrated on real data** — 1σ coverage 0.537 against 0.683 — and
+  structurally cannot see the bias that dominates the error (§3.5).
+- **H2 was starved, not refuted.** Its scale branch received zero anchors, so
+  §5 bounds nothing about what frequency separation could do given anchors.
+- **The 51× mismatch is measured on one scene.** Zürich, `dav2-vitl`. The
+  *outcome* it explains reproduces across all four scenes and both backbones,
+  but the mechanism itself is quantified once.
 - **Novelty is unaudited.** §10 positions the work against known literature but
   no systematic prior-art search has been performed; nothing here should be read
   as a priority claim.
-- **The oracle scale uses ground truth**, so §5 cannot bound end-to-end error.
 
 ---
 
@@ -841,325 +1057,98 @@ python -m venv .venv
 ```
 
 The core install excludes torch deliberately: ingest, tiling, blending, raster
-IO, calibration, metrics and the synthetic scene run without it, and
-`--backbone synthetic` exercises the whole path with no weights (a plumbing
-check, never a result).
+IO, calibration, metrics, meshing and the delivery phases all run without it.
+Depth inference does not, and there is no weightless stand-in — a placeholder
+that fabricates a plausible depth field is exactly how an invented number
+reaches a results table, so it was removed.
 
 | command | produces | time (CPU) |
 |---|---|---|
-| `python -m ayama.cli study --out results` | §3 and §4 — `results/study.json` | 450 s |
+| `python scripts/fetch_swisstopo.py --out data/real/zurich` | one real scene + lidar truth (~91 MB) | 60 s |
+| `python -m ayama.cli dataset data/real --layout generic --backbone dav2-vitl` | §3 and §4 — `dataset.json` over four scenes | 634 s |
+| **`python -m ayama.cli fit data/real --runs results/cpu/real_vitl_h1`** | **§5 — the structural scale, leave-one-out validated** | **1 s** |
+| `python -m ayama.cli sample --out data/sample.tif` | the bundled real sample scene, no download | 1 s |
 | `python -m ayama.cli run <scene> --workers 8` | one scene, threaded bootstrap | 42 s |
-| `python -m ayama.cli preflight --device cuda` | end-to-end verdict on one device | 20 s |
-| `python -m ayama.cli delivery results/seed7/run --out results` | §8 — `results/delivery.json` | 68 s |
-| `python -m ayama.cli viewer results/seed7/run` | interactive 3D at `localhost:8020` | 5 s |
+| `python -m ayama.cli preflight` | end-to-end verdict on this machine | 20 s |
+| `python -m ayama.cli mesh results/cpu/real_vitl_h1/zurich --out results/cpu/phase3_tiles` | §3.6 — browser tileset + OBJ | 46 s |
+| `python -m ayama.cli delivery results/cpu/real_vitl_h1/zurich --out results/cpu/phase4_delivery` | §3.6 — `delivery.json` | 179 s |
+| `python -m ayama.cli viewer results/cpu/real_vitl_h1/zurich` | interactive 3D at `localhost:8020` | 5 s |
 | `python -m ayama.cli serve` | the web service: upload an image, get a 3D reconstruction | — |
-| `python -m pytest tests -q` | 181 passed, 7 skipped (GPU) | 78 s |
+| `python -m ayama.cli dataset <root> --layout us3d` | the pipeline over a **real** dataset (§2.7) | — |
+| `python -m pytest tests -q` | 201 passed, 0 skipped | 220 s |
 
 ## 7.2 Reproduce the §4 diagnosis
 
-Directly, in about 10 s, with no inference:
+Measures the scale mismatch directly from a completed run, with no inference —
+about 10 s.
 
 ```bash
 python - <<'PY'
 import numpy as np, rasterio
-from ayama.core.ingest import ingest
-from ayama.core.types import Config, DepthField, Tier
-from ayama.chhaya.agmc import solve_agmc, global_affine
-from ayama.chhaya.ladder import build_anchors
-from ayama.eval.simulate import simulate_public_dem
-from ayama.measure.derive import slope_deg
+R, O = 'data/real/zurich/', 'results/cpu/real_vitl_h1/zurich/'
+rd    = rasterio.open(O + 'relative_depth.tif').read(1)
+dsm_p = rasterio.open(O + 'dsm.tif').read(1)
+nd_p  = rasterio.open(O + 'ndsm.tif').read(1)
+dsm   = rasterio.open(R + 'zurich_dsm.tif').read(1)
+dtm   = rasterio.open(R + 'zurich_dtm.tif').read(1)
+nd_t  = np.maximum(dsm - dtm, 0)
+obj, gnd = nd_t > 5.0, nd_t < 0.5
 
-scene = ingest('results/seed7/scene.tif')
-rd  = rasterio.open('results/seed7/run/relative_depth.tif').read(1)
-sem = rasterio.open('results/seed7/run/sem.tif').read(1)
-sh  = rasterio.open('results/seed7/run/shadow.tif').read(1).astype(bool)
-dtm = rasterio.open('results/seed7/scene_dtm.tif').read(1)
-dem = simulate_public_dem(dtm, scene.meta.gsd_m, source='copernicus')
+# the scale the delivered surface actually applied, measured not asserted
+slopes = []
+for i in range(0, rd.shape[0], 128):
+    for j in range(0, rd.shape[1], 128):
+        x = rd[i:i+128, j:j+128].ravel()
+        y = dsm_p[i:i+128, j:j+128].ravel()
+        if x.std() > 1e-3:
+            slopes.append(np.polyfit(x, y, 1)[0])
+a_eff = float(np.median(slopes))
 
-cfg = Config(); cfg.dem_source = 'copernicus'
-d = DepthField(relative=rd, meta=scene.meta, backbone='dav2-vits')
-anchors, _ = build_anchors(scene, d, sem, sh, Tier.A, dem_m=dem, cfg=cfg,
-                           slope_mask=slope_deg(dem, scene.meta.gsd_m) > 25.0)
-print('global affine wants a = %.2f' % global_affine(rd, anchors, cfg.huber_delta)[0])
-cal = solve_agmc(d, anchors, cfg, tier=Tier.A)
-print('a field: min %.4f median %.4f max %.4f' % (cal.a.min(), np.median(cal.a), cal.a.max()))
-print('fraction at the a_min floor: %.1f%%' % (100 * (cal.a <= 0.0501).mean()))
+gap_d = rd[obj].mean() - rd[gnd].mean()
+gap_t = nd_t[obj].mean() - nd_t[gnd].mean()
+print('object-minus-ground   depth %+.4f   true %+.2f m   predicted %+.2f m'
+      % (gap_d, gap_t, nd_p[obj].mean() - nd_p[gnd].mean()))
+print('scale terrain supplies %.1f   objects require %.1f   mismatch %.0fx'
+      % (a_eff, gap_t / gap_d, gap_t / gap_d / a_eff))
 PY
 ```
 
-Expected: `a = -14.50`, field flat at `0.0500`, **100%** at the floor.
+Expected: depth gap `+0.1287`, true `+15.04 m`, predicted `+0.07 m`; terrain
+supplies `2.3`, objects require `116.9`, **51×**.
 
-## 7.3 The whole thing on Colab
+To confirm the scale field is *not* clamped — the distinguishing feature of this
+failure — add `print((cal.a <= 0.0501).mean())` after a `solve_agmc` call; it is
+0% here.
 
-Paste these in order. This replaces the notebook that used to live in
-`notebooks/` — same sequence, one less file to keep in sync.
+## 7.3 Compute
 
-**Do not run `setup_gpu.sh` here.** Colab's torch is already built against its
-own driver, and the image ships without `ensurepip`, so `python -m venv`
-half-succeeds and leaves an interpreter that imports nothing.
+Everything in this README was measured on the CPU, because that is the only way
+ĀYĀMA runs. There is no GPU path, no device flag and no accelerator to
+configure, and that is a decision with a measurement behind it rather than a
+gap: an order of magnitude more backbone (`dav2-vits` → `dav2-vitl`) moved
+recovered relief from 0.06 m to 0.17 m against a true 14.4 m, because the
+bottleneck is metric scale, not perception (§3.2, §4.2). What does recover
+structure is a constant fitted over a dataset (§5), and fitting it takes about
+a second.
 
-```python
-# 1 — GPU, then the code
-!nvidia-smi
-!git clone -q https://github.com/Sisigoks/AYAMA.git
-%cd AYAMA
-!pip install -q -r requirements.txt
-```
+Carrying device selection, autocast, VRAM budgeting and a second untested
+configuration for a speed-up that changes no result is upkeep with no return,
+so none of it is here.
 
-```python
-# 2 — does the whole pipeline run on this GPU? stop here if not.
-!python -m ayama.cli preflight --device cuda --backbone dav2-vits
-```
-
-```python
-# 3 — throughput, so the study below can be sized honestly
-!python -m ayama.cli bench --backbones dav2-vits,dav2-vitl \
-    --chips 518,1024,2048 --batches 1,2,4,8 --device cuda --json out/bench.json
-```
-
-```python
-# 4 — reproduce the CPU study on GPU first (should match section 3)
-!python -m ayama.cli study --out results/smoke --backbone dav2-vits \
-    --device cuda --batch 0 --size 1024 --seeds 7,21,33 --progress plain
-```
-
-```python
-# 5 — the real one. figures and LaTeX tables are rendered automatically.
-!python -m ayama.cli study --out results/gpu --backbone dav2-vitl \
-    --device cuda --batch 0 --size 2048 --seeds 1,2,3,4,5,6,7,8,9,10 --progress plain
-```
-
-```python
-# 6 — read it
-from glob import glob
-from IPython.display import Image, Markdown, display
-display(Markdown(open('results/gpu/README.md').read()))
-for f in sorted(glob('results/gpu/figures/*.png')):
-    print(f); display(Image(f))
-```
-
-```python
-# 7 — Phases 3 and 4
-!python -m ayama.cli mesh results/gpu/seed1/run --out results/gpu/tiles --bits 12
-!python -m ayama.cli delivery results/gpu/seed1/run --out results/gpu/delivery --obj-strides 2,4
-from IPython.display import Markdown, display
-display(Markdown(open('results/gpu/delivery/DELIVERY.md').read()))
-```
-
-```python
-# 8 — the 3D app, live, through Colab's port proxy
-import subprocess, time
-from google.colab.output import eval_js
-subprocess.Popen(['python','-m','ayama.cli','serve',
-                  '--host','0.0.0.0','--port','8000','--device','cuda'])
-time.sleep(6)
-print(eval_js('google.colab.kernel.proxyPort(8000)'))
-```
-
-```python
-# 9 — take it home
-!zip -qr ayama_results.zip results/gpu out/bench.json
-from google.colab import files; files.download('ayama_results.zip')
-```
-
-`study` checkpoints `study.json` and `README.md` after every stage, so a
-disconnect costs a stage rather than the run — but it does **not** resume, so
-keep the seed count within one session. `--host 0.0.0.0` in cell 8 is required
-for Colab's proxy and there is no authentication behind it; that is acceptable
-inside a Colab session and nowhere else.
-
-## 7.4 Compute: the CPU baseline and the GPU path
-
-> **No GPU numbers are measured in this repository.** The reference machine
-> reports `CUDA available: False`, so every timing in this README is CPU. The
-> GPU path is implemented and tested (9 tests, skipped here with a reason), and
-> the projections below are arithmetic from the measured CPU profile — not
-> observations. Run `ayama doctor` and `ayama bench` on a CUDA box to replace
-> them with measurements.
-
-**The CPU POC is the reproducible baseline and stays that way.** Everything in
-§3–§5 runs without a GPU, without downloading data, in 450 s. That is a
-deliberate property: the negative result in §4 must be checkable by anyone.
-
-### What the GPU actually touches
-
-| stage | CPU (s/scene) | share | on GPU |
-|---|---|---|---|
-| **depth inference** | 22.1 | **52.4%** | **yes** — fp16 autocast, batched, VRAM-aware |
-| uncertainty (24 solves) | 3.5 | 8.3% | no — sparse solves, now threaded (below) |
-| validation | 7.5 | 17.8% | no — NumPy/SciPy over rasters |
-| artifacts | 4.5 | 10.7% | no — PNG/GeoTIFF encode, IO bound |
-| anchors | 2.3 | 5.5% | no |
-| segmentation, shadow, assemble, ingest | 2.1 | 5.0% | no |
-| **total** | **42.1** | | |
-
-The depth backbone is the only tensor workload in the pipeline. AGMC is a sparse
-linear solve, the anchors are connected-component and ray-marching work, and the
-artifact stage is compression — none of which belong on a GPU.
-
-### The ceiling this implies
-
-With GPU-addressable fraction *p* = 0.524, Amdahl bounds the whole pipeline at
-
-$$ S_{\max} = \frac{1}{1-p} = 2.10\times $$
-
-| depth speedup | per scene | pipeline speedup |
+| stage | wall clock | notes |
 |---|---|---|
-| 1× (CPU) | 42.1 s | 1.00× |
-| 3× | 27.4 s | 1.54× |
-| 5× | 24.5 s | 1.72× |
-| 10× | 22.2 s | 1.89× |
-| ∞ | 20.0 s | 2.10× |
+| fetch one real scene | 60 s | 91 MB from swisstopo |
+| `dataset`, 4 scenes, `dav2-vitl` | 634 s | depth dominates |
+| `dataset`, 4 scenes, `dav2-vits` | 192 s | the cross-backbone check |
+| **`fit` over those 4 scenes** | **~1 s** | reads depth back; nothing re-infers |
+| `mesh` (Phase 3) | 10 s | 4 LODs, no OBJ |
+| `delivery` (Phase 4) | 179 s | a full sweep, not a single build |
+| the whole test suite | ~220 s | real weights, real scene, no network |
 
-**A GPU is worth roughly 2× on this pipeline, not 10×** — and only because the
-CPU remainder was first reduced. That is the honest framing: buying a GPU does
-not make the science faster to iterate on; it makes a bigger *scene* tractable,
-which is a different argument.
-
-Where a GPU changes the answer rather than the clock: `dav2-vitl` at 2048² or
-4096². On CPU that is minutes per scene and `dav2-vits` at 1024² is what the
-budget allows — so the backbone-family check in §5.4 is a GPU task, not a CPU one.
-
-### What was fixed on the way to that number
-
-The uncertainty bootstrap was 8.2 s (17.5%) of the pipeline, running 24
-independent sparse solves serially on one of eight cores. SciPy releases the GIL
-inside its sparse factorisation, so a thread pool gives **2.34× measured** on the
-real workload, taking the stage to 3.5 s and the pipeline to 42.1 s.
-
-It is on by default (`--workers 0`), and it is **bit-identical to serial**: the
-resample indices are drawn up front from the seeded generator, and results are
-accumulated in index order rather than completion order. Accumulating as futures
-land would make σ depend on thread scheduling — irreproducibility that is hard
-to notice and impossible to defend. There is a test asserting equality.
-
-### Verifying it end to end on a GPU
-
-Whether the pipeline runs on a GPU is not answerable by inspection, so it is
-answerable by a command. `preflight` runs synth → depth → anchors → AGMC →
-uncertainty → artifacts → tileset on the requested device, checks the device
-that was **actually used** rather than the one asked for, asserts every headline
-metric came back finite, and exits non-zero if anything failed:
-
-```bash
-python -m ayama.cli preflight --device cuda --backbone dav2-vits
-```
-
-```
-PREFLIGHT OK - the full pipeline runs end to end on cuda:0
-```
-
-On this CPU-only machine it correctly refuses, which is the same mechanism
-working:
-
-```
-PREFLIGHT FAILED
-  ! CUDA is not available to torch 2.13.0+cpu - this is a CPU-only build
-  ! install a CUDA build of torch, e.g.
-      pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
-```
-
-That refusal path is tested; so is a full end-to-end preflight pass on CPU. What
-is **not** tested here is the CUDA success path, for the obvious reason.
-
-On a **managed notebook (Colab, Kaggle)**, do not build a virtualenv. The
-preinstalled torch is already matched to that machine's driver, and those images
-often lack `ensurepip`, so `python -m venv` half-succeeds and leaves an
-interpreter that imports nothing:
-
-```bash
-pip install -q -r requirements.txt
-python -m ayama.cli preflight --device cuda --backbone dav2-vits
-```
-
-`scripts/setup_gpu.sh` detects those environments and skips the venv on its own;
-`scripts/harness.sh` validates that its interpreter can actually import the
-package rather than assuming a `.venv` that exists is a `.venv` that works.
-
-The full Colab sequence — clone, install, preflight, study, figures, Phase 3/4,
-and the 3D viewer over Colab's port proxy — is [§7.3](#73-the-whole-thing-on-colab).
-
-On a **machine you own**:
-
-```bash
-bash scripts/setup_gpu.sh                    # detects CUDA, builds .venv, verifies
-python -m ayama.cli preflight --device cuda --backbone dav2-vits   # <- start here
-python -m ayama.cli doctor --load dav2-vitl  # device, VRAM, load and warm-up time
-python -m ayama.cli bench --backbones dav2-vits,dav2-vitl \
-    --chips 518,1024,2048 --batches 1,2,4,8  # throughput sweep, writes JSON
-python -m pytest tests -q -m gpu -v          # the 9 GPU tests, un-skipped
-```
-
-`--batch 0` sizes the batch from free VRAM rather than making you guess;
-`--device auto` resolves CUDA → MPS → CPU.
-
-**Docker**, if you would rather not touch the host environment:
-
-```bash
-docker build -t ayama:gpu .
-docker run --gpus all --rm -it -v ayama-cache:/cache -v "$PWD:/work" ayama:gpu \
-    bash scripts/harness.sh
-```
-
-The `/cache` volume holds the Hugging Face weights, so restarting the container
-does not re-download 1.3 GB of ViT-L.
-
-### Knobs that actually change something
-
-| knob | effect |
-|---|---|
-| `--chip 518` | Depth Anything's native size. Larger chips are resized inside the processor, so 1024 costs more and adds no detail — bench both before choosing. |
-| `--batch 0` | Auto from free VRAM. Set it explicitly to reproduce a timing. |
-| `--dtype float16` | Default on CUDA. Roughly 2×, and it moves the surface by far less than the calibration residual — a GPU test asserts exactly that. |
-| `--overlap 0.25` | Below ~0.15 the overlap band is too small to harmonise chips against each other (§1.2). |
-| `--bootstrap 24` | 24 sparse solves, threaded; seconds. `0` turns σ off entirely. |
-| `--stride 32` | AGMC lattice stride in pixels. 32 on a 4k tile is a 128×128 lattice, ~32k unknowns. |
-| `--lam 1.0` | AGMC smoothness weight. Flat over roughly 0.25–4 (§3.6), which is what a correctly scaled parameter looks like. Push past 10 and AGMC collapses back to a global affine fit. |
-| `--workers 0` | Threads for the bootstrap; auto. `1` forces serial. Bit-identical either way. |
-| `--dual-branch` | Experimental H2 (§5.5). Releases the scale field, overshoots the magnitude. Off by default. |
-
-### What a GPU is actually for here
-
-Not speed. §2.6 lists the protocol's limits and every one of the top three is a
-*scale* problem that a CPU cannot solve in reasonable time:
-
-| limitation | CPU today | what a GPU makes feasible |
-|---|---|---|
-| **N = 3 scenes** | 450 s for 3 at 1024² | N = 30 in a comparable wall time |
-| **one backbone** | `dav2-vits` only | `dav2-vitl`, and a second family, to test whether the §4 anti-correlation is model-specific |
-| **fixed 1024² / 0.5 m** | 2048² is minutes/scene | 2048² and 4096², testing scale generalisation |
-
-**This is the useful GPU study**, and it is the one that would move §3 from
-"observed on three scenes" toward something defensible:
-
-```bash
-python -m ayama.cli study --out results/gpu \
-    --backbone dav2-vitl --device cuda --batch 0 \
-    --size 2048 --seeds 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20
-```
-
-Then re-run the H2 falsification list in §5.4 against it. A GPU does not make
-the negative result in §4 go away — the collapse is a property of the
-formulation, not of the compute — but it is what turns N = 3 into a sample and
-one backbone into a comparison.
-
-### What the GPU tests assert
-
-Correctness first, speed second — a faster wrong answer is not progress:
-
-- CUDA is visible and reports memory; device resolution prefers it.
-- The backbone's parameters actually land on the device.
-- **fp16 on GPU agrees with fp32 on CPU** for the same chip (*r* > 0.995).
-  This is the one that matters: it licenses the fp16 autocast.
-- **Batched inference reproduces single-chip inference**, so a batch stays a
-  scheduling decision and never a numerical one.
-- The suggested batch size fits in the memory actually free.
-- The full pipeline runs end to end on the GPU.
-
-
-Every artifact is a Cloud-Optimised GeoTIFF that opens in QGIS without ĀYĀMA
-installed. Simulated inputs are labelled: `--dem sim:` and
-`--backbone synthetic` stamp their provenance into every artifact they touch.
+Reference machine: 8 cores, torch 2.13 CPU, 4 threads. The one place threading
+was worth engineering is the uncertainty bootstrap, which is ~2.3× on eight
+cores and bit-identical to the serial path — see `--workers` and the test that
+pins it.
 
 ---
 
@@ -1170,24 +1159,59 @@ Phase 2 rasters into a tiled browser surface, a textured mesh and a local WebGL
 viewer. **It computes no elevation** — every value displayed is decoded from a
 tile written from a Phase 2 raster, and `tileset.json` records which run.
 
-| | measured (CPU, 1024² scene) |
+| | measured (CPU, 1024² real scene) |
 |---|---|
-| tileset build | 2.59 s (5.07 s with OBJ export) |
+| tileset build | 7.35 s (13.92 s with OBJ export) |
 | round-trip fidelity | **16/16** layer-LOD pairs within half an encoding step |
-| payload | 2.86 MB at 12-bit encoding (9.08 MB at 24-bit; 76% saving) |
-| viewer first paint | 4.34 MB, 35 ms CPU |
-| decode throughput | 244 Mpix/s (JavaScript) |
+| payload | 5.5 MB at 12-bit, whole pyramid; 1.45 MB for the LOD the viewer opens |
+| quantisation cost | nDSM 24→12 bit, worst error **1.75 mm** on a 53 m range |
+| viewer first paint | 66 ms CPU (browser rasterisation not measured) |
 
-Full report: [`results/DELIVERY.md`](results/DELIVERY.md).
+Full report: [`results/cpu/phase4_delivery/DELIVERY.md`](results/cpu/phase4_delivery/DELIVERY.md).
 
-Two design points carry over to the research posture. **Two encodings, because
-one is insufficient**: the nDSM layer spans 0.276 m in total, so Mapbox
-Terrain-RGB's [5] fixed 0.1 m step would quantise it to three levels and the
-viewer would display an encoding artifact rather than a measurement. And
-**`derive_notes` inspects the surface before shipping it** — on the seed7 run
-the viewer states, unprompted, that predicted height above ground reaches only
-0.28 m and that this is a defect rather than a rendering choice. A 3D view of a
-flattened city that does not say so is worse than no 3D view.
+**Two encodings, because one is insufficient.** Mapbox Terrain-RGB's [5] fixed
+0.1 m step is right for elevation and wrong for the derived layers: σ spans
+0.05 m across the whole Zürich scene, which Terrain-RGB would quantise to a
+single level. Those layers get a linear encoding fitted to their own range.
+
+**`derive_notes` inspects the surface before shipping it.** A 3D view of a
+flattened city that does not say so is worse than no 3D view, so the tiler
+computes its own verdict from the height distribution it was handed. That check
+has been wrong twice and the comments in
+[`ayama/mesh/build.py`](ayama/mesh/build.py) record both: an absolute threshold
+missed a real collapse, and a comparison against the colour heuristic's
+`building` class raised a **false alarm on a surface with 53 m of genuine
+relief** — because §3.4 shows that heuristic does not find buildings. It now
+uses only the height distribution: no truth, no segmentation. Tests assert it
+fires on the un-fitted arm and stays silent on the fitted one.
+
+### Depth perception in the viewer
+
+A height field lit by one Lambert term reads as a relief map rather than a
+place. Four cues replace it, each doing something the others cannot:
+
+| cue | what it resolves |
+|---|---|
+| sky/ground hemisphere | separates up-facing from down-facing surfaces where the sun does not reach |
+| curvature AO from the normal map, 4 taps | darkens the creases *between* solids, which is what makes them read as separate buildings |
+| aerial perspective | the strongest distance cue the eye has outdoors; scaled to scene extent so a 500 m tile and a 5 km one look alike |
+| height tint | keeps structure legible where the orthophoto is uniform grey |
+
+### Flythrough
+
+An orbit control answers *what shape is this surface*. It does not answer *how
+tall is that, standing next to it*, which is the question a reconstruction
+exists to answer. `Fly through` (or <kbd>F</kbd>) descends from a survey view to
+eye level, crosses the scene low and oblique where parallax between near and far
+structure is strongest, and returns — 34 s, then it stops.
+
+The camera height is clamped against the height field **every frame** rather
+than baked into the keyframes, using the same sampler the cursor readout uses,
+so the path cannot fly through a roof on a scene it was not designed for. That
+matters more now than it did: before §5 the surface had 4.8 m of relief to
+avoid, and now it has 53 m. Any pointer or key input stops the tour, because a
+camera that keeps moving while someone is trying to drag it is worse than no
+tour at all.
 
 ### The web service
 
@@ -1243,17 +1267,23 @@ tools; and on the service side, auth, quotas and durable jobs.
 
 ## Scientific critical path
 
-1. **Frequency-separated calibration**, end to end, no oracle scale (tests H2).
-2. **Shadow-conditioned structural calibration** — route anchors to bands by the
-   existing `branch` field so 65 shadow anchors are not outvoted by 3840 DEM ones.
-3. **End-to-end evaluation of H2** against the same baselines and metrics.
-4. **Scale the evaluation**: N = 3 → N ≥ 20 scenes, varied building density,
-   varied sun elevation, varied GSD.
-5. **Second backbone** (`dav2-vitl`, and a second family) to test whether the
-   low-frequency anti-correlation is model-specific.
-6. **Real imagery with an independent reference DSM.** The only path to an
-   external claim.
-7. **Cross-domain evaluation** and per-class uncertainty validation.
+1. **A per-pixel structural scale $a(p)$**, supervised on nDSM truth. §5 fits a
+   single global constant and recovers 36% of relief; fitting `a` per 128 px
+   block against truth recovers 84%, so the headroom is real and the assignment
+   is what is missing.
+2. **Object-height anchors that do not depend on shadows.** Shadows yield 1.7%
+   of the ladder even under a granted sun (§3.4); without another source, H2's
+   scale branch stays starved.
+3. **A segmentation head that works on real imagery.** The colour heuristic does
+   not (§3.4), and every semantic gate in the anchor ladder depends on it.
+4. **Scale the evaluation**: N = 4 → N ≥ 40 scenes, more than one country, varied
+   building density and GSD.
+5. **Satellite imagery with co-registered truth** (DFC2019/US3D). The only path
+   to a claim about satellite data; the code path is implemented and tested.
+6. **Scenes with published acquisition times**, so the shadow branch is exercised
+   rather than disabled.
+7. **Per-class uncertainty validation**, and a σ model that can represent bias
+   rather than only residual spread (§3.5).
 8. **Prior-art audit** before any novelty claim (§10).
 
 ## Engineering
@@ -1318,6 +1348,14 @@ finding.
 [10] D. Eigen, C. Puhrsch, R. Fergus. *Depth Map Prediction from a Single Image
     using a Multi-Scale Deep Network*. NIPS 2014. arXiv:1406.2283. — source of
     the δ < 1.25 metric.
+[11] Federal Office of Topography swisstopo. *SWISSIMAGE 10 cm*,
+    *swissSURFACE3D Raster* and *swissALTI3D*. Swiss Open Government Data.
+    <https://www.swisstopo.admin.ch> — the imagery and elevation truth behind
+    every measurement in §3-§5.
+[12] B. Le Saux, N. Yokoya, R. Hansch, M. Brown, G. Hager. *2019 IEEE GRSS Data
+    Fusion Contest: Large-Scale Semantic 3D Reconstruction* (DFC2019 / US3D).
+    IEEE GRSM, 2019. — the satellite benchmark this project supports but has
+    not run.
 
 ---
 
@@ -1348,20 +1386,25 @@ different terms from Small/Base and should be checked before any commercial use.
 ```
 ayama/
   core/        types.py (contracts), geo.py, solar.py, ingest.py
-  depth/       backbones/{base,hf,synthetic}.py, infer.py
+  depth/       backbones/{base,hf}.py, infer.py
   semantics/   segment.py, shadow.py
   chhaya/      agmc.py, anchors.py, ladder.py, uncertainty.py    <- the method
   dsm/         assemble.py, cog.py
   measure/     derive.py
   mesh/        encode.py, tiles.py, obj.py, build.py             <- delivery
-  eval/        metrics, ablation, bench, study, figures, delivery
+  data/        dataset discovery, and the bundled real sample scene
+               fixture/     a 576 px lidar crop of Zurich, shipped with the package
+  learn/       scale.py, collect.py, calibration.json   <- the only learned thing
+  eval/        metrics, ablation, bench, delivery, shadow_truth, simulate
   api/         pipeline.py — the whole method in one function
                server.py, jobs.py — the upload/reconstruct service
 web/           the whole front end, one root, no build step
                index.html   - the app: upload -> reconstruct -> 3D
-               results.html - the study dashboard, renders results/study.json
-               data/        - the committed demo tileset the 3D loads
-results/       study.json, delivery.json, DELIVERY.md, figures, per-seed artifacts
+               results.html - the study dashboard, renders results/cpu/*/dataset.json
+               data/        - the committed demo tileset the 3D loads (real Zurich)
+results/       cpu/  real_vitl_h1|h2, real_vits_h1|h2   anchors only
+                     real_vitl_learned                  with the fitted scale (§5)
+                     phase3_tiles, phase4_delivery      the delivery layer
 out/           local build artifacts only - gitignored, never committed
 ```
 

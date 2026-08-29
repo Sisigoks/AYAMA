@@ -1,8 +1,10 @@
 """End-to-end pipeline, semantics and shadow physics.
 
-These run on the synthetic backbone so the whole chain is exercised in seconds
-with no weights. They check plumbing and invariants, never accuracy: a number
-produced by the synthetic backbone is not a result.
+These run on the bundled real scene - a lidar crop of central Zurich - with a
+real backbone. They check plumbing and invariants, never accuracy: a number
+produced by a 384 px crop with four bootstrap samples is not a result. The
+weightless placeholder backbone they used to run on has been removed, so the
+end-to-end cases are marked `slow`.
 """
 from __future__ import annotations
 
@@ -13,15 +15,23 @@ from ayama.core.types import (BARE_GROUND, BUILDING, Config, Scene, Tier)
 
 rasterio = pytest.importorskip("rasterio")
 
+# The smallest real backbone. Every case that runs inference is `slow`.
+BACKBONE = "dav2-vits"
+
 
 @pytest.fixture(scope="module")
 def written_scene(tmp_path_factory):
-    """A synthetic town on disk, with its ground truth alongside."""
+    """The bundled real scene on disk, with its lidar truth alongside.
+
+    A sun is supplied so the shadow-physics stages have something to exercise;
+    swisstopo publishes none, so this angle is a test parameter, not a
+    measurement.
+    """
+    from ayama.data.sample import load_sample_scene
     from ayama.dsm.cog import write_cog, write_rgb
-    from ayama.eval.synthetic_scene import make_scene
 
     d = tmp_path_factory.mktemp("scene")
-    sc = make_scene(size=384, gsd_m=0.5, seed=21)
+    sc = load_sample_scene(size=384, sun=(150.0, 45.0))
     paths = {
         "rgb": str(d / "scene.tif"),
         "dsm": str(d / "scene_dsm.tif"),
@@ -72,21 +82,52 @@ def test_shadow_quality_gate_follows_the_sun():
     assert 0.0 < quality_from_sun_elevation(24.0) < 1.0
 
 
-def test_shadow_detector_is_precise_as_well_as_complete(written_scene):
-    """Recall alone is satisfied by flagging half the image; F1 is not."""
+def test_the_shadow_detector_flags_pixels_that_are_actually_dark(written_scene):
+    """What can be asserted without knowing the sun.
+
+    Against a renderer this was an F1 test, because the renderer knew where the
+    shadows were. Here nothing does: swisstopo publishes no acquisition time, so
+    a geometric truth mask can only be built under an assumed sun, and scoring
+    the detector against a guess measures the guess. These two properties need
+    no sun at all - the mask must be non-degenerate, and it must actually be
+    dark.
+    """
     from ayama.semantics.shadow import detect_shadow
 
     sc, _ = written_scene
-    scene = Scene(rgb=sc.rgb, meta=sc.meta)
-    mask = detect_shadow(scene, sc.sem)
-    truth = sc.shadow
-    if truth.sum() < 50:
-        pytest.skip("scene has almost no cast shadow")
-    tp = float((mask & truth).sum())
-    precision = tp / max(float(mask.sum()), 1.0)
-    recall = tp / float(truth.sum())
-    f1 = 2 * precision * recall / max(precision + recall, 1e-9)
-    assert f1 > 0.7, f"shadow F1 {f1:.2f} (P {precision:.2f} R {recall:.2f})"
+    mask = detect_shadow(sc.as_scene(), sc.sem)
+    assert 0.02 < mask.mean() < 0.35, f"{100 * mask.mean():.0f}% flagged as shadow"
+
+    lum = sc.rgb.astype(np.float32).mean(-1)
+    assert lum[mask].mean() < 0.6 * lum[~mask].mean(),         f"'shadow' pixels are not dark: {lum[mask].mean():.0f} vs {lum[~mask].mean():.0f}"
+
+
+@pytest.mark.slow
+def test_what_the_shadow_detector_flags_is_in_geometric_shadow(written_scene):
+    """Precision against lidar geometry, at the sun that best explains the image.
+
+    The sun is unknown, so it is fitted rather than assumed: the azimuth whose
+    ray-marched mask best matches the detector is the one the image is
+    consistent with. At that azimuth most of what the detector flags really is
+    occluded, which is the property the anchors depend on.
+
+    Recall is deliberately *not* asserted. Geometric shadow includes surfaces
+    that are self-shaded and shadows cast onto other roofs; a radiometric
+    detector sees only the dark ones, and on this crop it recovers under a third
+    of them. That gap is a real limitation, not a bug - see README section 3.4.
+    """
+    from ayama.eval.shadow_truth import cast_shadow_mask
+    from ayama.semantics.shadow import detect_shadow
+
+    sc, _ = written_scene
+    mask = detect_shadow(sc.as_scene(), sc.sem)
+    best_p, best_az = 0.0, None
+    for az in (30, 120, 210, 300):
+        truth = cast_shadow_mask(sc.dsm_m, az, 45.0, sc.meta.gsd_m)
+        p = float((mask & truth).sum()) / max(float(mask.sum()), 1.0)
+        if p > best_p:
+            best_p, best_az = p, az
+    assert best_p > 0.5, f"best precision {best_p:.2f} at azimuth {best_az}"
     assert mask.mean() < 0.35, "more than a third of the scene flagged as shadow"
 
 
@@ -145,9 +186,33 @@ def test_ndsm_is_never_negative_and_dtm_sits_under_the_dsm(written_scene):
     surf = assemble(sc.dsm_m, sc.sem, sc.meta, tier=Tier.A)
     assert (surf.ndsm_m >= 0).all()
     assert np.isfinite(surf.dsm_m).all()
-    # Buildings must come out taller than open ground.
-    if (sc.sem == BUILDING).sum() > 100:
-        assert surf.ndsm_m[sc.sem == BUILDING].mean() > surf.ndsm_m[sc.sem == BARE_GROUND].mean()
+
+    # Structures must come out taller than open ground. "Structure" is taken
+    # from the lidar, not from the colour heuristic: on real imagery the
+    # heuristic's building class is unreliable (see the test below), and an
+    # assembler test must not fail for a segmentation reason.
+    tall, flat = sc.ndsm_m > 5.0, sc.ndsm_m < 0.5
+    assert tall.sum() > 100 and flat.sum() > 100
+    assert surf.ndsm_m[tall].mean() > surf.ndsm_m[flat].mean() + 3.0
+
+
+def test_the_colour_heuristic_does_not_find_buildings_on_real_imagery(written_scene):
+    """A limitation, pinned so it cannot be forgotten or silently 'fixed'.
+
+    On rendered scenes the heuristic separated classes well, because the
+    renderer painted them in separable colours. On a real orthophoto it does
+    not: what it calls `building` is no taller, by lidar, than what it calls
+    bare ground. Every real run in README section 3 used this heuristic and had
+    no labels of its own, which is one reason the semantics-dependent anchors
+    contribute so little there.
+    """
+    sc, _ = written_scene
+    building = sc.sem == BUILDING
+    ground = sc.sem == BARE_GROUND
+    if building.sum() < 100 or ground.sum() < 100:
+        pytest.skip("not enough of either class in this crop")
+    # Not an aspiration - a record of what is true today.
+    assert sc.ndsm_m[building].mean() < sc.ndsm_m[ground].mean() + 2.0,         "the heuristic now separates buildings by height - update README 3 and this test"
 
 
 def test_hole_filling_removes_non_finite_pixels():
@@ -161,11 +226,12 @@ def test_hole_filling_removes_non_finite_pixels():
 
 
 # -------------------------------------------------------------------- pipeline
+@pytest.mark.slow
 def test_full_run_produces_artifacts_and_metrics(written_scene):
     from ayama.api.pipeline import run
 
     sc, paths = written_scene
-    cfg = Config(backbone="synthetic", chip=256, overlap=0.25,
+    cfg = Config(backbone=BACKBONE, chip=256, overlap=0.25,
                  dem_source=f"sim:{paths['dtm']}", reference=paths["dsm"],
                  n_bootstrap=4, lattice_stride=32)
     res = run(paths["rgb"], cfg, out_dir=paths["out"])
@@ -182,33 +248,36 @@ def test_full_run_produces_artifacts_and_metrics(written_scene):
 
     with rasterio.open(res.artifacts["dsm"]) as ds:
         assert ds.crs is not None
-        assert ds.tags().get("AYAMA_BACKBONE") == "synthetic"
+        assert ds.tags().get("AYAMA_BACKBONE") == BACKBONE
 
     for stage in ("ingest", "depth", "anchors", "calibration", "assemble"):
         assert stage in res.timings_s
 
 
+@pytest.mark.slow
 def test_run_without_a_dem_drops_to_tier_c(written_scene):
     from ayama.api.pipeline import run
 
     sc, paths = written_scene
-    cfg = Config(backbone="synthetic", chip=256, n_bootstrap=0)
+    cfg = Config(backbone=BACKBONE, chip=256, n_bootstrap=0)
     res = run(paths["rgb"], cfg, out_dir=None, write_artifacts=False)
     assert res.tier is Tier.C
     assert "DEM" in res.tier_reason or "CRS" in res.tier_reason
     assert res.surface is not None
 
 
+@pytest.mark.slow
 def test_missing_dem_file_fails_loudly(written_scene):
     """A run must never silently proceed with a DEM it could not load."""
     from ayama.api.pipeline import run
 
     sc, paths = written_scene
-    cfg = Config(backbone="synthetic", chip=256, dem_source="copernicus", n_bootstrap=0)
+    cfg = Config(backbone=BACKBONE, chip=256, dem_source="copernicus", n_bootstrap=0)
     with pytest.raises(FileNotFoundError):
         run(paths["rgb"], cfg, out_dir=None, write_artifacts=False)
 
 
+@pytest.mark.slow
 def test_ablation_variants_share_one_inference(written_scene):
     from ayama.api.pipeline import load_dem
     from ayama.core.ingest import ingest
@@ -219,7 +288,7 @@ def test_ablation_variants_share_one_inference(written_scene):
 
     sc, paths = written_scene
     scene = ingest(paths["rgb"])
-    depth = predict_depth(scene, "synthetic", chip=256, overlap=0.25)
+    depth = predict_depth(scene, BACKBONE, chip=256, overlap=0.25)
     sem, _ = segment(scene)
     shadow = detect_shadow(scene, sem)
     dem_m, _ = load_dem(f"sim:{paths['dtm']}", scene)
@@ -263,12 +332,13 @@ def test_reference_is_reprojected_not_squashed(written_scene, tmp_path):
     assert np.nanmax(np.abs(ref[ok] - sc.dsm_m[ok])) < 1.0, "reference was resized, not cropped"
 
 
+@pytest.mark.slow
 def test_delta1_is_reported_against_reference_heights(written_scene):
     """delta1 needs heights above ground on both sides, or it is meaningless."""
     from ayama.api.pipeline import run
 
     sc, paths = written_scene
-    cfg = Config(backbone="synthetic", chip=256, dem_source=f"sim:{paths['dtm']}",
+    cfg = Config(backbone=BACKBONE, chip=256, dem_source=f"sim:{paths['dtm']}",
                  reference=paths["dsm"], n_bootstrap=0)
     res = run(paths["rgb"], cfg, out_dir=None, write_artifacts=False)
     assert np.isfinite(res.metrics["delta1"]), "delta1 was not computed"
@@ -276,49 +346,17 @@ def test_delta1_is_reported_against_reference_heights(written_scene):
     assert res.metrics["delta1_n_px"] > 0
 
 
-# ------------------------------------------------------- device preflight
-def test_device_availability_returns_a_verdict_never_raises():
-    """`preflight` must answer "is my GPU set up", not traceback into torch."""
-    from ayama.cli import _device_available
-
-    for dev in ("cpu", "cuda", "mps", "auto"):
-        ok, why = _device_available(dev)
-        assert isinstance(ok, bool)
-        assert ok or why, f"{dev} unavailable without saying why"
-    assert _device_available("cpu")[0] is True
-
-
-def test_preflight_refuses_an_unavailable_device_cleanly():
-    """Asking for CUDA on a CPU-only build is a verdict with an exit code.
-
-    It previously raised `AssertionError: Torch not compiled with CUDA enabled`
-    from forty frames inside torch, which is the least useful possible answer to
-    the one question the command exists to answer.
-    """
-    import torch
-
-    if torch.cuda.is_available():
-        pytest.skip("this box has CUDA; the refusal path cannot be exercised")
-
-    from ayama.cli import build_parser, main
-
-    args = build_parser().parse_args(
-        ["preflight", "--device", "cuda", "--backbone", "dav2-vits"])
-    assert args.func.__name__ == "cmd_preflight"
-    assert main(["preflight", "--device", "cuda", "--backbone", "dav2-vits"]) == 1
-
-
 @pytest.mark.slow
 def test_preflight_passes_end_to_end_on_this_machine():
-    """The whole pipeline, on whatever device this is, with a verdict.
+    """The whole pipeline, with a verdict.
 
-    Deliberately runs the real command rather than the pieces: the point is that
-    one invocation proves synth -> depth -> anchors -> AGMC -> uncertainty ->
-    artifacts -> tileset, which is what someone with a fresh GPU box needs.
+    Deliberately runs the real command rather than the pieces: one invocation
+    proves sample -> depth -> anchors -> AGMC -> uncertainty -> artifacts ->
+    tileset, which is what someone with a fresh checkout needs to know.
     """
     from ayama.cli import main
 
-    assert main(["preflight", "--device", "cpu", "--backbone", "synthetic",
+    assert main(["preflight", "--backbone", BACKBONE,
                  "--size", "256", "--chip", "256", "--bootstrap", "3"]) == 0
 
 

@@ -229,7 +229,7 @@ def _bootstrap_inputs(size=96, seed=3):
     rng = np.random.default_rng(seed)
     rel = rng.random((size, size)).astype(np.float32)
     meta = SceneMeta(crs="EPSG:32644", transform=(0.5, 0, 0, 0, -0.5, 0), gsd_m=0.5)
-    depth = DepthField(relative=rel, meta=meta, backbone="synthetic")
+    depth = DepthField(relative=rel, meta=meta, backbone="test-fixture")
     anchors = [
         Anchor(int(r), int(c), float(400.0 + 8.0 * rel[r, c]), "terrain", "dem", 0.6)
         for r in range(0, size, 6) for c in range(0, size, 6)
@@ -326,7 +326,7 @@ def test_dual_branch_releases_the_scale_field_from_its_floor():
     terrain = 400.0 + 20.0 * ramp                    # rises where D falls
 
     meta = SceneMeta(crs="EPSG:32644", transform=(0.5, 0, 0, 0, -0.5, 0), gsd_m=0.5)
-    depth = DepthField(relative=D, meta=meta, backbone="synthetic")
+    depth = DepthField(relative=D, meta=meta, backbone="test-fixture")
 
     anchors = [Anchor(int(r), int(c), float(terrain[r, c]), "terrain", "dem", 0.6)
                for r in range(0, size, 6) for c in range(0, size, 6)
@@ -359,7 +359,7 @@ def test_dual_branch_calibration_is_applied_to_the_band_it_was_fitted_to():
     yy, xx = np.mgrid[0:size, 0:size]
     D = (xx / size).astype(np.float32)
     meta = SceneMeta(crs="EPSG:32644", transform=(0.5, 0, 0, 0, -0.5, 0), gsd_m=0.5)
-    depth = DepthField(relative=D, meta=meta, backbone="synthetic")
+    depth = DepthField(relative=D, meta=meta, backbone="test-fixture")
     anchors = [Anchor(int(r), int(c), 400.0, "terrain", "dem", 0.6)
                for r in range(0, size, 8) for c in range(0, size, 8)]
     anchors += [Anchor(32, 32, 5.0, "object", "shadow", 0.8, ref_row=10, ref_col=32)]
@@ -386,7 +386,7 @@ def test_single_branch_remains_the_default():
 
     meta = SceneMeta(gsd_m=0.5)
     depth = DepthField(relative=np.linspace(0, 1, 64 * 64).reshape(64, 64).astype(np.float32),
-                       meta=meta, backbone="synthetic")
+                       meta=meta, backbone="test-fixture")
     anchors = [Anchor(int(r), int(c), 400.0, "terrain", "dem", 0.6)
                for r in range(0, 64, 8) for c in range(0, 64, 8)]
     cal = solve_agmc(depth, anchors, Config(), tier=Tier.A)

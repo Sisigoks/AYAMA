@@ -1,0 +1,11 @@
+{
+  "image": "D:\\UNNAT\\data\\real\\lausanne\\lausanne.tif",
+  "backbone": "dav2-vitl",
+  "segmentation": "heuristic",
+  "dem": "raster:lausanne_dem.tif",
+  "tier": "A",
+  "chip": 512,
+  "overlap": 0.25,
+  "n_bootstrap": 12,
+  "lattice_stride": 32
+}

@@ -1,0 +1,27 @@
+{
+  "ayama_scale_model_version": 1,
+  "kind": "constant",
+  "value": 103.9218236468094,
+  "feature": null,
+  "coef": 0.0,
+  "intercept": 0.0,
+  "radius_m": 60.0,
+  "n_scenes": 4,
+  "loo_mae_m": 4.827496647834778,
+  "loo_mae_alt_m": 4.921034574508667,
+  "floor_mae_m": 7.591875076293945,
+  "scenes": [
+    "bern",
+    "geneva",
+    "lausanne",
+    "zurich"
+  ],
+  "targets": [
+    101.903,
+    129.891,
+    95.243,
+    88.65
+  ],
+  "fitted_utc": "2026-08-29T14:16:54+00:00",
+  "notes": "Selected by leave-one-out. A constant won; a one-feature model fitted on the remaining scenes did not beat it. Add scenes and refit - this choice is made by the data, not in code."
+}

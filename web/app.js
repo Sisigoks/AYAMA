@@ -401,27 +401,63 @@ var VERT = [
   'uniform mat4 uMVP;',
   'uniform float uExagg;',
   'uniform float uZBase;',
+  'uniform vec3 uEye;',
   'varying vec2 vUV;',
+  'varying float vDist;',
+  'varying float vHeight;',
   'void main() {',
   '  vUV = aUV;',
-  '  gl_Position = uMVP * vec4(aPos.x, aPos.y, (aH - uZBase) * uExagg, 1.0);',
+  '  float z = (aH - uZBase) * uExagg;',
+  '  vec3 world = vec3(aPos.x, aPos.y, z);',
+  '  vDist = length(world - uEye);',
+  '  vHeight = aH - uZBase;',
+  '  gl_Position = uMVP * vec4(world, 1.0);',
   '}'
 ].join('\n');
 
 var FRAG = [
   'precision highp float;',
   'varying vec2 vUV;',
+  'varying float vDist;',
+  'varying float vHeight;',
   'uniform sampler2D uTex;',
   'uniform sampler2D uNrm;',
   'uniform vec3 uLight;',
   'uniform float uShade;',
   'uniform float uWire;',
+  'uniform float uFog;',
+  'uniform float uTexel;',
+  'uniform float uRelief;',
   'void main() {',
   '  vec3 base = texture2D(uTex, vUV).rgb;',
   '  vec3 n = normalize(texture2D(uNrm, vUV).rgb * 2.0 - 1.0);',
+  '',
+  '  // direct sun',
   '  float lam = max(dot(n, normalize(uLight)), 0.0);',
-  '  float shade = mix(1.0, 0.30 + 0.85 * lam, uShade);',
-  '  vec3 c = base * shade;',
+  '',
+  '  // sky above, warm bounce from the ground below: separates up-facing from',
+  '  // down-facing surfaces even where no sun reaches, which flat ambient cannot.',
+  '  float up = n.z * 0.5 + 0.5;',
+  '  vec3 hemi = mix(vec3(0.26, 0.29, 0.35), vec3(0.92, 0.94, 1.00), up);',
+  '',
+  '  // curvature from the normal map: darkens creases between solids. Four taps.',
+  '  vec3 nx0 = texture2D(uNrm, vUV - vec2(uTexel, 0.0)).rgb * 2.0 - 1.0;',
+  '  vec3 nx1 = texture2D(uNrm, vUV + vec2(uTexel, 0.0)).rgb * 2.0 - 1.0;',
+  '  vec3 ny0 = texture2D(uNrm, vUV - vec2(0.0, uTexel)).rgb * 2.0 - 1.0;',
+  '  vec3 ny1 = texture2D(uNrm, vUV + vec2(0.0, uTexel)).rgb * 2.0 - 1.0;',
+  '  float curv = (dot(normalize(nx0 + nx1 + ny0 + ny1), n) - 1.0);',
+  '  float ao = clamp(1.0 + curv * 2.4, 0.35, 1.0);',
+  '',
+  '  vec3 lit = base * (hemi * ao + vec3(0.85) * lam);',
+  '  vec3 c = mix(base, lit, uShade);',
+  '',
+  '  // a faint cool tint on tall structure, so relief survives a grey texture',
+  '  c = mix(c, c * vec3(1.04, 1.02, 0.96), clamp(vHeight / max(uRelief, 1.0), 0.0, 1.0) * 0.5);',
+  '',
+  '  // aerial perspective: the strongest distance cue the eye has outdoors',
+  '  float f = 1.0 - exp(-vDist * uFog);',
+  '  c = mix(c, vec3(0.62, 0.70, 0.82), clamp(f, 0.0, 0.85));',
+  '',
   '  gl_FragColor = vec4(mix(c, vec3(0.55, 0.75, 1.0), uWire), 1.0);',
   '}'
 ].join('\n');
@@ -507,7 +543,8 @@ function wireIndices(w, h, uint) {
 
 var state = {
   manifest: null, gl: null, prog: null, tiles: [], lodIndex: 0,
-  layer: 'texture', exagg: 1, shade: true, wire: false,
+  layer: 'texture', exagg: 1, shade: true, wire: false, fog: true,
+  fly: null,
   cam: { az: -0.6, el: 0.85, dist: 900, target: [0, 0, 0] },
   zBase: 0, centre: [0, 0], uintIndex: false, needsDraw: true, fps: 0
 };
@@ -582,10 +619,21 @@ function draw() {
 
   var mvp = viewProj(canvas.width / Math.max(1, canvas.height));
   var P = state.prog;
+  var span = state.manifest ? Math.max.apply(null, state.manifest.grid.extent_m) : 1000;
+  var relief = 30;
+  if (state.manifest && state.manifest.layers && state.manifest.layers.ndsm) {
+    var st = state.manifest.layers.ndsm.stats || {};
+    if (isFinite(st.max) && st.max > 0) relief = st.max;
+  }
   gl.uniformMatrix4fv(gl.getUniformLocation(P, 'uMVP'), false, mvp);
+  gl.uniform3fv(gl.getUniformLocation(P, 'uEye'), cameraEye());
   gl.uniform1f(gl.getUniformLocation(P, 'uExagg'), state.exagg);
   gl.uniform1f(gl.getUniformLocation(P, 'uZBase'), state.zBase);
   gl.uniform1f(gl.getUniformLocation(P, 'uShade'), state.shade ? 1 : 0);
+  // Tuned to the scene so haze reads the same on a 500 m tile and a 5 km one.
+  gl.uniform1f(gl.getUniformLocation(P, 'uFog'), state.fog ? 1.0 / (span * 2.2) : 0.0);
+  gl.uniform1f(gl.getUniformLocation(P, 'uTexel'), 1.0 / 512.0);
+  gl.uniform1f(gl.getUniformLocation(P, 'uRelief'), relief * state.exagg);
   gl.uniform3fv(gl.getUniformLocation(P, 'uLight'), state.light || [0.4, 0.5, 0.75]);
 
   var aPos = gl.getAttribLocation(P, 'aPos');
@@ -625,8 +673,123 @@ function draw() {
   if (hud) hud.textContent = Math.round(tris).toLocaleString() + ' tris';
 }
 
+
+// ── flythrough ──────────────────────────────────────────────────────────────
+// An orbit control answers "what is the shape of this surface". It does not
+// answer "how tall is that, standing next to it", which is the question a
+// reconstruction exists to answer. So the tour descends from a survey view to
+// eye level, crosses the scene low and oblique where parallax between near and
+// far structure is strongest, and rises again.
+//
+// The camera height is clamped against the height field on every frame rather
+// than baked into the keyframes, so the path cannot pass through a building on
+// a scene it was not designed for - including scenes with far more relief than
+// this one, which is the direction the calibration is meant to move.
+
+function easeInOut(t) {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+/** Surface elevation under (x, y), or null outside the grid.
+ *  Delegates to the same sampler the cursor readout uses, so the tour and the
+ *  numbers on screen can never disagree about where the ground is. */
+function surfaceAt(x, y) {
+  if (!state.manifest || !state.tiles.length) return null;
+  var hit = sample(x, y);
+  return hit && isFinite(hit.elevation) ? hit.elevation : null;
+}
+
+function buildTour() {
+  var m = state.manifest;
+  if (!m) return null;
+  var ex = m.grid.extent_m;
+  var span = Math.max(ex[0], ex[1]);
+  var r = span * 0.30;
+  return {
+    t0: performance.now(),
+    duration: 34000,
+    keys: [
+      // survey: the whole extent, high and steep
+      { az: -0.60, el: 0.95, dist: span * 1.25, tx: 0, ty: 0 },
+      // descend and tilt toward the horizon
+      { az: -0.20, el: 0.42, dist: span * 0.62, tx: -r * 0.5, ty: r * 0.4 },
+      // low oblique pass: this is where relief reads
+      { az: 0.55, el: 0.17, dist: span * 0.30, tx: r * 0.5, ty: r * 0.2 },
+      // across the other diagonal, still low
+      { az: 1.70, el: 0.15, dist: span * 0.26, tx: r * 0.2, ty: -r * 0.6 },
+      { az: 2.90, el: 0.28, dist: span * 0.42, tx: -r * 0.4, ty: -r * 0.3 },
+      // pull back out to where it started, so it loops cleanly
+      { az: 3.90, el: 0.70, dist: span * 0.95, tx: 0, ty: 0 },
+      { az: -0.60 + Math.PI * 2, el: 0.95, dist: span * 1.25, tx: 0, ty: 0 }
+    ]
+  };
+}
+
+function tourStep(now) {
+  var f = state.fly;
+  if (!f) return false;
+  var u = (now - f.t0) / f.duration;
+  if (u >= 1) { stopTour('finished'); return false; }
+
+  var keys = f.keys;
+  var seg = u * (keys.length - 1);
+  var i = Math.min(keys.length - 2, Math.floor(seg));
+  var lt = easeInOut(seg - i);
+  var a = keys[i], b = keys[i + 1];
+  var mix = function (p, q) { return p + (q - p) * lt; };
+
+  state.cam.az = mix(a.az, b.az);
+  state.cam.el = mix(a.el, b.el);
+  state.cam.dist = mix(a.dist, b.dist);
+  state.cam.target[0] = mix(a.tx, b.tx);
+  state.cam.target[1] = mix(a.ty, b.ty);
+
+  // Keep the target on the surface, and the eye above it. Without this the
+  // low passes clip through roofs the moment a scene has real height.
+  var gh = surfaceAt(state.cam.target[0], state.cam.target[1]);
+  if (gh !== null) state.cam.target[2] = (gh - state.zBase) * state.exagg;
+
+  var eye = cameraEye();
+  var eh = surfaceAt(eye[0], eye[1]);
+  if (eh !== null) {
+    var floor = (eh - state.zBase) * state.exagg + 25;
+    if (eye[2] < floor) {
+      // raise the elevation angle just enough to clear the surface
+      var need = (floor - state.cam.target[2]) / Math.max(state.cam.dist, 1);
+      state.cam.el = Math.max(state.cam.el, Math.min(1.5, Math.asin(Math.min(1, need))));
+    }
+  }
+  state.needsDraw = true;
+  return true;
+}
+
+function startTour() {
+  state.fly = buildTour();
+  var btn = document.getElementById('fly');
+  if (btn) { btn.textContent = 'Stop'; btn.classList.add('on'); }
+  var note = document.getElementById('fly-note');
+  if (note) note.textContent = 'Flying. Any mouse or key input stops it.';
+}
+
+function stopTour(why) {
+  state.fly = null;
+  var btn = document.getElementById('fly');
+  if (btn) { btn.textContent = 'Fly through'; btn.classList.remove('on'); }
+  var note = document.getElementById('fly-note');
+  if (note) {
+    note.textContent = why === 'finished'
+      ? 'Tour finished. Drag to look around, or fly it again.'
+      : 'Tour stopped.';
+  }
+}
+
+function toggleTour() {
+  if (state.fly) stopTour('user'); else startTour();
+}
+
 function loop() {
   resize();
+  if (state.fly) tourStep(performance.now());
   if (state.needsDraw) { draw(); state.needsDraw = false; }
   requestAnimationFrame(loop);
 }
@@ -833,6 +996,7 @@ function bindControls() {
   var drag = null;
 
   canvas.addEventListener('pointerdown', function (e) {
+    if (state.fly) stopTour('user');
     drag = { x: e.clientX, y: e.clientY, pan: e.shiftKey || e.button === 2 };
     canvas.setPointerCapture(e.pointerId);
   });
@@ -861,11 +1025,28 @@ function bindControls() {
   canvas.addEventListener('pointerleave', function () { showReadout(null); });
   canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
   canvas.addEventListener('wheel', function (e) {
+    if (state.fly) stopTour('user');
     e.preventDefault();
     state.cam.dist = Math.max(20, Math.min(60000,
       state.cam.dist * Math.pow(1.0015, e.deltaY)));
     state.needsDraw = true;
   }, { passive: false });
+
+  var flyBtn = document.getElementById('fly');
+  if (flyBtn) flyBtn.addEventListener('click', toggleTour);
+
+  window.addEventListener('keydown', function (e) {
+    var tag = (e.target && e.target.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    if (e.key === 'f' || e.key === 'F') { toggleTour(); e.preventDefault(); }
+    else if (e.key === 'Escape' && state.fly) { stopTour('user'); }
+  });
+
+  var fogBox = document.getElementById('fog');
+  if (fogBox) fogBox.addEventListener('change', function () {
+    state.fog = fogBox.checked;
+    state.needsDraw = true;
+  });
 
   var ex = document.getElementById('exagg'), exv = document.getElementById('exagg-val');
   function setExagg(v) {

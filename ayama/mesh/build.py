@@ -160,7 +160,8 @@ def _finite_stats(a: Optional[np.ndarray]) -> dict:
     v = f[m]
     return {
         "min": float(v.min()), "max": float(v.max()), "mean": float(v.mean()),
-        "p1": float(np.percentile(v, 1)), "p99": float(np.percentile(v, 99)),
+        "p1": float(np.percentile(v, 1)), "p95": float(np.percentile(v, 95)),
+        "p99": float(np.percentile(v, 99)),
     }
 
 
@@ -174,30 +175,67 @@ def derive_notes(run: dict, layer_ranges: dict) -> list:
     """
     notes = []
     ndsm = run.get("ndsm")
-    sem = run.get("sem")
+    # Deliberately not `run["sem"]`: the relief check used to read it and that
+    # is exactly what made it wrong, twice. See the comment below.
     if ndsm is not None:
         st = _finite_stats(ndsm)
         p99 = st.get("p99", 0.0)
         top = st.get("max", 0.0)
-        has_buildings = bool(sem is not None and (sem == 2).sum() > 100)
-        if has_buildings and p99 < 1.0:
+        # Two rewrites taught this check what it is actually looking for.
+        #
+        # First it keyed on an absolute p99 threshold, and missed a real
+        # collapse: a surface can carry a couple of metres of noise-relief while
+        # recovering almost none of the true structure. So it was changed to
+        # compare buildings against their surroundings - which promptly produced
+        # a FALSE alarm on a surface with 53 m of genuine relief, because the
+        # class it was comparing came from the colour heuristic, and README
+        # section 3.4 shows that heuristic does not find buildings on real
+        # imagery.
+        #
+        # The lesson is that this check must not depend on segmentation at all.
+        # It cannot use ground truth either - it runs at delivery time. What is
+        # left, and what is sufficient, is the height distribution of the
+        # surface being shipped: on any populated scene at this resolution,
+        # something has to stand up.
+        p95 = st.get("p95", p99)
+        if p99 < 2.0:
             notes.append({
                 "level": "critical",
                 "id": "flat_surface",
                 "text": (
-                    f"Predicted height above ground reaches only {top:.2f} m "
-                    f"(99th percentile {p99:.2f} m) on a scene where "
-                    f"{100.0 * float((sem == 2).mean()):.1f}% of pixels are classified as "
-                    "building. The calibration scale field has collapsed to its floor, so "
-                    "this surface is terrain with the structures flattened. See README "
-                    "section 5. Raise the vertical exaggeration to see what little relief "
-                    "there is - it is a defect, not a rendering choice."
+                    f"Height above ground reaches only {top:.2f} m, and 99% of the "
+                    f"surface is under {p99:.2f} m. Nothing stands up: this is "
+                    "terrain with the structures flattened rather than a "
+                    "reconstruction. The usual cause is a calibration that fitted "
+                    "one scale to terrain and had no structural scale to apply - "
+                    "see README section 4, and `ayama fit` for the fix. Raising "
+                    "the vertical exaggeration will show what little relief there "
+                    "is; it is a defect, not a rendering choice."
                 ),
             })
-        elif has_buildings and p99 < 3.0:
+        elif p99 < 8.0:
+            # Deliberately a warning and not a verdict. A genuinely low-rise
+            # scene - farmland, hedgerows - looks exactly like this, and the
+            # tiler cannot tell the two apart without truth it does not have. So
+            # it states what it measured and names the check the reader can make.
             notes.append({
                 "level": "warning", "id": "low_relief",
-                "text": f"Height above ground reaches {top:.2f} m; structures look under-built.",
+                "text": (f"Height above ground reaches {top:.2f} m but 99% of the "
+                         f"surface is under {p99:.2f} m. If this is a built-up "
+                         "scene that is too little relief, and the usual cause is "
+                         "a calibration with no structural scale to apply - see "
+                         "README section 4 and `ayama fit`. On low-rise ground it "
+                         "may be correct."),
+            })
+        elif p95 > 0 and top / max(p95, 1e-6) > 8.0:
+            # The opposite failure: a few wild spikes over an otherwise sane
+            # surface, which is what an over-large structural scale looks like.
+            notes.append({
+                "level": "warning", "id": "spiky_relief",
+                "text": (f"Height above ground peaks at {top:.2f} m against a 95th "
+                         f"percentile of {p95:.2f} m. Isolated spikes that tall are "
+                         "usually the structural scale overshooting on a few "
+                         "high-frequency artifacts rather than real structure."),
             })
 
     sigma = run.get("sigma")
@@ -229,33 +267,25 @@ def derive_notes(run: dict, layer_ranges: dict) -> list:
 def _phase2_summary(run_dir: str) -> dict:
     """The Phase 2 numbers for this run: metrics, tier, anchor counts.
 
-    `ayama run` writes `summary.json` beside the rasters, but `ayama study`
-    keeps every scene's metrics together in one `study.json` instead. Rather
-    than make the viewer show nothing for the runs the study produced - which
-    are the ones the README actually reports - the study file is consulted and
-    the matching scene picked out by seed. Nothing is recomputed either way.
+    `ayama run` writes `summary.json` beside the rasters. `ayama dataset` keeps
+    every scene's metrics together in one `dataset.json` a level up, because the
+    aggregate across scenes is the thing worth reading. Rather than make the
+    viewer show nothing for the runs the study produced - which are the ones the
+    README actually reports - the dataset file is consulted and the matching
+    scene picked out by directory name. Nothing is recomputed either way.
     """
     direct = _read_json(os.path.join(run_dir, "summary.json"))
     if direct.get("metrics"):
         return direct
 
-    seed_dir = os.path.dirname(os.path.abspath(run_dir))
-    import re
-
-    m = re.fullmatch(r"seed(\d+)", os.path.basename(seed_dir))
-    if not m:
-        return direct
-    study = _read_json(os.path.join(os.path.dirname(seed_dir), "study.json"))
-    seeds = ((study.get("config") or {}).get("seeds")) or []
-    scenes = study.get("scenes") or []
-    try:
-        i = list(seeds).index(int(m.group(1)))
-    except ValueError:
-        return direct
-    if 0 <= i < len(scenes):
-        out = dict(scenes[i])
-        out["source"] = "study.json"
-        return out
+    run_dir = os.path.abspath(run_dir)
+    name = os.path.basename(run_dir)
+    dataset = _read_json(os.path.join(os.path.dirname(run_dir), "dataset.json"))
+    for scene in dataset.get("scenes") or []:
+        if scene.get("name") == name:
+            out = dict(scene)
+            out["source"] = "dataset.json"
+            return out
     return direct
 
 

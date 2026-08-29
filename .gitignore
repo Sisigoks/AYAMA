@@ -23,18 +23,34 @@ web/dist/
 .idea/
 .DS_Store
 
-# Study outputs: keep the JSON, the report and the web previews (they are the
-# evidence the site renders); drop the rasters, which are large and regenerate
-# byte-identically from the recorded seed.
+# Study outputs. Keep dataset.json and the per-scene quick-look PNGs - those
+# are the evidence, and results.html renders them straight out of the repo.
+# Drop the GeoTIFFs: they are ~12 MB per scene and rebuild from the recorded
+# inputs.
 results/**/*.tif
 results/**/*.tiff
-# Full-resolution quick-looks from the run stage: the site reads results/*/preview/
-# instead, and the Pages workflow never publishes these.
-results/**/run/*.png
-results/**/run/*.jpg
 
-# The delivery benchmark's reference tileset: 42 MB of PNG/JPG/OBJ that
-# rebuilds from results/seed7/run in about 5 s. delivery.json and DELIVERY.md
-# are the evidence and are committed; the tiles are not.
-results/tileset/
+# Phase 3 output. The identical tileset is committed once at web/data/, which
+# is what the published viewer loads; a second copy under results/ would add
+# 38 MB for nothing. Rebuild with `ayama mesh` in about 45 s.
+results/*/phase3_tiles/
+
+# Phase 4's reference tileset: ~43 MB of PNG/JPG/OBJ that rebuilds in seconds.
+# delivery.json and DELIVERY.md are the evidence and are committed; the tiles
+# are not.
+results/*/phase4_delivery/tileset/
 results/_delivery_work/
+
+# Quick-look rasters are committed for the primary arm only - the one with the
+# fitted structural scale, which is what results.html shows for every arm. The
+# others are near-identical to the eye (the finding is in the metrics, not the
+# pictures) and five copies would put 40 MB in the repository for nothing. The
+# dataset.json of EVERY arm is committed: that is where the findings live.
+results/cpu/real_vitl_h1/**/*.png
+results/cpu/real_vitl_h1/**/*.jpg
+results/cpu/real_vitl_h2/**/*.png
+results/cpu/real_vitl_h2/**/*.jpg
+results/cpu/real_vits_h1/**/*.png
+results/cpu/real_vits_h1/**/*.jpg
+results/cpu/real_vits_h2/**/*.png
+results/cpu/real_vits_h2/**/*.jpg

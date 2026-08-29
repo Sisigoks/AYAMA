@@ -173,6 +173,7 @@ def solve_agmc(
     tier: Tier = Tier.C,
     enforce_positive: Optional[bool] = None,
     dual_branch: Optional[bool] = None,
+    scale_prior: Optional[float] = None,
 ) -> CalibrationField:
     """Solve for the calibration fields a(x, y), b(x, y).
 
@@ -189,6 +190,16 @@ def solve_agmc(
     the scale field came out negative at every node and buildings landed 2.6 m
     *below* the ground they stand on, while the headline MAE still improved.
     A metric that cannot see an inverted city is not measuring what it claims.
+
+    `scale_prior` supplies the structural scale from outside the anchor graph.
+    It exists because on real imagery the graph cannot observe that scale at
+    all: with no published acquisition time there are no shadow anchors, so the
+    object branch of the dual-branch solve receives zero constraints and is
+    determined entirely by its prior. Passing a scale fitted offline against
+    lidar (`ayama fit`) is what turns that branch from starved into supplied.
+    When it is given and no object anchor exists, `a` is held at it rather than
+    solved - there is nothing in the data to move it, and pretending otherwise
+    would let the smoothness term wander it away from a number that was measured.
     """
     cfg = cfg or Config()
     if enforce_positive is None:
@@ -226,11 +237,18 @@ def solve_agmc(
         # object anchors against the high-pass band, and falls back to a neutral
         # 1.0 when there are too few of them to say anything.
         obj = [k for k in anchors if k.branch == "object"]
-        a_glob, _ = global_affine_relative(D, obj, cfg.huber_delta)
+        if scale_prior is not None and np.isfinite(scale_prior):
+            a_glob = float(scale_prior)
+        else:
+            a_glob, _ = global_affine_relative(D, obj, cfg.huber_delta)
         b_glob = float(np.median([k.value_m for k in anchors
                                   if k.branch != "object"] or [0.0]))
+        # No object anchor can speak about `a`, so leave it where it was put.
+        freeze_scale = bool(scale_prior is not None and np.isfinite(scale_prior)
+                            and not obj)
     else:
         a_glob, b_glob = global_affine(D, anchors, cfg.huber_delta)
+        freeze_scale = False
 
     rows = np.array([k.row for k in anchors])
     cols = np.array([k.col for k in anchors])
@@ -303,7 +321,13 @@ def solve_agmc(
         if not np.all(np.isfinite(x)):
             x = np.concatenate([np.full(n, a_glob), np.full(n, b_glob)])
             break
-        if enforce_positive:
+        if freeze_scale:
+            # The scale came from outside and no anchor can argue with it. Hold
+            # it and let the offset field absorb the residual, which is the
+            # honest division of labour: the anchors know where the ground is,
+            # the fitted scale knows how tall a unit of depth is.
+            x[:n] = a_glob
+        elif enforce_positive:
             x = _project_positive_scale(x, n, A, w, rhs, R, min_scale)
         resid = A @ x - rhs
         w = w0 * huber_weight(resid, cfg.huber_delta)
@@ -319,6 +343,8 @@ def solve_agmc(
     # calibration to the raw depth would silently undo the decomposition.
     field.dual_branch = bool(dual_branch)
     field.depth_high = D if dual_branch else None
+    field.scale_source = ("fitted" if freeze_scale else
+                          ("prior" if scale_prior is not None else "anchors"))
     return field
 
 

@@ -3,7 +3,7 @@
 //   npm install jsdom      (once, anywhere on the path)
 //   node scripts/check_site.js
 //
-// Loads web/results.html, runs web/results.js against the real results/study.json
+// Loads web/results.html, runs web/results.js against the real dataset.json files
 // and asserts every panel actually rendered. This exists because a results file
 // containing a bare NaN token - which Python writes by default - parses fine in
 // Python and makes JSON.parse throw, deploying a completely blank page. Nothing
@@ -14,7 +14,9 @@ const ROOT = path.resolve(__dirname, '..');
 
 const html = fs.readFileSync(path.join(ROOT, 'web/results.html'), 'utf8');
 const app  = fs.readFileSync(path.join(ROOT, 'web/results.js'), 'utf8');
-const study = fs.readFileSync(path.join(ROOT, 'results/study.json'), 'utf8');
+const ARMS = ['real_vitl_h1', 'real_vitl_h2', 'real_vits_h1', 'real_vits_h2'];
+const studies = Object.fromEntries(ARMS.map(a =>
+  [a, fs.readFileSync(path.join(ROOT, `results/cpu/${a}/dataset.json`), 'utf8')]));
 
 const errors = [];
 const vc = new VirtualConsole();
@@ -26,10 +28,13 @@ const dom = new JSDOM(html, {
   url: 'https://someuser.github.io/ayama/',
 });
 const w = dom.window;
-w.fetch = (url) => Promise.resolve({
-  ok: url.includes('study.json'), status: url.includes('study.json') ? 200 : 404,
-  json: () => Promise.resolve(JSON.parse(study)),
-});
+w.fetch = (url) => {
+  const arm = ARMS.find(a => url.includes(`/${a}/`));
+  return Promise.resolve({
+    ok: Boolean(arm), status: arm ? 200 : 404,
+    json: () => Promise.resolve(JSON.parse(studies[arm])),
+  });
+};
 w.navigator.clipboard = { writeText: () => Promise.resolve() };
 w.Element.prototype.setPointerCapture = function () {};
 w.Element.prototype.getBoundingClientRect = function () {
@@ -46,14 +51,12 @@ setTimeout(() => {
     ['headline rows',  () => w.document.querySelectorAll('#headline-table tbody tr').length, n => n >= 8],
     ['floor verdict',   () => w.document.querySelectorAll('#floor-verdict .verdict').length, n => n === 1],
     ['class bars',     () => w.document.querySelectorAll('#class-chart .bar-row').length, n => n === 5],
-    ['coverage gauge', () => w.document.querySelectorAll('#coverage-chart svg').length, n => n === 1],
-    ['ablation rows',  () => w.document.querySelectorAll('#ablation-chart tbody tr').length, n => n >= 6],
-    ['sun chart path', () => w.document.querySelectorAll('#sun-chart svg path.ln').length, n => n === 1],
-    ['lambda dots',    () => w.document.querySelectorAll('#lambda-chart circle.dot').length, n => n >= 8],
-    ['bench rows',     () => w.document.querySelectorAll('#bench-table tbody tr').length, n => n === 2],
-    ['scene options',  () => w.document.querySelectorAll('#scene-select option').length, n => n === 3],
-    ['scene facts',    () => w.document.querySelectorAll('#scene-facts .fact').length, n => n >= 10],
-    ['layer options',  () => w.document.querySelectorAll('#left-layer option').length, n => n === 7],
+    ['scene rows',     () => w.document.querySelectorAll('#scene-table tbody tr').length, n => n === 4],
+    ['anchor rows',    () => w.document.querySelectorAll('#anchor-table tbody tr').length, n => n === 4],
+    ['arm rows',       () => w.document.querySelectorAll('#arm-table tbody tr').length, n => n === 4],
+    ['scene options',  () => w.document.querySelectorAll('#scene-select option').length, n => n === 4],
+    ['scene facts',    () => w.document.querySelectorAll('#scene-facts .fact').length, n => n >= 7],
+    ['layer options',  () => w.document.querySelectorAll('#left-layer option').length, n => n === 5],
   ];
   let bad = 0;
   for (const [name, get, ok] of checks) {
@@ -69,9 +72,7 @@ setTimeout(() => {
   console.log('   wizard    ', txt('#wiz-tier'));
   console.log('   wiz cmd   ', txt('#wiz-cmd').slice(0, 90));
   console.log('   repo link ', $('#repo-link').href);
-  console.log('   colab     ', $('#colab-btn').href);
   console.log('   footer    ', txt('#footer-meta').slice(0, 90));
-  console.log('   lambda note', txt('#lambda-chart .panel-sub').slice(0, 110));
 
   
 // ── the 3D section and the viewer it embeds ─────────────────────────────────

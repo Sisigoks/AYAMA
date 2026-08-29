@@ -174,7 +174,7 @@ class JobStore:
                     n_bootstrap=int(p.get("bootstrap", 12)),
                     dem_source=p.get("dem_source") or None,
                     reference=p.get("reference") or None,
-                    extras={"device": p.get("device", "auto"),
+                    extras={
                             "batch_size": int(p.get("batch", 0)),
                             "workers": int(p.get("workers", 0))},
                 )

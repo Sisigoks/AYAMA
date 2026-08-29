@@ -1,7 +1,7 @@
 # Publish the results site to GitHub Pages.
 #
 # The site is static and needs no build step: it is a renderer for
-# results/study.json, so republishing after a new study run is just a commit.
+# results/cpu/*/dataset.json, so republishing after a new run is just a commit.
 name: pages
 
 on:
@@ -40,11 +40,12 @@ jobs:
           test -f _site/data/tileset.json
           if [ -d results ]; then
             mkdir -p _site/results
-            # Only what the page reads: the JSON, the report and the web
-            # previews. Matched by extension rather than by directory, because
-            # an rsync pattern containing a slash is anchored at the transfer
-            # root, so 'preview/**' would never match 'seed7/preview/rgb.jpg'
-            # and the explorer would ship with no images at all.
+            # Only what the page reads: each arm's dataset.json and the
+            # per-scene quick-look images. Matched by extension rather than by
+            # directory, because an rsync pattern containing a slash is anchored
+            # at the transfer root, so 'zurich/**' would never match
+            # 'real_vitl_h1/zurich/ndsm.png' and the explorer would ship with no
+            # images at all.
             ( cd results && find . -type f \
                 \( -name '*.json' -o -name '*.md' -o -name '*.png' \
                    -o -name '*.jpg' -o -name '*.pdf' -o -name '*.tex' \) \

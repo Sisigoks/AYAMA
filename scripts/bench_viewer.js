@@ -17,7 +17,7 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
-const tilesetDir = process.argv[2] || path.join(ROOT, 'out/tiles3d_seed7');
+const tilesetDir = process.argv[2] || path.join(ROOT, 'web/data');
 
 // app.js calls `new ImageData(...)` inside colourize. Node has no DOM, so a
 // minimal stand-in keeps the measurement on the LUT loop where it belongs.

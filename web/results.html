@@ -58,54 +58,52 @@
   <div class="wrap">
     <h2>What it measures</h2>
     <p class="section-lede">
-      Every number on this page is produced by <code>python -m ayama.cli study</code> and read
-      live from <code>results/study.json</code>. Nothing is typed in by hand. Re-run the study
-      on your own machine and this page renders your numbers instead.
+      Four real city centres &mdash; Z&uuml;rich, Bern, Geneva, Lausanne &mdash; with airborne
+      lidar for ground truth. Every number on this page is read live from
+      <code>results/cpu/&lt;arm&gt;/dataset.json</code>, produced by
+      <code>python -m ayama.cli dataset data/real --layout generic</code>. Nothing is
+      typed in by hand. Re-run it on your own machine and this page renders your numbers.
     </p>
 
     <div id="floor-verdict"></div>
 
     <div class="panel-grid">
       <article class="panel wide">
-        <h3>Accuracy against ground truth</h3>
-        <p class="panel-sub">Predicted DSM vs the exact surface that generated the image, averaged over independent scenes. Two baselines: a single global <code>a·D + b</code> fit, which is what you get without the anchor graph, and the public DEM on its own — the floor any monocular method has to clear before it is worth running at all.</p>
+        <h3>Accuracy against lidar</h3>
+        <p class="panel-sub">Predicted elevation against the swissSURFACE3D lidar DSM, averaged
+          over four scenes. Two baselines: a single global <code>a&middot;D + b</code> fit, which is
+          what you get without the anchor graph, and the public DEM on its own &mdash; the floor
+          any monocular method has to clear before it is worth running. The last row is the
+          one that matters: height above ground, against the floor of predicting zero.</p>
         <div id="headline-table"></div>
       </article>
 
+      <article class="panel wide">
+        <h3>Scene by scene</h3>
+        <p class="panel-sub">Four independent cities. The gap between the last three columns is
+          the whole finding: the true structure is tens of metres tall and almost none of it
+          comes back.</p>
+        <div id="scene-table"></div>
+      </article>
+
       <article class="panel">
-        <h3>Where it fails</h3>
-        <p class="panel-sub">Mean absolute error by land-cover class. Terrain is close to solved; buildings and canopy carry the error.</p>
+        <h3>Where the error lives</h3>
+        <p class="panel-sub">Mean absolute error by land-cover class.</p>
         <div id="class-chart"></div>
       </article>
 
       <article class="panel">
-        <h3>Is σ honest?</h3>
-        <p class="panel-sub">An uncertainty field is only worth showing if it predicts the error. For a Gaussian, 68% of pixels should fall inside 1σ.</p>
-        <div id="coverage-chart"></div>
+        <h3>What the calibration had to work with</h3>
+        <p class="panel-sub">The anchor ladder, per scene. An anchor is a pixel where an
+          absolute or relative height is known independently of the depth model.</p>
+        <div id="anchor-table"></div>
       </article>
 
       <article class="panel wide">
-        <h3>Ablation — which parts earn their place</h3>
-        <p class="panel-sub">One depth inference per scene; every variant re-solves only the calibration. Each row therefore sees the identical depth field, so the difference between rows is the ablated component and nothing else.</p>
-        <div id="ablation-chart"></div>
-      </article>
-
-      <article class="panel">
-        <h3>The shadow physics window</h3>
-        <p class="panel-sub">Height from shadow length, <code>h = L·tan(elevation)</code>, with no depth model involved. Sun too low and shadows sprawl across terrain; too high and they vanish under the resolution.</p>
-        <div id="sun-chart"></div>
-      </article>
-
-      <article class="panel">
-        <h3>One free parameter</h3>
-        <p class="panel-sub">The calibration's smoothness weight. If accuracy were sharply peaked, this would be a knob you tune per scene rather than a method.</p>
-        <div id="lambda-chart"></div>
-      </article>
-
-      <article class="panel wide">
-        <h3>Throughput</h3>
-        <p class="panel-sub">Measured on the machine named below. Warm-up is timed separately and excluded; an out-of-memory result is recorded rather than hidden.</p>
-        <div id="bench-table"></div>
+        <h3>Two backbones, two calibrations</h3>
+        <p class="panel-sub">The same four scenes through every arm of the study. If the failure
+          were a quirk of one depth model or one estimator, these rows would disagree.</p>
+        <div id="arm-table"></div>
       </article>
     </div>
   </div>
@@ -189,26 +187,6 @@
 </section>
 
 <!-- ─────────────────────────────────────────────── figures -->
-<section id="figures" class="band">
-  <div class="wrap">
-    <h2>Figures for the paper</h2>
-    <p class="section-lede">
-      Rendered from the same <code>study.json</code> this page reads, so a figure cannot
-      drift from the number it illustrates. Each is a 300 dpi PNG for slides and a vector
-      PDF for LaTeX; the tables are <code>booktabs</code>, ready to <code>\input{}</code>.
-      Regenerate without re-running inference: <code>python -m ayama.cli figures</code>.
-    </p>
-    <div class="figure-grid" id="figure-grid"></div>
-    <p class="section-lede" style="margin-top:1.6rem">
-      LaTeX tables:
-      <a href="results/figures/tables/table1_headline.tex">headline</a> ·
-      <a href="results/figures/tables/table2_ablation.tex">ablation</a> ·
-      <a href="results/figures/tables/table3_by_class.tex">error by class</a>
-    </p>
-  </div>
-</section>
-
-<!-- ─────────────────────────────────────────────── method -->
 <section id="method" class="band">
   <div class="wrap">
     <h2>How it works</h2>
@@ -334,51 +312,52 @@
   <div class="wrap">
     <h2>Run it on your own image</h2>
     <p class="section-lede">
-      The pipeline is a Python package with a CLI. It needs no data to demonstrate itself —
-      it can generate a synthetic town with an exact known DSM — and it takes your GeoTIFF,
-      PNG or JPG when you have one.
+      The pipeline is a Python package with a CLI. It ships with a real sample scene &mdash;
+      a lidar crop of central Z&uuml;rich &mdash; so it demonstrates itself with nothing to
+      download, and it takes your own GeoTIFF, PNG or JPG when you have one.
     </p>
 
     <div class="repro">
       <div class="repro-tabs" role="tablist">
-        <button role="tab" class="on" data-tab="colab">Colab (GPU, no install)</button>
-        <button role="tab" data-tab="local">Local</button>
+        <button role="tab" class="on" data-tab="local">Local</button>
         <button role="tab" data-tab="docker">Docker</button>
       </div>
 
-      <div class="tabpane on" data-pane="colab">
-        <p>Open the notebook, set <em>Runtime → Change runtime type → GPU</em>, run all. It installs the deps, generates ground-truth test data, runs the pipeline and renders the outputs.</p>
-        <p><a class="btn" id="colab-btn" href="#" target="_blank" rel="noopener">Open the GPU harness notebook</a></p>
-        <pre><code># then, on your own image, in a cell:
-!python -m ayama.cli run my_image.tif --out out/mine \
-    --backbone dav2-vitl --device cuda --batch 0 \
-    --dem my_dem.tif --ref my_lidar_dsm.tif --json out/mine.json</code><button class="copy">Copy</button></pre>
-      </div>
-
-      <div class="tabpane" data-pane="local">
+      <div class="tabpane on" data-pane="local">
         <pre><code>git clone &lt;repo&gt; &amp;&amp; cd ayama
-bash scripts/setup_gpu.sh          # Linux/WSL; detects CUDA
-# powershell -ExecutionPolicy Bypass -File scripts/setup.ps1   # Windows
+python -m venv .venv &amp;&amp; .venv/bin/pip install -r requirements.txt
+.venv/bin/pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+.venv/bin/pip install transformers
 
 python -m ayama.cli doctor         # is this machine ready
-python -m ayama.cli study --out results   # regenerate everything on this page</code><button class="copy">Copy</button></pre>
+python -m ayama.cli sample --out data/sample.tif   # a real scene, no download
+
+# the four real scenes, then everything on this page
+python scripts/fetch_swisstopo.py --out data/real/zurich   --bbox 8.530,47.365,8.545,47.375
+python scripts/fetch_swisstopo.py --out data/real/bern     --bbox 7.440,46.945,7.455,46.952
+python scripts/fetch_swisstopo.py --out data/real/geneva   --bbox 6.140,46.200,6.155,46.208
+python scripts/fetch_swisstopo.py --out data/real/lausanne --bbox 6.625,46.515,6.640,46.525
+python -m ayama.cli dataset data/real --layout generic \
+    --backbone dav2-vitl --out results/cpu/real_vitl_h1
+
+# refit the structural scale on those scenes (the only learning step)
+python -m ayama.cli fit data/real --runs results/cpu/real_vitl_h1</code><button class="copy">Copy</button></pre>
         <p>Your own image, no reference data needed:</p>
         <pre><code>python -m ayama.cli run my_image.tif --out out/mine --preview</code><button class="copy">Copy</button></pre>
+        <p class="note-sm">
+          CPU only, and deliberately so &mdash; an order of magnitude more backbone
+          moved recovered relief by less than a metre, because the bottleneck is
+          metric scale rather than perception. There is no GPU path to configure.
+        </p>
       </div>
 
       <div class="tabpane" data-pane="docker">
-        <pre><code>docker build -t ayama:gpu .
-docker run --gpus all --rm -it -v ayama-cache:/cache -v "$PWD:/work" \
-    ayama:gpu bash scripts/harness.sh</code><button class="copy">Copy</button></pre>
+        <pre><code>docker build -t ayama .
+docker run --rm -it -v ayama-cache:/cache -v "$PWD:/work" \
+    ayama bash scripts/harness.sh</code><button class="copy">Copy</button></pre>
         <p>The <code>/cache</code> volume keeps model weights across container restarts.</p>
       </div>
     </div>
-
-    <h3 class="tier-head">What will my image get?</h3>
-    <p class="section-lede">
-      Answer three questions about your image and this builds the exact command, tells you which
-      calibration tier it will land on, and what that tier can and cannot promise.
-    </p>
 
     <div class="wizard">
       <div class="q">
@@ -413,6 +392,7 @@ docker run --gpus all --rm -it -v ayama-cache:/cache -v "$PWD:/work" \
       </div>
     </div>
   </div>
+  </div>
 </section>
 
 <!-- ─────────────────────────────────────────────── limits -->
@@ -424,14 +404,17 @@ docker run --gpus all --rm -it -v ayama-cache:/cache -v "$PWD:/work" \
     </p>
     <ul class="limits">
       <li>
-        <strong>The scenes are synthetic.</strong> They are rendered from a known DSM with
-        ray-marched shadows and correct geospatial metadata, which makes ground truth exact and
-        the plumbing genuinely testable. They are not satellite imagery, and a monocular model's
-        behaviour on real sensor data is a separate question.
+        <strong>The imagery is aerial, not satellite.</strong> SWISSIMAGE orthophotos with
+        swissSURFACE3D lidar truth are the best co-registered pair that a script can actually
+        fetch &mdash; DFC2019 and US3D sit behind a registration wall. So these results test the
+        calibration against real surfaces, real materials and real building geometry, but not
+        against satellite viewing geometry or satellite radiometry.
       </li>
       <li>
-        <strong>The DEM is simulated.</strong> <code>--dem sim:</code> degrades the true terrain
-        to a 30 m posting with correlated noise at Copernicus GLO-30's stated accuracy. It is a
+        <strong>The anchor DEM is degraded on purpose.</strong> The survey-grade lidar DTM is
+        knocked down to a 30 m posting with correlated noise at Copernicus GLO-30's stated
+        accuracy before being used as an anchor, so the anchors are no better than a public DEM
+        would give. It is a
         development harness. Network DEM fetching is deliberately not wired up so that a run can
         never silently proceed with a DEM it failed to load.
       </li>

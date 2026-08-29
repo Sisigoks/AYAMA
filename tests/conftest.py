@@ -1,26 +1,27 @@
-"""Shared fixtures and the GPU marker.
+"""Shared fixtures, backed by real imagery.
 
-GPU tests are skipped unless CUDA is actually present, so the same suite runs
-on a laptop and on the GPU box and only reports what it really checked. Nothing
-is silently passed over: a skipped GPU test says why.
+This suite used to build its rasters with a renderer. It no longer does, and
+that is deliberate: every number this project publishes comes from real imagery,
+and a suite that exercises the pipeline on invented pixels is testing a
+different pipeline from the one that ships.
+
+The scene is the one bundled with the package - see `ayama/data/sample.py` for
+what it is and `ayama/data/fixture/ATTRIBUTION.md` for the swisstopo licence.
+It is committed, so a fresh clone runs the whole suite with no network.
+
+It carries **no sun angles**, because none is published. Tests needing shadow
+physics pass `sun=(az, el)` to `load_sample_scene`, which states at the call
+site that the angle is a test parameter rather than a measurement.
 """
 from __future__ import annotations
 
 import pytest
 
+from ayama.data.sample import load_sample_scene  # noqa: F401  (re-exported for tests)
+
 
 def pytest_configure(config):
-    config.addinivalue_line("markers", "gpu: requires a working CUDA device")
     config.addinivalue_line("markers", "slow: loads real model weights")
-
-
-def has_cuda() -> bool:
-    try:
-        import torch
-
-        return bool(torch.cuda.is_available())
-    except ImportError:
-        return False
 
 
 def has_torch() -> bool:
@@ -33,25 +34,18 @@ def has_torch() -> bool:
 
 
 def pytest_collection_modifyitems(config, items):
-    skip_gpu = pytest.mark.skip(reason="no CUDA device available")
     skip_slow = pytest.mark.skip(reason="torch/transformers not installed")
     for item in items:
-        if "gpu" in item.keywords and not has_cuda():
-            item.add_marker(skip_gpu)
         if "slow" in item.keywords and not has_torch():
             item.add_marker(skip_slow)
 
 
 @pytest.fixture(scope="session")
-def synthetic_scene():
-    """A small deterministic scene with known ground truth."""
-    from ayama.eval.synthetic_scene import make_scene
-
-    return make_scene(size=384, gsd_m=0.5, seed=17)
+def real_scene():
+    """The bundled crop: 384 px of central Zurich, no sun."""
+    return load_sample_scene(size=384)
 
 
 @pytest.fixture(scope="session")
-def scene(synthetic_scene):
-    from ayama.core.types import Scene
-
-    return Scene(rgb=synthetic_scene.rgb, meta=synthetic_scene.meta, raw_dtype="uint8")
+def scene(real_scene):
+    return real_scene.as_scene()

@@ -31,6 +31,14 @@ ayama = "ayama.cli:main"
 [tool.setuptools.packages.find]
 include = ["ayama*"]
 
+# The bundled sample scene: a real lidar crop of central Zurich (about 2.5 MB).
+# It has to travel with the package, because `ayama preflight` and `ayama
+# sample` both run on it and neither should need a 350 MB download to work on a
+# fresh install. See ayama/data/sample.py and the swisstopo licence in
+# ayama/data/fixture/ATTRIBUTION.md.
+[tool.setuptools.package-data]
+"ayama.data" = ["fixture/*.tif", "fixture/*.md"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 filterwarnings = ["ignore::rasterio.errors.NotGeoreferencedWarning"]

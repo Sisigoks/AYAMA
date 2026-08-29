@@ -138,6 +138,14 @@ def segment(
     if method == "raster" or path:
         if not path:
             raise ValueError("segmentation method 'raster' needs a path")
+        # Accept both `labels.tif` and `raster:labels.tif`. The provenance this
+        # function writes is `raster:<path>`, so that string comes straight back
+        # from a summary.json and gets handed to us as-is; and `--dem sim:` has
+        # already taught the CLI's users that a prefix is meaningful here.
+        # Without this, rasterio is asked to open a file literally named
+        # "raster:/path/to/labels.tif" and the run dies at the segmentation stage.
+        if path.startswith("raster:"):
+            path = path[len("raster:"):]
         return segment_from_raster(path, scene.shape), f"raster:{path}"
     return segment_heuristic(scene, ndsm_m=ndsm_m, shadow=shadow), "heuristic"
 

@@ -37,7 +37,7 @@ WEB_DIR = os.path.join(
 
 
 def create_app(jobs_root: str = "out/jobs", web_dir: Optional[str] = None,
-               max_concurrent: int = 1, device: str = "auto"):
+               max_concurrent: int = 1):
     """Build the FastAPI app. Imported lazily so the core install stays thin."""
     try:
         from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -55,7 +55,6 @@ def create_app(jobs_root: str = "out/jobs", web_dir: Optional[str] = None,
     store = JobStore(jobs_root, max_concurrent=max_concurrent)
     app = FastAPI(title="AYAMA", docs_url="/api/docs", openapi_url="/api/openapi.json")
     app.state.store = store
-    app.state.default_device = device
 
     # ---------------------------------------------------------------- api
     @app.post("/api/jobs")
@@ -72,7 +71,7 @@ def create_app(jobs_root: str = "out/jobs", web_dir: Optional[str] = None,
         try:
             job = store.create(data, image.filename or "upload", {
                 "backbone": backbone, "chip": chip, "bootstrap": bootstrap,
-                "device": app.state.default_device, "mesh": mesh,
+                "mesh": mesh,
                 "sun_azimuth": sun_azimuth, "sun_elevation": sun_elevation,
             })
         except UploadRejected as exc:
@@ -139,8 +138,8 @@ def create_app(jobs_root: str = "out/jobs", web_dir: Optional[str] = None,
         from ..eval.bench import device_report
 
         rep = device_report()
-        return {"ok": True, "device": app.state.default_device,
-                "cuda_available": rep.get("cuda_available"),
+        return {"ok": True,
+                "cpu_count": rep.get("cpu_count"),
                 "torch": rep.get("torch"), "jobs": len(store.list())}
 
     # ---------------------------------------------------------------- app
@@ -162,9 +161,9 @@ def create_app(jobs_root: str = "out/jobs", web_dir: Optional[str] = None,
 
 
 def serve(host: str = "127.0.0.1", port: int = 8000, jobs_root: str = "out/jobs",
-          device: str = "auto", max_concurrent: int = 1, reload: bool = False) -> int:
+          max_concurrent: int = 1, reload: bool = False) -> int:
     import uvicorn
 
-    app = create_app(jobs_root=jobs_root, device=device, max_concurrent=max_concurrent)
+    app = create_app(jobs_root=jobs_root, max_concurrent=max_concurrent)
     uvicorn.run(app, host=host, port=port, log_level="warning")
     return 0

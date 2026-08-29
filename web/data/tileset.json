@@ -1,7 +1,7 @@
 {
   "ayama_tileset_version": 1,
-  "generated_utc": "2026-08-27T06:53:02Z",
-  "source_run": "D:\\UNNAT\\results\\seed7\\run",
+  "generated_utc": "2026-08-29T14:51:46Z",
+  "source_run": "D:\\UNNAT\\results\\cpu\\real_vitl_learned\\zurich",
   "grid": {
     "width": 1024,
     "height": 1024,
@@ -14,20 +14,20 @@
     ],
     "quantise_bits": 12
   },
-  "crs": "EPSG:32644",
+  "crs": "EPSG:2056",
   "transform": [
     0.5,
     0.0,
-    300000.0,
+    2682000.0,
     0.0,
     -0.5,
-    1990000.0
+    1247000.0
   ],
   "bounds_wgs": [
-    79.11115367324248,
-    17.984492816728807,
-    79.11603629510955,
-    17.989165126496886
+    8.524173297900358,
+    47.364070496008885,
+    8.531044832089417,
+    47.36873902653846
   ],
   "layers": {
     "dsm": {
@@ -36,14 +36,15 @@
       "label": "Surface elevation",
       "base_m": -10000.0,
       "step_m": 0.1,
-      "vmin": 389.4930114746094,
-      "vmax": 407.7936706542969,
+      "vmin": 378.68280029296875,
+      "vmax": 472.96954345703125,
       "stats": {
-        "min": 389.4930114746094,
-        "max": 407.7936706542969,
-        "mean": 399.04901891879854,
-        "p1": 390.09588623046875,
-        "p99": 407.45255279541016
+        "min": 378.68280029296875,
+        "max": 472.96954345703125,
+        "mean": 420.66379158970085,
+        "p1": 395.57696533203125,
+        "p95": 439.52567291259766,
+        "p99": 454.8335266113281
       }
     },
     "ndsm": {
@@ -51,59 +52,62 @@
       "units": "m",
       "label": "Height above ground",
       "vmin": 0.0,
-      "vmax": 0.27625150978565216,
+      "vmax": 53.5844900906086,
       "bits": 12,
-      "step_m": 6.744422027625153e-05,
+      "step_m": 0.013082151680784493,
       "data_range_m": [
         0.0,
-        0.27618408203125
+        53.5714111328125
       ],
       "stats": {
         "min": 0.0,
-        "max": 0.27618408203125,
-        "mean": 0.03888977726455778,
+        "max": 53.5714111328125,
+        "mean": 2.4720307904935908,
         "p1": 0.0,
-        "p99": 0.165283203125
+        "p95": 12.044258117675781,
+        "p99": 22.758697509765625
       }
     },
     "sigma": {
       "encoding": "linear",
       "units": "m",
       "label": "Uncertainty, 1 sigma",
-      "vmin": 3.0000975131988525,
-      "vmax": 3.04460395895876,
+      "vmin": 6.000058174133301,
+      "vmax": 6.051226707408205,
       "bits": 12,
-      "step_m": 1.0865832132006449e-05,
+      "step_m": 1.2492318438668536e-05,
       "data_range_m": [
-        3.0000975131988525,
-        3.044593095779419
+        6.000058174133301,
+        6.051214218139648
       ],
       "stats": {
-        "min": 3.0000975131988525,
-        "max": 3.044593095779419,
-        "mean": 3.004947975006644,
-        "p1": 3.000203847885132,
-        "p99": 3.030965805053711
+        "min": 6.000058174133301,
+        "max": 6.051214218139648,
+        "mean": 6.002997990996846,
+        "p1": 6.000126361846924,
+        "p95": 6.009918212890625,
+        "p99": 6.028321623802185
       }
     },
     "error": {
       "encoding": "linear",
       "units": "m",
       "label": "Predicted minus reference",
-      "vmin": -42.525787353515625,
-      "vmax": 15.149667084217072,
+      "vmin": -51.353790283203125,
+      "vmax": 38.992846578359604,
       "bits": 12,
-      "step_m": 0.014080922332875457,
+      "step_m": 0.022057285704746642,
       "data_range_m": [
-        -42.525787353515625,
-        15.135589599609375
+        -51.353790283203125,
+        38.970794677734375
       ],
       "stats": {
-        "min": -42.525787353515625,
-        "max": 15.135589599609375,
-        "mean": -0.714083415659843,
-        "p1": -25.459632873535156,
-        "p99": 13.32672119140625
+        "min": -51.353790283203125,
+        "max": 38.970794677734375,
+        "mean": -6.602728934871266,
+        "p1": -28.152481079101562,
+        "p95": 6.7374420166015625,
+        "p99": 20.447731018066406
       }
     },
     "texture": {
@@ -290,60 +294,47 @@
   ],
   "mesh": null,
   "provenance": {
-    "image": "D:\\UNNAT\\results\\seed7\\scene.tif",
-    "backbone": "dav2-vits",
+    "image": "D:\\UNNAT\\data\\real\\zurich\\zurich.tif",
+    "backbone": "dav2-vitl",
     "segmentation": "heuristic",
-    "dem": "simulated copernicus from scene_dtm.tif",
+    "dem": "raster:zurich_dem.tif",
     "tier": "A",
     "chip": 512,
     "overlap": 0.25,
-    "n_bootstrap": 24,
-    "lattice_stride": 32,
-    "sun_azimuth_deg": 138.4,
-    "sun_elevation_deg": 61.2,
-    "sun": "138.4 deg azimuth / 61.2 deg elevation, read from the source image. The surface is lit from the scene's own sun, so shading and the shadows in the draped texture agree."
+    "n_bootstrap": 12,
+    "lattice_stride": 32
   },
   "metrics": {
     "n_px": 1048576,
-    "mae_m": 3.39414379131631,
-    "rmse_m": 5.686944837955929,
-    "bias_m": -0.714083415659843,
-    "median_ae_m": 2.00836181640625,
-    "p90_ae_m": 7.5560760498046875,
-    "std_m": 5.641934638528982,
-    "pearson_r": 0.7456736597693778,
-    "spearman_r": 0.8332626124869924,
-    "delta1": null,
-    "delta1_n_px": 0,
-    "slope_mae_deg": 7.001077651977539,
-    "edge_f1": 0.2757062676298042,
-    "ece_m": 2.500834530094247,
-    "coverage_1s": 0.6495447158813477,
-    "coverage_2s": 0.8547592163085938,
-    "mean_sigma_m": 3.004947975006644
+    "mae_m": 8.72290394853917,
+    "rmse_m": 11.297740428396827,
+    "bias_m": -6.602728934871266,
+    "median_ae_m": 6.861480712890625,
+    "p90_ae_m": 19.361221313476562,
+    "std_m": 9.167491990727118,
+    "pearson_r": 0.6458714511753185,
+    "spearman_r": 0.7239637698287184,
+    "delta1": 0.1941786283891547,
+    "delta1_n_px": 303468,
+    "slope_mae_deg": 22.8284912109375,
+    "edge_f1": 0.5313433330631999,
+    "ece_m": 5.225069595517501,
+    "coverage_1s": 0.4465484619140625,
+    "coverage_2s": 0.7209291458129883,
+    "mean_sigma_m": 6.002997990996846
   },
   "tier": "A",
   "anchors": {
-    "dem": 3846,
-    "water": 75,
-    "shadow": 61,
-    "total": 3982
+    "dem": 2734,
+    "water": 41,
+    "shadow": 0,
+    "total": 2775
   },
   "notes": [
-    {
-      "level": "critical",
-      "id": "flat_surface",
-      "text": "Predicted height above ground reaches only 0.28 m (99th percentile 0.17 m) on a scene where 3.0% of pixels are classified as building. The calibration scale field has collapsed to its floor, so this surface is terrain with the structures flattened. See README section 5. Raise the vertical exaggeration to see what little relief there is - it is a defect, not a rendering choice."
-    },
     {
       "level": "info",
       "id": "heuristic_segmentation",
       "text": "Semantics came from the colour heuristic, not a trained model."
-    },
-    {
-      "level": "info",
-      "id": "simulated_dem",
-      "text": "Anchored to a simulated DEM (simulated copernicus from scene_dtm.tif), not a real product."
     }
   ]
 }

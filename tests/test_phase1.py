@@ -11,7 +11,7 @@ from ayama.core.geo import (gsd_metres, percentile_stretch, pixel_to_world,
                             shadow_height, shadow_length, sun_vector, world_to_pixel)
 from ayama.core.solar import solar_position
 from ayama.core.types import Scene, SceneMeta
-from ayama.depth.backbones import get_backbone
+
 from ayama.depth.infer import (blend_window, n_chips, predict_depth, rank_normalise,
                                tile_offsets)
 
@@ -138,7 +138,7 @@ def test_blending_is_seam_free_across_chips():
 
 def test_predict_depth_pads_images_smaller_than_a_chip():
     scene = Scene(rgb=np.zeros((64, 96, 3), np.uint8), meta=SceneMeta())
-    depth = predict_depth(scene, get_backbone("synthetic"), chip=256, overlap=0.25)
+    depth = predict_depth(scene, _RampBackbone(), chip=256, overlap=0.25)
     assert depth.relative.shape == (64, 96)
     assert np.isfinite(depth.relative).all()
 
@@ -200,12 +200,48 @@ def test_write_cog_preserves_values_and_nodata(tmp_path):
         assert got[10, 10] == pytest.approx(a[10, 10])
 
 
-def test_synthetic_scene_is_self_consistent():
-    from ayama.eval.synthetic_scene import make_scene
+def test_the_bundled_sample_is_real_and_self_consistent():
+    """The scene every other test builds on. If it is wrong, everything is.
 
-    sc = make_scene(size=256, gsd_m=0.5, seed=3)
+    It is a real lidar crop, so the invariants are the ones physics guarantees -
+    the surface cannot dip below the bare earth - not ones a renderer was told
+    to satisfy.
+    """
+    from ayama.data.sample import load_sample_scene
+
+    sc = load_sample_scene(size=256)
     assert np.isfinite(sc.dsm_m).all() and np.isfinite(sc.dtm_m).all()
-    assert (sc.dsm_m >= sc.dtm_m - 1e-3).all(), "DSM must sit on or above the DTM"
-    assert sc.ndsm_m.max() > 3.0, "no objects in the scene"
-    assert 0.0 < sc.shadow.mean() < 0.6
-    assert sc.meta.has_sun and sc.meta.georeferenced
+    assert sc.ndsm_m.max() > 3.0, "no objects in the crop"
+
+    # A renderer could guarantee DSM >= DTM everywhere. Real data cannot: these
+    # are two independent flights (surface 2018, terrain 2020) and on flat
+    # ground they disagree by noise. What must hold is that the disagreement
+    # stays at noise scale rather than hiding a vertical-datum or resampling
+    # bug, which would show up as metres.
+    undercut = np.maximum(sc.dtm_m - sc.dsm_m, 0.0)
+    assert undercut.max() < 2.0, "DSM dips metres below the DTM - datum mismatch?"
+    assert np.percentile(undercut[undercut > 0], 99) < 0.1
+    assert (sc.ndsm_m >= 0).all(), "the derived nDSM must be clamped at ground"
+    assert sc.meta.georeferenced
+    # No sun is published for these products, so none may be invented.
+    assert not sc.meta.has_sun
+    assert not sc.shadow.any()
+
+
+def test_a_sun_supplied_by_the_caller_produces_a_truth_shadow_mask():
+    """Shadow physics needs an angle. The caller states it; the fixture never does."""
+    from ayama.data.sample import load_sample_scene
+
+    sc = load_sample_scene(size=256, sun=(150.0, 40.0))
+    assert sc.meta.has_sun
+    assert 0.0 < sc.shadow.mean() < 0.6, "ray-marched shadow fraction is implausible"
+
+
+def test_the_sample_crop_carries_a_transform_that_follows_the_offset():
+    """An offset crop with the parent transform is an off-by-N projection bug."""
+    from ayama.data.sample import load_sample_scene
+
+    a = load_sample_scene(size=128)
+    b = load_sample_scene(size=128, offset=(64, 64))
+    assert a.meta.transform[2] != b.meta.transform[2]
+    assert b.meta.transform[2] == pytest.approx(a.meta.transform[2] + 64 * 0.5)

@@ -5,7 +5,7 @@ accordingly: roughly half of them are about refusing things rather than doing
 things. A reconstruction that works is worth little if the endpoint that starts
 it will also read `/etc/passwd`.
 
-The pipeline itself runs on the `synthetic` backbone throughout - these tests
+The pipeline runs on the smallest real backbone throughout - these tests
 are about the service, and a real backbone would make them a weights download
 and a minute of inference each.
 """
@@ -56,7 +56,7 @@ def test_rejects_empty_and_oversized_uploads():
 # ------------------------------------------------------------ path safety
 def test_job_paths_cannot_escape_the_job_directory(tmp_path):
     store = JobStore(str(tmp_path))
-    job = store.create(PNG, "a.png", {"backbone": "synthetic"})
+    job = store.create(PNG, "a.png", {"backbone": "dav2-vits"})
     time.sleep(0.1)
 
     inside = store.path(job.id, "tiles", "tileset.json")
@@ -71,7 +71,7 @@ def test_job_paths_cannot_escape_the_job_directory(tmp_path):
 def test_the_uploaders_filename_is_never_used_on_disk(tmp_path):
     """Filenames are a path-traversal vector and we have no need to keep one."""
     store = JobStore(str(tmp_path))
-    job = store.create(PNG, "../../../evil.png", {"backbone": "synthetic"})
+    job = store.create(PNG, "../../../evil.png", {"backbone": "dav2-vits"})
     names = os.listdir(job.dir)
     assert "input.png" in names
     assert not any("evil" in n for n in names)
@@ -83,9 +83,9 @@ def test_the_uploaders_filename_is_never_used_on_disk(tmp_path):
 @pytest.fixture(scope="module")
 def scene(tmp_path_factory):
     from ayama.dsm.cog import write_rgb
-    from ayama.eval.synthetic_scene import make_scene
+    from ayama.data.sample import load_sample_scene
 
-    sc = make_scene(size=256, gsd_m=0.5, seed=5)
+    sc = load_sample_scene(size=256, sun=(210.0, 45.0))
     p = tmp_path_factory.mktemp("up") / "scene.tif"
     write_rgb(str(p), sc.rgb, sc.meta)
     return str(p)
@@ -101,7 +101,7 @@ def client(tmp_path_factory):
 
 
 def _run(client, scene, **form):
-    data = {"backbone": "synthetic", "chip": "256", "bootstrap": "3"}
+    data = {"backbone": "dav2-vits", "chip": "256", "bootstrap": "3"}
     data.update(form)
     with open(scene, "rb") as fh:
         r = client.post("/api/jobs", files={"image": ("s.tif", fh, "image/tiff")},
@@ -179,7 +179,7 @@ def test_static_files_are_served_and_cannot_escape(client):
         assert client.get(path).status_code == 404, path
 
 
-def test_health_reports_the_device(client):
+def test_health_reports_the_machine(client):
     h = client.get("/api/health").json()
     assert h["ok"] is True
-    assert "cuda_available" in h and "torch" in h
+    assert "cpu_count" in h and "torch" in h

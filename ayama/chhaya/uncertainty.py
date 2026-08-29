@@ -37,6 +37,7 @@ def bootstrap_sigma(
     seed: int = 0,
     workers: int = 0,
     on_progress: Optional[Callable[[int, int], None]] = None,
+    scale_prior: Optional[float] = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Returns (mean surface, calibration sigma), both in metres.
 
@@ -54,12 +55,18 @@ def bootstrap_sigma(
     to a serial one - there is a test. And solves are dispatched in chunks the
     size of the pool, so peak memory holds `workers` surfaces rather than all
     `n_boot` of them; on a 4k tile the difference is 1.5 GB.
+
+    `scale_prior` must be the one the delivered calibration used. The mean
+    surface returned here REPLACES that calibration's, so omitting it threw
+    away a fitted structural scale and shipped a flattened surface with a
+    sigma computed for a different one - which is what happened before this
+    argument existed, silently and only when the bootstrap was enabled.
     """
     cfg = cfg or Config()
     anchors = list(anchors)
     n = len(anchors)
     if n < 8 or n_boot < 2:
-        calib = solve_agmc(depth, anchors, cfg)
+        calib = solve_agmc(depth, anchors, cfg, scale_prior=scale_prior)
         surface = apply_calibration(depth, calib)
         return surface, np.zeros_like(surface)
 
@@ -68,7 +75,9 @@ def bootstrap_sigma(
     subsets = [rng.choice(n, keep_n, replace=False) for _ in range(n_boot)]
 
     def solve(idx):
-        return apply_calibration(depth, solve_agmc(depth, [anchors[j] for j in idx], cfg))
+        return apply_calibration(
+            depth, solve_agmc(depth, [anchors[j] for j in idx], cfg,
+                              scale_prior=scale_prior))
 
     n_workers = _default_workers(workers, n_boot)
     mean = None

@@ -311,3 +311,14 @@ button.primary:not(:disabled):hover { filter: brightness(1.08); }
 
 a.ghost { text-decoration: none; display: inline-block; }
 #job-result .notes { margin-bottom: .6rem; }
+
+/* ── flythrough control ─────────────────────────────────────────────────────
+   Added with the tour. `.wide` is a full-width action button; `kbd` marks the
+   keyboard shortcut in the note beneath it. */
+button.wide { width: 100%; padding: .5rem .7rem; }
+button.wide.on { background: var(--accent, #3d7bfd); color: #fff; border-color: transparent; }
+kbd {
+  font: 600 .78em var(--mono, monospace);
+  border: 1px solid currentColor; border-bottom-width: 2px;
+  border-radius: 4px; padding: 0 .3em; opacity: .8;
+}

@@ -1,6 +1,6 @@
 """CPU measurement for Phase 3 and Phase 4: what delivery actually costs.
 
-Phase 2 has `study.py` and a `results/study.json` full of evidence. Delivery had
+Phase 2 has `ayama dataset` and a `dataset.json` full of evidence. Delivery had
 correctness tests and no numbers, which is the same gap in a different place:
 nobody could say what tiling a scene costs, how big the payload is, or how much
 CPU the viewer burns before a triangle is drawn.
@@ -571,7 +571,7 @@ def write_report(rep: dict, path: str) -> str:
 
     Kept beside the measurement rather than in the CLI so a figure and a table
     can never disagree about what was measured - the same reason `figures.py`
-    renders from `study.json` instead of from a fresh run.
+    renders from `dataset.json` instead of from a fresh run.
     """
     env = rep["environment"]
     sc = rep["scene"]
@@ -585,13 +585,13 @@ def write_report(rep: dict, path: str) -> str:
     A("`python -m ayama.cli delivery`.")
     A("")
     A("Every number is measured on the machine below, against a real Phase 2 run.")
-    A("**GPU rasterisation is not measured** and is not claimed: everything in the")
+    A("**Browser GPU rasterisation is not measured** and is not claimed: everything in the")
     A("viewer section is CPU work the browser does before a triangle is drawn.")
     A("")
     A("## Environment")
     A("")
     A(f"- {env.get('platform')}, python {env.get('python')}, {env.get('cpu_count')} cpus")
-    A(f"- CUDA available: {env.get('cuda_available')}  ·  rasterio {env.get('rasterio')}")
+    A(f"- {env.get('cpu_count')} CPU cores  ·  rasterio {env.get('rasterio')}")
     node = (rep.get("viewer") or {}).get("node")
     if node:
         A(f"- node {node}")
@@ -819,7 +819,7 @@ def write_report(rep: dict, path: str) -> str:
     A("## Reproducing this")
     A("")
     A("```bash")
-    A("python -m ayama.cli delivery results/seed7/run --out results")
+    A("python -m ayama.cli delivery results/cpu/real_vitl_h1/zurich --out results/cpu/phase4_delivery")
     A("```")
     A("")
 

@@ -1,5 +1,5 @@
-# The suite that does not need a GPU. GPU-marked tests skip here with a reason,
-# which is the point: the same suite runs on a laptop, in CI and on the GPU box.
+# The whole suite. AYAMA is CPU-only, so what runs here is what runs anywhere -
+# there is no second, unrun configuration to drift out of sync.
 name: tests
 
 on:
@@ -34,11 +34,15 @@ jobs:
       - name: Test
         run: pytest tests -q -rs
 
-      - name: Pipeline smoke test, no weights
+      # The bundled sample is a real lidar crop of central Zurich shipped inside
+      # the package, so this needs no download. There is no weightless backbone
+      # any more - a placeholder that fabricates depth is how an invented number
+      # reaches a results table - so the smallest real model runs instead.
+      - name: Pipeline smoke test on the bundled real scene
         run: |
-          python -m ayama.cli synth --out /tmp/s.tif --size 384
+          python -m ayama.cli sample --out /tmp/s.tif --size 384
           python -m ayama.cli info /tmp/s.tif
-          python -m ayama.cli run /tmp/s.tif --out /tmp/run --backbone synthetic \
+          python -m ayama.cli run /tmp/s.tif --out /tmp/run --backbone dav2-vits \
               --chip 256 --dem sim:/tmp/s_dtm.tif --ref /tmp/s_dsm.tif --bootstrap 4
 
       # Phase 3 and 4. The tileset is built from the run above rather than from a

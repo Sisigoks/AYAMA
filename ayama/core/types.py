@@ -155,6 +155,11 @@ class CalibrationField:
     # split exists to discard, and the result would look plausible and be wrong.
     dual_branch: bool = False
     depth_high: Optional[np.ndarray] = None
+    # Where the structural scale came from: solved from anchors, used as a
+    # prior, or held at a value fitted offline against lidar (`ayama fit`).
+    # Recorded because a number that was measured elsewhere must never be
+    # mistaken for one this scene's anchors produced.
+    scale_source: str = "anchors"
 
 
 @dataclass

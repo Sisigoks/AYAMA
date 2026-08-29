@@ -39,29 +39,6 @@ def supports_unicode(stream) -> bool:
     return "utf" in enc
 
 
-def gpu_stats() -> Optional[dict]:
-    """Live VRAM, or None when there is no CUDA device.
-
-    Reads the driver's free/total rather than torch's allocator counters: the
-    number that matters when choosing a batch size is what the card actually has
-    left, including whatever else is resident on it.
-    """
-    try:
-        import torch
-
-        if not torch.cuda.is_available():
-            return None
-        free, total = torch.cuda.mem_get_info()
-        return {
-            "name": torch.cuda.get_device_properties(torch.cuda.current_device()).name,
-            "used_gb": (total - free) / 1024 ** 3,
-            "total_gb": total / 1024 ** 3,
-            "reserved_gb": torch.cuda.memory_reserved() / 1024 ** 3,
-        }
-    except Exception:
-        return None
-
-
 def _fmt_dur(seconds: float) -> str:
     if seconds is None or seconds != seconds or seconds < 0:
         return "--"
@@ -136,16 +113,13 @@ class Live:
     """Renders the innermost active task, with its ancestors as context."""
 
     def __init__(self, mode: str = "auto", stream=None, min_interval: float = 0.12,
-                 plain_interval: float = 20.0, show_gpu: bool = True):
+                 plain_interval: float = 20.0):
         self.stream = stream or sys.stdout
         self.mode = self._resolve(mode)
         self.min_interval = float(min_interval)
         self.plain_interval = float(plain_interval)
-        self.show_gpu = show_gpu
         self.stack: list[Task] = []
         self._last_render = 0.0
-        self._last_gpu_poll = 0.0
-        self._gpu: Optional[dict] = None
         self._dirty = False
         self._unicode = supports_unicode(self.stream)
 
@@ -182,13 +156,6 @@ class Live:
         self._render(force=True)
 
     # -- rendering ----------------------------------------------------------
-    def _poll_gpu(self) -> None:
-        now = time.time()
-        if not self.show_gpu or now - self._last_gpu_poll < 1.0:
-            return
-        self._last_gpu_poll = now
-        self._gpu = gpu_stats()
-
     def _bar(self, frac: float, width: int = 18) -> str:
         filled = int(round(frac * width))
         if self._unicode:
@@ -219,9 +186,6 @@ class Live:
                          else f"{head.rate:.0f} {unit}/s")
         if head.eta:
             parts.append(f"ETA {_fmt_dur(head.eta)}")
-        self._poll_gpu()
-        if self._gpu:
-            parts.append(f"VRAM {self._gpu['used_gb']:.1f}/{self._gpu['total_gb']:.1f} GB")
         return "  ".join(parts)
 
     def _clear_line(self) -> None:
@@ -267,10 +231,9 @@ class Live:
         self._render(force=True)
 
     def banner(self) -> str:
-        g = gpu_stats()
-        if g:
-            return f"{g['name']}  {g['total_gb']:.1f} GB VRAM"
-        return "CPU only"
+        import os
+
+        return f"CPU, {os.cpu_count()} cores"
 
 
 class TaskCtx:
