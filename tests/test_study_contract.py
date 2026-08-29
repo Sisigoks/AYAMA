@@ -1,6 +1,6 @@
 """The site is a renderer for study.json, so its shape is a contract.
 
-site/app.js reads specific keys. If study.py stops emitting one of them the page
+web/results.js reads specific keys. If study.py stops emitting one of them the page
 degrades silently to em-dashes, which is exactly the failure mode that survives
 a demo rehearsal and dies on stage. These tests run a miniature study and assert
 the keys the page depends on are present and finite.
@@ -16,16 +16,16 @@ import pytest
 
 pytest.importorskip("rasterio")
 
-SITE = Path(__file__).resolve().parents[1] / "site"
+SITE = Path(__file__).resolve().parents[1] / "web"
 
-# Keys site/app.js reads out of the aggregate block.
+# Keys web/results.js reads out of the aggregate block.
 AGG_KEYS = ("mae_m", "rmse_m", "bias_m", "pearson_r", "spearman_r",
             "coverage_1s", "baseline_mae_m", "baseline_rmse_m", "baseline_pearson_r",
             "by_class_mae_m", "n_scenes", "timings_s")
 SCENE_KEYS = ("seed", "metrics", "tier", "anchors", "anchors_used",
               "anchors_rejected", "scene_truth", "wall_s")
 
-# Preview images the explorer requests, from the LAYERS table in app.js.
+# Preview images the explorer requests, from the LAYERS table in results.js.
 PREVIEWS = ("rgb.jpg", "dsm_pred.png", "dsm_truth.png", "error.png",
             "sigma.png", "ndsm.png", "shadow.png")
 
@@ -57,7 +57,7 @@ def mini_study(tmp_path_factory):
 def test_aggregate_carries_every_key_the_page_reads(mini_study):
     agg = mini_study["aggregate"]
     for key in AGG_KEYS:
-        assert key in agg, f"aggregate is missing '{key}', which site/app.js renders"
+        assert key in agg, f"aggregate is missing '{key}', which web/results.js renders"
     for key in ("mae_m", "rmse_m", "pearson_r", "baseline_mae_m"):
         assert np.isfinite(agg[key]["mean"]), f"{key} is not finite"
         assert {"mean", "std", } <= set(agg[key]) or "mean" in agg[key]
@@ -75,17 +75,17 @@ def test_every_preview_the_explorer_requests_exists(mini_study):
     d = Path(mini_study["out"]) / "seed5" / "preview"
     for name in PREVIEWS:
         p = d / name
-        assert p.exists(), f"site/app.js requests preview/{name} and it was not written"
+        assert p.exists(), f"web/results.js requests preview/{name} and it was not written"
         assert p.stat().st_size > 500, f"{name} is suspiciously small"
 
 
-def test_layer_list_in_app_js_matches_what_is_written(mini_study):
+def test_layer_list_in_results_js_matches_what_is_written(mini_study):
     """Catch a preview renamed on one side but not the other."""
-    js = (SITE / "app.js").read_text(encoding="utf-8")
+    js = (SITE / "results.js").read_text(encoding="utf-8")
     requested = set(re.findall(r"id:\s*'([a-z_]+\.(?:png|jpg))'", js))
-    assert requested, "could not parse the LAYERS table out of app.js"
+    assert requested, "could not parse the LAYERS table out of results.js"
     written = {p.name for p in (Path(mini_study["out"]) / "seed5" / "preview").iterdir()}
-    assert requested <= written, f"app.js asks for {sorted(requested - written)}, never written"
+    assert requested <= written, f"results.js asks for {sorted(requested - written)}, never written"
 
 
 def test_ablation_rows_have_the_columns_the_table_renders(mini_study):

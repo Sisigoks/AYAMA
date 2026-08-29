@@ -3,7 +3,7 @@
 //   npm install jsdom      (once, anywhere on the path)
 //   node scripts/check_site.js
 //
-// Loads site/index.html, runs site/app.js against the real results/study.json
+// Loads web/results.html, runs web/results.js against the real results/study.json
 // and asserts every panel actually rendered. This exists because a results file
 // containing a bare NaN token - which Python writes by default - parses fine in
 // Python and makes JSON.parse throw, deploying a completely blank page. Nothing
@@ -12,8 +12,8 @@ const { JSDOM, VirtualConsole } = require('jsdom');
 const fs = require('fs'), path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 
-const html = fs.readFileSync(path.join(ROOT, 'site/index.html'), 'utf8');
-const app  = fs.readFileSync(path.join(ROOT, 'site/app.js'), 'utf8');
+const html = fs.readFileSync(path.join(ROOT, 'web/results.html'), 'utf8');
+const app  = fs.readFileSync(path.join(ROOT, 'web/results.js'), 'utf8');
 const study = fs.readFileSync(path.join(ROOT, 'results/study.json'), 'utf8');
 
 const errors = [];

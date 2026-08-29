@@ -279,3 +279,116 @@ def test_bootstrap_reports_progress_once_per_resample():
                     on_progress=lambda d, t: seen.append((d, t)))
     assert [d for d, _ in seen] == [1, 2, 3, 4, 5, 6]
     assert all(t == 6 for _, t in seen)
+
+
+# ------------------------------------------------- H2: frequency separation
+def test_decompose_depth_splits_by_metres_not_pixels():
+    """The cutoff is physical, so the same split means the same thing at any GSD."""
+    import numpy as np
+
+    from ayama.chhaya.agmc import decompose_depth
+
+    rng = np.random.default_rng(2)
+    D = rng.random((128, 128)).astype(np.float32)
+
+    lo_fine, hi_fine = decompose_depth(D, gsd_m=0.5, radius_m=60.0)
+    lo_coarse, _ = decompose_depth(D, gsd_m=2.0, radius_m=60.0)
+
+    # lo + hi reconstructs the input exactly
+    assert np.allclose(lo_fine + hi_fine, D, atol=1e-5)
+    # the high band has essentially no DC left
+    assert abs(float(hi_fine.mean())) < abs(float(D.mean())) / 100
+    # a coarser GSD means fewer pixels per 60 m, so less blurring
+    assert lo_coarse.std() > lo_fine.std()
+
+
+def test_dual_branch_releases_the_scale_field_from_its_floor():
+    """The mechanism H2 exists to fix, asserted directly.
+
+    Single-branch, a terrain-dominated anchor set drives the scale to a_min and
+    pins it there - 100% of lattice nodes on the real benchmark. Routing terrain
+    anchors to the offset field alone removes that pressure.
+    """
+    import numpy as np
+
+    from ayama.chhaya.agmc import solve_agmc
+    from ayama.core.types import Anchor, Config, DepthField, SceneMeta, Tier
+
+    rng = np.random.default_rng(5)
+    size = 96
+    # A depth field whose LOW band anti-correlates with terrain, which is the
+    # situation measured on the benchmark, and whose HIGH band carries structure.
+    yy, xx = np.mgrid[0:size, 0:size]
+    ramp = (xx / size).astype(np.float32)
+    structure = np.zeros((size, size), np.float32)
+    structure[30:50, 30:50] = 0.4
+    D = (0.8 * (1.0 - ramp) + structure + 0.01 * rng.random((size, size))).astype(np.float32)
+    terrain = 400.0 + 20.0 * ramp                    # rises where D falls
+
+    meta = SceneMeta(crs="EPSG:32644", transform=(0.5, 0, 0, 0, -0.5, 0), gsd_m=0.5)
+    depth = DepthField(relative=D, meta=meta, backbone="synthetic")
+
+    anchors = [Anchor(int(r), int(c), float(terrain[r, c]), "terrain", "dem", 0.6)
+               for r in range(0, size, 6) for c in range(0, size, 6)
+               if not (28 <= r <= 52 and 28 <= c <= 52)]
+    anchors += [Anchor(40, 40, 8.0, "object", "shadow", 0.8, ref_row=25, ref_col=40)]
+
+    cfg = Config()
+    single = solve_agmc(depth, anchors, cfg, tier=Tier.A, dual_branch=False)
+    dual = solve_agmc(depth, anchors, cfg, tier=Tier.A, dual_branch=True)
+
+    floor = float(cfg.extras.get("min_scale", 0.05))
+    single_pinned = float((single.a <= floor + 1e-4).mean())
+    dual_pinned = float((dual.a <= floor + 1e-4).mean())
+    assert single_pinned > 0.5, "the fixture no longer reproduces the collapse"
+    assert dual_pinned < single_pinned, "dual branch did not release the scale field"
+
+
+def test_dual_branch_calibration_is_applied_to_the_band_it_was_fitted_to():
+    """The trap: applying a dual-branch field to raw depth re-adds the ramp.
+
+    It would look plausible - a smooth surface with structure on it - and be
+    wrong by exactly the low-frequency component the split exists to discard.
+    """
+    import numpy as np
+
+    from ayama.chhaya.agmc import apply_calibration, decompose_depth, solve_agmc
+    from ayama.core.types import Anchor, Config, DepthField, SceneMeta, Tier
+
+    size = 64
+    yy, xx = np.mgrid[0:size, 0:size]
+    D = (xx / size).astype(np.float32)
+    meta = SceneMeta(crs="EPSG:32644", transform=(0.5, 0, 0, 0, -0.5, 0), gsd_m=0.5)
+    depth = DepthField(relative=D, meta=meta, backbone="synthetic")
+    anchors = [Anchor(int(r), int(c), 400.0, "terrain", "dem", 0.6)
+               for r in range(0, size, 8) for c in range(0, size, 8)]
+    anchors += [Anchor(32, 32, 5.0, "object", "shadow", 0.8, ref_row=10, ref_col=32)]
+
+    cal = solve_agmc(depth, anchors, Config(), tier=Tier.A, dual_branch=True)
+    assert cal.dual_branch is True
+    assert cal.depth_high is not None
+
+    _lo, hi = decompose_depth(D, 0.5, 60.0)
+    assert np.allclose(cal.depth_high, hi, atol=1e-5)
+
+    got = apply_calibration(depth, cal)
+    assert np.allclose(got, cal.a * hi + cal.b, atol=1e-4)
+    # and it is NOT what the raw field would have given
+    assert not np.allclose(got, cal.a * D + cal.b, atol=1e-3)
+
+
+def test_single_branch_remains_the_default():
+    """H2 is a hypothesis under test, not the shipped calibration."""
+    import numpy as np
+
+    from ayama.chhaya.agmc import solve_agmc
+    from ayama.core.types import Anchor, Config, DepthField, SceneMeta, Tier
+
+    meta = SceneMeta(gsd_m=0.5)
+    depth = DepthField(relative=np.linspace(0, 1, 64 * 64).reshape(64, 64).astype(np.float32),
+                       meta=meta, backbone="synthetic")
+    anchors = [Anchor(int(r), int(c), 400.0, "terrain", "dem", 0.6)
+               for r in range(0, 64, 8) for c in range(0, 64, 8)]
+    cal = solve_agmc(depth, anchors, Config(), tier=Tier.A)
+    assert cal.dual_branch is False
+    assert cal.depth_high is None

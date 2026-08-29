@@ -42,7 +42,8 @@ should therefore decompose depth by frequency and constrain each band with the
 source that observes it — terrain from a DEM, structure from shadows.
 
 **Status: H1 tested and supported. H2 formulated from the failure of H1,
-supported by an oracle signal test, not yet tested end to end.**
+implemented, and run end to end — its mechanism is confirmed and its scale
+estimator is not solved (§5.5).**
 
 ## Contributions
 
@@ -77,7 +78,7 @@ product became useless**, and the protocol caught it.
 | Clears DEM-only floor? | **no** — 3.30 vs 3.49 m MAE, *worse* RMSE, identical *r* |
 | Structure recovered | **no** — 0.05 m of a true 12.4 m |
 | Uncertainty calibrated | **at scene level** — 1σ coverage 0.674 (ideal 0.683) |
-| H2 (frequency split) | **untested end to end**; oracle signal test only |
+| H2 (frequency split) | **implemented and run**: mechanism confirmed (floor 100%→0%, edge F1 0.25→0.78), scale estimator unsolved (2-4x over) |
 | Real imagery | **none** |
 
 ---
@@ -157,7 +158,7 @@ The global-affine baseline is the special case $a(p) = a$, $b(p) = b$.
 
 ## 1.2 Relative depth
 
-Depth Anything V2 [1] is run tiled. Three steps make the mosaic usable:
+Depth Anything V2 [1] is run tiled — one of six selectable backbones, all frozen and pretrained (§2.1). Three steps make the mosaic usable:
 per-chip **rank normalisation** (the backbone's per-image scale is arbitrary, so
 only the ordering is kept); **overlap harmonisation**, fitting each new chip to
 the existing mosaic with a Huber-reweighted affine over the overlap band alone;
@@ -302,6 +303,48 @@ This is not new machinery: `DepthField.terrain`, `DepthField.objects` and the
 | Threads | 4 (torch) |
 
 Recorded per run in [`results/study.json`](results/study.json) → `environment`.
+
+### Models
+
+**Every model in this project is a frozen, pretrained checkpoint downloaded at
+runtime. Nothing is trained here.** There is no `nn.Module` of our own, no loss,
+no optimiser and no saved weights anywhere in the repository — the depth
+backbone is the only thing carrying parameters, and it is used as-is. That is
+why §5.5's conclusion matters: predicting the structural scale would be the
+first component this project actually trains.
+
+Registry is [`ayama/depth/backbones/__init__.py`](ayama/depth/backbones/__init__.py);
+select with `--backbone <key>`.
+
+| key | checkpoint | native input | status in this study |
+|---|---|---|---|
+| **`dav2-vits`** | `depth-anything/Depth-Anything-V2-Small-hf` | 518 px | **every committed number**, 24.8 M params, fp32 on CPU |
+| `dav2-vitb` | `depth-anything/Depth-Anything-V2-Base-hf` | 518 px | registered, never run |
+| `dav2-vitl` | `depth-anything/Depth-Anything-V2-Large-hf` | 518 px | registered, never run — needs a GPU |
+| `dpt-large` | `Intel/dpt-large` [6] | 384 px | registered, never run |
+| `dpt-hybrid` | `Intel/dpt-hybrid-midas` [2] | 384 px | registered, never run |
+| `synthetic` | — no weights at all | — | plumbing tests and CI only |
+
+Parameter counts are given only where measured. `dav2-vits` at 24.8 M comes out
+of [`results/study.json`](results/study.json) → `bench`; the rest were never
+loaded on this machine and are not guessed at here.
+
+Two things this table is meant to make impossible to miss. **The whole study
+rests on one 24.8 M-parameter model** — which is why "test a second backbone"
+is item 5 of the roadmap and one of the four ways §5.4 could falsify H2. And
+the code's own dropdown label calls `dav2-vitl` the *primary* backbone, which
+is an intention rather than a fact: it has never been run.
+
+**Relative, not metric, checkpoints.** Depth Anything V2 also ships metric
+variants. They are deliberately not used: their scale prior is fitted to
+ground-level outdoor scenes and is wrong for nadir imagery. The point of this
+work is to supply metres from scene evidence — a DEM, water, shadow geometry —
+rather than from a prior baked into weights at training time. Whether that is a
+good trade is exactly what §4 puts in question.
+
+**Licensing.** The Small and Base checkpoints ship under different terms from
+Large; check the model cards before any commercial use, and see
+[LICENSE](LICENSE) for how that interacts with this repository's own terms.
 
 ## 2.2 Scenes and ground truth
 
@@ -701,13 +744,65 @@ move at all. **If MAE remains the headline, a correct fix is indistinguishable
 from a regression.** This is the single strongest argument for the evaluation
 protocol in §2.4.
 
+## 5.5 H2 implemented and run end to end — mechanism confirmed, estimator not
+
+`solve_agmc(..., dual_branch=True)` implements §1.6 and is off by default. Run on
+the same three scenes with **no oracle anywhere** — the scale comes from the
+shadow anchors, as it would at inference:
+
+| seed | mode | MAE (m) | edge F1 | median `a` | nodes at floor | building height | true |
+|---|---|---|---|---|---|---|---|
+| 7 | single | 3.27 | 0.254 | 0.05 | **100%** | 0.07 m | 12.40 m |
+| 7 | **dual** | 13.32 | **0.804** | 190.8 | **0%** | 27.03 m | 12.40 m |
+| 21 | single | 3.24 | 0.272 | 0.05 | **100%** | 0.07 m | 12.45 m |
+| 21 | **dual** | 22.60 | **0.783** | 326.0 | **0%** | 47.71 m | 12.45 m |
+| 33 | single | 3.19 | 0.228 | 0.05 | 97.6% | 0.08 m | 13.19 m |
+| 33 | **dual** | 6.08 | **0.764** | 87.6 | **0%** | 12.00 m | 13.19 m |
+
+**The mechanism is confirmed.** Routing terrain anchors to the offset field
+alone releases the scale field completely — floor saturation goes 100% → 0% on
+every scene — and structure comes back: edge F1 rises from ~0.25 to **0.78**,
+which is the global-affine figure from §3.3, the one that showed the depth model
+does know where the buildings are. §4's diagnosis was correct and the fix
+addresses it.
+
+**The estimator is not solved.** The scale overshoots by 2–4×, so MAE gets
+much worse. The cause is measurable and specific: a shadow anchor pairs a roof
+pixel with a reference 2 px beyond the building edge, and in the high-pass band
+that gap is
+
+```
+depth gap, roof vs foot:  median +0.003        with 22-31 of ~65 anchors NEGATIVE
+implied a = h / gap:      2515 / 4439 / 20929  against an oracle answer near 20-35
+```
+
+A 2-pixel probe cannot measure a band whose filter is 60 m wide; it measures
+noise, and a third of the anchors report the roof as *lower* than the ground
+beside it. A scale-matched probe — each building blob's median high-pass against
+a surrounding ground ring — does not rescue it either: implied `a` comes out at
+171 / 181 / 178 with an interquartile range of 30 to 460, from only 7–13 usable
+blobs per scene.
+
+**What this changes.** The oracle in §5.2–5.3 fitted one scale by least squares
+over every pixel against ground truth. That information does not exist at
+inference, and the geometric substitutes tested here are one to three orders of
+magnitude too noisy. So the open problem is no longer "does a structural signal
+survive" — §5.1 answered that — but **"where does the structural scale come
+from"**, and the honest answer is that it will not come from 65 point pairs.
+
+That is a well-posed supervised problem with a real target, and it is the first
+thing in this project that genuinely needs a GPU and training data: predict
+`a(p)` from image evidence, supervised on nDSM ground truth. §10 lists the
+datasets that provide it.
+
 ## 5.4 What would falsify H2
 
 H2 is not established. It predicts, and can be refuted by:
 
-1. **End-to-end run with shadow-derived $a$** (no oracle). If edge F1 does not
-   rise materially above 0.264, H2 fails as an operational method even if the
-   signal exists.
+1. ~~**End-to-end run with shadow-derived $a$** (no oracle).~~ **Run — see
+   §5.5.** edge F1 rose to 0.78, so H2 survives this test on structure. It fails
+   a second one it implied: the scale magnitude is 2-4x too large, because the
+   shadow branch cannot resolve it.
 2. **Scenes with low shadow yield** — dense blocks, low sun. H2 depends on the
    shadow branch, which §3.4 shows is narrow-band.
 3. **A different backbone.** If the low-frequency anti-correlation is specific to
@@ -794,7 +889,86 @@ PY
 
 Expected: `a = -14.50`, field flat at `0.0500`, **100%** at the floor.
 
-## 7.3 Compute: the CPU baseline and the GPU path
+## 7.3 The whole thing on Colab
+
+Paste these in order. This replaces the notebook that used to live in
+`notebooks/` — same sequence, one less file to keep in sync.
+
+**Do not run `setup_gpu.sh` here.** Colab's torch is already built against its
+own driver, and the image ships without `ensurepip`, so `python -m venv`
+half-succeeds and leaves an interpreter that imports nothing.
+
+```python
+# 1 — GPU, then the code
+!nvidia-smi
+!git clone -q https://github.com/Sisigoks/AYAMA.git
+%cd AYAMA
+!pip install -q -r requirements.txt
+```
+
+```python
+# 2 — does the whole pipeline run on this GPU? stop here if not.
+!python -m ayama.cli preflight --device cuda --backbone dav2-vits
+```
+
+```python
+# 3 — throughput, so the study below can be sized honestly
+!python -m ayama.cli bench --backbones dav2-vits,dav2-vitl \
+    --chips 518,1024,2048 --batches 1,2,4,8 --device cuda --json out/bench.json
+```
+
+```python
+# 4 — reproduce the CPU study on GPU first (should match section 3)
+!python -m ayama.cli study --out results/smoke --backbone dav2-vits \
+    --device cuda --batch 0 --size 1024 --seeds 7,21,33 --progress plain
+```
+
+```python
+# 5 — the real one. figures and LaTeX tables are rendered automatically.
+!python -m ayama.cli study --out results/gpu --backbone dav2-vitl \
+    --device cuda --batch 0 --size 2048 --seeds 1,2,3,4,5,6,7,8,9,10 --progress plain
+```
+
+```python
+# 6 — read it
+from glob import glob
+from IPython.display import Image, Markdown, display
+display(Markdown(open('results/gpu/README.md').read()))
+for f in sorted(glob('results/gpu/figures/*.png')):
+    print(f); display(Image(f))
+```
+
+```python
+# 7 — Phases 3 and 4
+!python -m ayama.cli mesh results/gpu/seed1/run --out results/gpu/tiles --bits 12
+!python -m ayama.cli delivery results/gpu/seed1/run --out results/gpu/delivery --obj-strides 2,4
+from IPython.display import Markdown, display
+display(Markdown(open('results/gpu/delivery/DELIVERY.md').read()))
+```
+
+```python
+# 8 — the 3D app, live, through Colab's port proxy
+import subprocess, time
+from google.colab.output import eval_js
+subprocess.Popen(['python','-m','ayama.cli','serve',
+                  '--host','0.0.0.0','--port','8000','--device','cuda'])
+time.sleep(6)
+print(eval_js('google.colab.kernel.proxyPort(8000)'))
+```
+
+```python
+# 9 — take it home
+!zip -qr ayama_results.zip results/gpu out/bench.json
+from google.colab import files; files.download('ayama_results.zip')
+```
+
+`study` checkpoints `study.json` and `README.md` after every stage, so a
+disconnect costs a stage rather than the run — but it does **not** resume, so
+keep the seed count within one session. `--host 0.0.0.0` in cell 8 is required
+for Colab's proxy and there is no authentication behind it; that is acceptable
+inside a Colab session and nowhere else.
+
+## 7.4 Compute: the CPU baseline and the GPU path
 
 > **No GPU numbers are measured in this repository.** The reference machine
 > reports `CUDA available: False`, so every timing in this README is CPU. The
@@ -901,8 +1075,9 @@ python -m ayama.cli preflight --device cuda --backbone dav2-vits
 `scripts/setup_gpu.sh` detects those environments and skips the venv on its own;
 `scripts/harness.sh` validates that its interpreter can actually import the
 package rather than assuming a `.venv` that exists is a `.venv` that works.
-[`notebooks/ayama_gpu_harness.ipynb`](notebooks/ayama_gpu_harness.ipynb) is the
-maintained Colab path.
+
+The full Colab sequence — clone, install, preflight, study, figures, Phase 3/4,
+and the 3D viewer over Colab's port proxy — is [§7.3](#73-the-whole-thing-on-colab).
 
 On a **machine you own**:
 
@@ -916,8 +1091,32 @@ python -m pytest tests -q -m gpu -v          # the 9 GPU tests, un-skipped
 ```
 
 `--batch 0` sizes the batch from free VRAM rather than making you guess;
-`--device auto` resolves CUDA → MPS → CPU. Docker and Colab paths are in
-[docs/GPU.md](docs/GPU.md).
+`--device auto` resolves CUDA → MPS → CPU.
+
+**Docker**, if you would rather not touch the host environment:
+
+```bash
+docker build -t ayama:gpu .
+docker run --gpus all --rm -it -v ayama-cache:/cache -v "$PWD:/work" ayama:gpu \
+    bash scripts/harness.sh
+```
+
+The `/cache` volume holds the Hugging Face weights, so restarting the container
+does not re-download 1.3 GB of ViT-L.
+
+### Knobs that actually change something
+
+| knob | effect |
+|---|---|
+| `--chip 518` | Depth Anything's native size. Larger chips are resized inside the processor, so 1024 costs more and adds no detail — bench both before choosing. |
+| `--batch 0` | Auto from free VRAM. Set it explicitly to reproduce a timing. |
+| `--dtype float16` | Default on CUDA. Roughly 2×, and it moves the surface by far less than the calibration residual — a GPU test asserts exactly that. |
+| `--overlap 0.25` | Below ~0.15 the overlap band is too small to harmonise chips against each other (§1.2). |
+| `--bootstrap 24` | 24 sparse solves, threaded; seconds. `0` turns σ off entirely. |
+| `--stride 32` | AGMC lattice stride in pixels. 32 on a 4k tile is a 128×128 lattice, ~32k unknowns. |
+| `--lam 1.0` | AGMC smoothness weight. Flat over roughly 0.25–4 (§3.6), which is what a correctly scaled parameter looks like. Push past 10 and AGMC collapses back to a global affine fit. |
+| `--workers 0` | Threads for the bootstrap; auto. `1` forces serial. Bit-identical either way. |
+| `--dual-branch` | Experimental H2 (§5.5). Releases the scale field, overshoots the magnitude. Off by default. |
 
 ### What a GPU is actually for here
 
@@ -1158,8 +1357,12 @@ ayama/
   eval/        metrics, ablation, bench, study, figures, delivery
   api/         pipeline.py — the whole method in one function
                server.py, jobs.py — the upload/reconstruct service
-web/           vanilla WebGL viewer + upload UI, no build step
-results/       study.json, delivery.json, figures, per-seed artifacts
+web/           the whole front end, one root, no build step
+               index.html   - the app: upload -> reconstruct -> 3D
+               results.html - the study dashboard, renders results/study.json
+               data/        - the committed demo tileset the 3D loads
+results/       study.json, delivery.json, DELIVERY.md, figures, per-seed artifacts
+out/           local build artifacts only - gitignored, never committed
 ```
 
 Every stage is a pure function `stage(input) -> output` over the dataclasses in

@@ -8,7 +8,6 @@ on:
   push:
     branches: [main]
     paths:
-      - 'site/**'
       - 'results/**'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
@@ -31,15 +30,14 @@ jobs:
       - name: Assemble the site
         run: |
           mkdir -p _site
-          cp -r site/. _site/
-          # The Phase 4 viewer, as a sub-page. web/ is self-contained: its
-          # committed tileset lives in web/data, so the 3D section on the front
-          # page loads with no build step and no external request.
-          mkdir -p _site/viewer
-          cp -r web/. _site/viewer/
-          rm -rf _site/viewer/node_modules _site/viewer/dist
-          test -f _site/viewer/index.html
-          test -f _site/viewer/data/tileset.json
+          cp -r web/. _site/
+          # One web root: index.html is the app (upload -> reconstruct -> 3D)
+          # and results.html is the study dashboard. web/ is self-contained -
+          # its committed tileset lives in web/data - so the 3D loads with no
+          # build step and no external request.
+          rm -rf _site/node_modules _site/dist
+          test -f _site/results.html
+          test -f _site/data/tileset.json
           if [ -d results ]; then
             mkdir -p _site/results
             # Only what the page reads: the JSON, the report and the web

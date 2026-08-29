@@ -19,6 +19,8 @@ package-lock.json
 web/node_modules/
 web/dist/
 *.egg-info/
+.vscode/
+.idea/
 .DS_Store
 
 # Study outputs: keep the JSON, the report and the web previews (they are the

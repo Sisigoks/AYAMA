@@ -6,7 +6,7 @@
 <title>ĀYĀMA — metric elevation from a single image</title>
 <meta name="description" content="Physics-anchored monocular elevation: one RGB image to a metric DSM with honest uncertainty. Reproducible study and results.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⛰️</text></svg>">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="results.css">
 </head>
 <body>
 
@@ -173,12 +173,12 @@
     </div>
 
     <div class="viewer-frame">
-      <iframe id="viewer-embed" src="viewer/index.html" loading="lazy"
+      <iframe id="viewer-embed" src="index.html" loading="lazy"
               title="ĀYĀMA 3D viewer — the calibrated surface, its uncertainty and its error"></iframe>
     </div>
 
     <div class="viewer-actions">
-      <a class="btn" href="viewer/index.html" target="_blank" rel="noopener">
+      <a class="btn" href="index.html" target="_blank" rel="noopener">
         Open the viewer full screen →
       </a>
       <span class="viewer-meta">
@@ -489,6 +489,6 @@ docker run --gpus all --rm -it -v ayama-cache:/cache -v "$PWD:/work" \
   </div>
 </footer>
 
-<script src="app.js"></script>
+<script src="results.js"></script>
 </body>
 </html>

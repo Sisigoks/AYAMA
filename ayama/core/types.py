@@ -149,6 +149,12 @@ class CalibrationField:
     n_anchors_used: int = 0
     n_anchors_rejected: int = 0
     tier: Tier = Tier.C
+    # Which band `a` multiplies. A dual-branch solve fits the scale against the
+    # high-frequency depth only, and carries that band with it: applying the
+    # field to raw depth instead would reintroduce the low-frequency ramp the
+    # split exists to discard, and the result would look plausible and be wrong.
+    dual_branch: bool = False
+    depth_high: Optional[np.ndarray] = None
 
 
 @dataclass

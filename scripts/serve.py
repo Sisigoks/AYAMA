@@ -3,7 +3,7 @@
     python scripts/serve.py            # http://localhost:8000
     python scripts/serve.py --port 9000 --no-open
 
-The Pages workflow assembles `site/` plus the JSON and previews from `results/`
+The Pages workflow assembles `web/` plus the JSON and previews from `results/`
 into one directory. This does the same into a temporary folder and serves it, so
 what you see locally is what deploys — including the `results/study.json` fetch,
 which fails from a file:// URL and would otherwise only break once published.
@@ -23,9 +23,9 @@ KEEP = (".json", ".md", ".png", ".jpg", ".jpeg", ".svg", ".pdf", ".tex")
 
 
 def assemble(dest: str) -> str:
-    site = os.path.join(ROOT, "site")
+    site = os.path.join(ROOT, "web")
     if not os.path.isdir(site):
-        raise SystemExit("site/ not found")
+        raise SystemExit("web/ not found")
     shutil.copytree(site, dest, dirs_exist_ok=True)
 
     # The Phase 4 viewer ships as a sub-page. web/ is self-contained - its own

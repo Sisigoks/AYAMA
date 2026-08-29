@@ -320,3 +320,45 @@ def test_preflight_passes_end_to_end_on_this_machine():
 
     assert main(["preflight", "--device", "cpu", "--backbone", "synthetic",
                  "--size", "256", "--chip", "256", "--bootstrap", "3"]) == 0
+
+
+# ------------------------------------------------------- documentation contract
+def test_every_registered_backbone_is_documented():
+    """A model the code offers but the README omits is an undocumented dependency.
+
+    The README's model table is the only place a reader learns which checkpoints
+    exist, which was actually run, and that none of them are trained here. Adding
+    a backbone without adding a row makes that table quietly wrong, and nothing
+    else in the suite would notice.
+    """
+    from pathlib import Path
+
+    from ayama.depth.backbones import BACKBONES
+    from ayama.depth.backbones.hf import CHECKPOINTS
+
+    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
+
+    undocumented = [b for b in BACKBONES if f"`{b}`" not in readme]
+    assert not undocumented, f"backbones missing from README: {undocumented}"
+
+    missing = [c for c in CHECKPOINTS.values() if c not in readme]
+    assert not missing, f"checkpoints missing from README: {missing}"
+
+
+def test_the_project_trains_nothing():
+    """The claim the README makes about models, asserted against the code.
+
+    If this ever fails it is good news - it means a trainable component landed -
+    but the README says the opposite in three places and would need updating.
+    """
+    import ayama
+    from pathlib import Path
+
+    root = Path(ayama.__file__).parent
+    offenders = []
+    for path in root.rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        for needle in ("nn.Module", "torch.save", "loss.backward", ".backward()"):
+            if needle in text:
+                offenders.append(f"{path.name}: {needle}")
+    assert not offenders, f"something trainable appeared: {offenders}"
