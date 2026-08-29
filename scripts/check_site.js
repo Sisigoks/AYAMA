@@ -14,7 +14,8 @@ const ROOT = path.resolve(__dirname, '..');
 
 const html = fs.readFileSync(path.join(ROOT, 'web/results.html'), 'utf8');
 const app  = fs.readFileSync(path.join(ROOT, 'web/results.js'), 'utf8');
-const ARMS = ['real_vitl_h1', 'real_vitl_h2', 'real_vits_h1', 'real_vits_h2'];
+const ARMS = ['real_vitl_learned', 'real_vitl_h1', 'real_vitl_h2',
+              'real_vits_h1', 'real_vits_h2'];
 const studies = Object.fromEntries(ARMS.map(a =>
   [a, fs.readFileSync(path.join(ROOT, `results/cpu/${a}/dataset.json`), 'utf8')]));
 
@@ -53,7 +54,7 @@ setTimeout(() => {
     ['class bars',     () => w.document.querySelectorAll('#class-chart .bar-row').length, n => n === 5],
     ['scene rows',     () => w.document.querySelectorAll('#scene-table tbody tr').length, n => n === 4],
     ['anchor rows',    () => w.document.querySelectorAll('#anchor-table tbody tr').length, n => n === 4],
-    ['arm rows',       () => w.document.querySelectorAll('#arm-table tbody tr').length, n => n === 4],
+    ['arm rows',       () => w.document.querySelectorAll('#arm-table tbody tr').length, n => n === 5],
     ['scene options',  () => w.document.querySelectorAll('#scene-select option').length, n => n === 4],
     ['scene facts',    () => w.document.querySelectorAll('#scene-facts .fact').length, n => n >= 7],
     ['layer options',  () => w.document.querySelectorAll('#left-layer option').length, n => n === 5],
@@ -116,7 +117,11 @@ setTimeout(() => {
           if (e.isDirectory()) walk(f); else bytes += fs.statSync(f).size;
         }
       })(path.join(viewerDir, 'data'));
-      if (bytes > 6e6) {
+      // 8 MB for the whole pyramid; the viewer opens one LOD, which is 1.45 MB.
+      // The budget was 6 MB while the demo surface was flat - a flat sheet
+      // compresses to nothing - and grew when the fitted structural scale put
+      // real structure into the height layer.
+      if (bytes > 8e6) {
         errors.push(`the demo tileset is ${(bytes / 1e6).toFixed(1)} MB; too heavy to embed`);
       }
       if (m.mesh) errors.push('the demo tileset ships the OBJ; it should not');

@@ -16,9 +16,12 @@ const fmt = (v, d = 2) => (v === null || v === undefined || !isFinite(v)) ? '–
 const pm = (o, d = 2) => o ? `${fmt(o.mean, d)} <small>± ${fmt(o.std, d)}</small>` : '–';
 const mean = (o) => (o && isFinite(o.mean)) ? o.mean : null;
 
-// The four arms of the study: two backbones x two calibrations.
+// The arms of the study. The fitted one leads because it is the result; the
+// others are what the same pipeline does without a structural scale, and the
+// gap between them is the finding.
 const ARMS = [
-  { id: 'real_vitl_h1', backbone: 'dav2-vitl', calib: 'single affine (H1)', primary: true },
+  { id: 'real_vitl_learned', backbone: 'dav2-vitl', calib: 'dual branch + fitted scale', primary: true },
+  { id: 'real_vitl_h1', backbone: 'dav2-vitl', calib: 'single affine (H1)' },
   { id: 'real_vitl_h2', backbone: 'dav2-vitl', calib: 'dual branch (H2)' },
   { id: 'real_vits_h1', backbone: 'dav2-vits', calib: 'single affine (H1)' },
   { id: 'real_vits_h2', backbone: 'dav2-vits', calib: 'dual branch (H2)' },
@@ -33,12 +36,12 @@ const LAYERS = [
   { id: 'sigma.png',   name: 'Uncertainty σ', note: 'Per-pixel 1σ. Bright where anchors are sparse.' },
 ];
 
-const state = { arms: {}, arm: 'real_vitl_h1' };
+const state = { arms: {}, arm: 'real_vitl_learned' };
 
 // Quick-look rasters are committed for the primary arm only. Across arms they
 // differ by amounts no eye can see - the finding is in the metrics, not the
 // pictures - and four copies would put 28 MB in the repository for nothing.
-const IMAGE_ARM = 'real_vitl_h1';
+const IMAGE_ARM = 'real_vitl_learned';
 
 async function init() {
   wireStaticUI();
@@ -256,8 +259,10 @@ function renderArms() {
     <thead><tr><th>backbone</th><th>calibration</th><th>MAE (m)</th>
       <th>edge F1</th><th>nDSM MAE (m)</th><th>relief</th></tr></thead>
     <tbody>${rows}</tbody></table>
-    <p class="fineprint">Click a backbone to render the rest of this page from that run.
-      Both backbones and both calibrations agree on relief; only edge F1 moves.</p>`;
+    <p class="fineprint">Click a row to render the rest of this page from that run.
+      Without a fitted structural scale every arm recovers under 1.3% of the true
+      relief &mdash; two backbones and two calibrations agree. Supplying one fitted
+      constant is what moves it.</p>`;
   $$('button[data-arm]', host).forEach(b => b.addEventListener('click', () => {
     state.arm = b.dataset.arm; render();
     document.getElementById('results').scrollIntoView({ behavior: 'smooth' });
