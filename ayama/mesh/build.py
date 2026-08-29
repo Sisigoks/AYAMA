@@ -342,6 +342,7 @@ def build_tileset(
     obj_stride: int = 2,
     write_mesh: bool = True,
     quantise_bits: int = 24,
+    mesh_dir: Optional[str] = None,
     on_progress=None,
 ) -> dict:
     """Build `out_dir` from a Phase 2 run. Returns the manifest dict.
@@ -462,18 +463,25 @@ def build_tileset(
 
     mesh_info = None
     if write_mesh:
+        # `mesh_dir` puts the OBJ beside the tileset rather than inside it,
+        # which is what `ayama build` wants: a scene is one folder holding
+        # rasters, a tiles3d/ the browser reads, and a mesh/ that opens in
+        # Blender or MeshLab with no ĀYĀMA installed. The manifest records the
+        # path relative to itself either way, so the viewer is unaffected.
+        mdir = mesh_dir or os.path.join(out_dir, "mesh")
         tex_name = None
         if texture is not None:
             tex_name = "surface.jpg"
-            _save_jpg(texture, os.path.join(out_dir, "mesh", tex_name), quality=90)
+            _save_jpg(texture, os.path.join(mdir, tex_name), quality=90)
         mesh_info = write_obj(
-            os.path.join(out_dir, "mesh", "surface.obj"), dsm, gsd,
+            os.path.join(mdir, "surface.obj"), dsm, gsd,
             texture_name=tex_name, stride=obj_stride, name="ayama_surface")
         mesh_info = {k: (os.path.relpath(v, out_dir).replace("\\", "/")
                          if k in ("obj", "mtl") else v)
                      for k, v in mesh_info.items()}
         if tex_name:
-            mesh_info["texture"] = f"mesh/{tex_name}"
+            mesh_info["texture"] = os.path.relpath(
+                os.path.join(mdir, tex_name), out_dir).replace("\\", "/")
 
     manifest = {
         "ayama_tileset_version": TILESET_VERSION,

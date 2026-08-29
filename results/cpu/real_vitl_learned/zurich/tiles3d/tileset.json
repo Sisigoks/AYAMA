@@ -1,6 +1,6 @@
 {
   "ayama_tileset_version": 1,
-  "generated_utc": "2026-08-29T17:29:54Z",
+  "generated_utc": "2026-08-29T17:29:15Z",
   "source_run": "D:\\UNNAT\\results\\cpu\\real_vitl_learned\\zurich",
   "grid": {
     "width": 1024,
@@ -293,18 +293,18 @@
     }
   ],
   "mesh": {
-    "obj": "mesh/surface.obj",
-    "mtl": "mesh/surface.mtl",
-    "vertices": 4096,
-    "triangles": 7938,
+    "obj": "../mesh/surface.obj",
+    "mtl": "../mesh/surface.mtl",
+    "vertices": 65536,
+    "triangles": 130050,
     "dropped_quads": 0,
     "grid": [
-      64,
-      64
+      256,
+      256
     ],
-    "step_m": 8.0,
+    "step_m": 2.0,
     "exaggeration": 1.0,
-    "texture": "mesh/surface.jpg"
+    "texture": "../mesh/surface.jpg"
   },
   "provenance": {
     "image": "D:\\UNNAT\\data\\real\\zurich\\zurich.tif",

@@ -103,6 +103,7 @@
       "name": "bern",
       "image": "D:\\UNNAT\\data\\real\\bern\\bern.tif",
       "reference_kind": "dsm",
+      "resumed": true,
       "tier": "A",
       "tier_reason": "georeferenced (EPSG:2056) with a public DEM",
       "anchors": {
@@ -112,16 +113,16 @@
         "total": 3640
       },
       "timings_s": {
-        "ingest": 0.297,
-        "depth": 157.077,
-        "segmentation": 0.724,
-        "shadow": 0.215,
-        "anchors": 0.511,
-        "calibration": 1.216,
-        "uncertainty": 3.684,
-        "assemble": 0.55,
-        "artifacts": 5.245,
-        "validation": 4.704
+        "ingest": 0.547,
+        "depth": 165.936,
+        "segmentation": 0.81,
+        "shadow": 0.204,
+        "anchors": 0.606,
+        "calibration": 1.934,
+        "uncertainty": 3.065,
+        "assemble": 0.72,
+        "artifacts": 5.169,
+        "validation": 6.002
       },
       "metrics": {
         "n_px": 1048576,
@@ -299,12 +300,17 @@
         "pred_mean_height_m": 7.548758506774902,
         "true_max_height_m": 62.95526123046875,
         "pred_max_height_m": 65.040771484375
+      },
+      "delivery": {
+        "tileset": "results/cpu/real_vitl_learned\\bern\\tiles3d\\tileset.json",
+        "mesh": "results/cpu/real_vitl_learned\\bern\\mesh\\surface.obj"
       }
     },
     {
       "name": "geneva",
       "image": "D:\\UNNAT\\data\\real\\geneva\\geneva.tif",
       "reference_kind": "dsm",
+      "resumed": true,
       "tier": "A",
       "tier_reason": "georeferenced (EPSG:2056) with a public DEM",
       "anchors": {
@@ -314,16 +320,16 @@
         "total": 2581
       },
       "timings_s": {
-        "ingest": 0.042,
-        "depth": 124.327,
-        "segmentation": 0.699,
-        "shadow": 0.257,
-        "anchors": 0.495,
-        "calibration": 1.362,
-        "uncertainty": 3.754,
-        "assemble": 0.593,
-        "artifacts": 4.189,
-        "validation": 4.64
+        "ingest": 0.226,
+        "depth": 159.306,
+        "segmentation": 0.638,
+        "shadow": 0.237,
+        "anchors": 0.525,
+        "calibration": 1.45,
+        "uncertainty": 3.015,
+        "assemble": 0.623,
+        "artifacts": 5.081,
+        "validation": 7.022
       },
       "metrics": {
         "n_px": 1048576,
@@ -501,12 +507,17 @@
         "pred_mean_height_m": 5.5340352058410645,
         "true_max_height_m": 56.502655029296875,
         "pred_max_height_m": 41.25164794921875
+      },
+      "delivery": {
+        "tileset": "results/cpu/real_vitl_learned\\geneva\\tiles3d\\tileset.json",
+        "mesh": "results/cpu/real_vitl_learned\\geneva\\mesh\\surface.obj"
       }
     },
     {
       "name": "lausanne",
       "image": "D:\\UNNAT\\data\\real\\lausanne\\lausanne.tif",
       "reference_kind": "dsm",
+      "resumed": true,
       "tier": "A",
       "tier_reason": "georeferenced (EPSG:2056) with a public DEM",
       "anchors": {
@@ -516,16 +527,16 @@
         "total": 2359
       },
       "timings_s": {
-        "ingest": 0.046,
-        "depth": 143.546,
-        "segmentation": 0.805,
-        "shadow": 0.505,
-        "anchors": 0.444,
-        "calibration": 1.291,
-        "uncertainty": 3.931,
-        "assemble": 0.506,
-        "artifacts": 3.982,
-        "validation": 6.22
+        "ingest": 0.248,
+        "depth": 143.798,
+        "segmentation": 0.495,
+        "shadow": 0.214,
+        "anchors": 0.286,
+        "calibration": 1.28,
+        "uncertainty": 2.695,
+        "assemble": 0.416,
+        "artifacts": 3.896,
+        "validation": 5.428
       },
       "metrics": {
         "n_px": 1048576,
@@ -703,12 +714,17 @@
         "pred_mean_height_m": 3.5198514461517334,
         "true_max_height_m": 43.573272705078125,
         "pred_max_height_m": 32.015380859375
+      },
+      "delivery": {
+        "tileset": "results/cpu/real_vitl_learned\\lausanne\\tiles3d\\tileset.json",
+        "mesh": "results/cpu/real_vitl_learned\\lausanne\\mesh\\surface.obj"
       }
     },
     {
       "name": "zurich",
       "image": "D:\\UNNAT\\data\\real\\zurich\\zurich.tif",
       "reference_kind": "dsm",
+      "resumed": true,
       "tier": "A",
       "tier_reason": "georeferenced (EPSG:2056) with a public DEM",
       "anchors": {
@@ -718,16 +734,16 @@
         "total": 2775
       },
       "timings_s": {
-        "ingest": 0.044,
-        "depth": 131.282,
-        "segmentation": 0.798,
-        "shadow": 0.25,
-        "anchors": 0.273,
-        "calibration": 1.157,
-        "uncertainty": 4.358,
-        "assemble": 0.822,
-        "artifacts": 4.214,
-        "validation": 6.868
+        "ingest": 0.266,
+        "depth": 143.136,
+        "segmentation": 0.493,
+        "shadow": 0.176,
+        "anchors": 0.357,
+        "calibration": 1.47,
+        "uncertainty": 3.054,
+        "assemble": 0.659,
+        "artifacts": 3.92,
+        "validation": 5.528
       },
       "metrics": {
         "n_px": 1048576,
@@ -905,9 +921,13 @@
         "pred_mean_height_m": 4.380603313446045,
         "true_max_height_m": 36.97802734375,
         "pred_max_height_m": 53.5714111328125
+      },
+      "delivery": {
+        "tileset": "results/cpu/real_vitl_learned\\zurich\\tiles3d\\tileset.json",
+        "mesh": "results/cpu/real_vitl_learned\\zurich\\mesh\\surface.obj"
       }
     }
   ],
   "failures": [],
-  "wall_s": 634.1
+  "wall_s": 0.0
 }

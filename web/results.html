@@ -342,8 +342,14 @@ python -m ayama.cli dataset data/real --layout generic \
 
 # refit the structural scale on those scenes (the only learning step)
 python -m ayama.cli fit data/real --runs results/cpu/real_vitl_h1</code><button class="copy">Copy</button></pre>
-        <p>Your own image, no reference data needed:</p>
-        <pre><code>python -m ayama.cli run my_image.tif --out out/mine --preview</code><button class="copy">Copy</button></pre>
+        <p>Your own image, all four phases into one folder:</p>
+        <pre><code>python -m ayama.cli build my_image.tif --out out/mine
+
+# out/mine/
+#   dsm.tif ndsm.tif sigma.tif ...        the calibrated surface
+#   tiles3d/tileset.json                  the browser view
+#   mesh/surface.obj + .mtl + .jpg        a textured mesh for Blender/MeshLab
+python -m ayama.cli viewer out/mine       # 3D at localhost:8020</code><button class="copy">Copy</button></pre>
         <p class="note-sm">
           CPU only, and deliberately so &mdash; an order of magnitude more backbone
           moved recovered relief by less than a metre, because the bottleneck is

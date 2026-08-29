@@ -6,6 +6,7 @@ swapped, disabled or ablated from the config without touching the others.
 """
 from __future__ import annotations
 
+import gc
 import os
 import time
 from dataclasses import dataclass, field
@@ -237,12 +238,18 @@ def _fitted_scale(cfg, depth, dem_m):
     from ..learn.scale import ScaleModel, load_bundled, scene_features
 
     model = ScaleModel.load(setting) if isinstance(setting, str) and \
-        setting not in ("auto", "on", "bundled") else load_bundled()
+        setting not in ("auto", "on", "bundled") else load_bundled(depth.backbone)
     if model is None:
         return None
 
     radius = float(cfg.extras.get("hp_radius_m", 60.0))
     if abs(float(model.radius_m) - radius) > 1e-6:
+        return None
+
+    # A constant fitted against one backbone's high band does not transfer to
+    # another's. Applying it anyway is a units error dressed as a calibration,
+    # so it is refused rather than warned about.
+    if model.backbone and depth.backbone and model.backbone != depth.backbone:
         return None
 
     gsd = float(getattr(depth.meta, "gsd_m", 0) or cfg.extras.get("gsd_m", 1.0))
@@ -283,7 +290,14 @@ def run(
             batch_size=int(cfg.extras.get("batch_size", 1)),
             on_progress=lambda d, t: st.progress(d, t),
         )
-        st.done(f"{total} chips, {model.describe()}")
+        described = model.describe()
+        # Release the weights the moment the depth field exists. `dav2-vitl` is
+        # ~1.3 GB and is dead weight for the eight stages that follow; holding it
+        # meant a four-scene study peaked at several models' worth and died with
+        # a MemoryError on an 8 MiB allocation partway through the second scene.
+        del model
+        gc.collect()
+        st.done(f"{total} chips, {described}")
 
     # ---- semantics -------------------------------------------------------
     with clock.stage("segmentation") as st:

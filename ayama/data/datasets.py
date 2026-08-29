@@ -225,6 +225,16 @@ def run_scene(ref: SceneRef, out_dir: str, cfg, on_event=None) -> dict:
         # not reconstructing anything, and on this pipeline that is a live risk.
         record["zero_baseline_metrics"] = evaluate(
             np.zeros_like(pred), agl, gsd=res.surface.meta.gsd_m)
+
+    # A scene that cannot describe itself has to be recomputed to be counted,
+    # and on a machine that cannot hold two scenes at once that is the
+    # difference between a study that finishes and one that does not.
+    try:
+        from ..core.jsonio import save_json
+
+        save_json({**res.summary(), **record}, os.path.join(out_dir, "summary.json"))
+    except Exception:                      # a study must not die writing a note
+        pass
     return record
 
 

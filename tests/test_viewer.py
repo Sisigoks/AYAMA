@@ -368,7 +368,13 @@ def test_the_published_demo_tileset_is_web_sized_and_intact():
     # and grew when the fitted structural scale put real structure into the
     # height layer. That is the payload doing its job, not bloat.
     assert total < 8e6, f"demo tileset is {total / 1e6:.1f} MB; too heavy for a page"
-    assert m["mesh"] is None, "the demo must not ship the OBJ; it is 34 MB alone"
+    # The demo ships a decimated mesh: a page that shows a 3D surface and then
+    # cannot hand you one is a demo of a viewer, not of a reconstruction. Stride
+    # 16 keeps it under a megabyte; the full-resolution OBJ lives in results/.
+    mesh = m["mesh"]
+    assert mesh and mesh["obj"].endswith(".obj")
+    for key in ("obj", "mtl", "texture"):
+        assert os.path.exists(os.path.join(DEMO, mesh[key])), mesh[key]
     assert m["grid"]["quantise_bits"] == 12
 
     for lod in m["lods"]:
@@ -384,9 +390,9 @@ def test_the_published_demo_tileset_is_web_sized_and_intact():
     assert not (ids & {"flat_surface", "low_relief"}), ids
     assert m["layers"]["ndsm"]["stats"]["max"] > 30.0
 
-    # Metrics come out of the study's dataset.json, so the demo cannot drift
-    # away from the numbers the README reports for the same scene.
-    assert m["metrics"]["mae_m"] == pytest.approx(8.717, abs=0.01)
+    # Metrics come out of the study's own summary, so the demo cannot drift away
+    # from the numbers the README reports for the same scene.
+    assert m["metrics"]["mae_m"] == pytest.approx(8.723, abs=0.01)
     assert m["tier"] == "A"
 
 

@@ -9,6 +9,7 @@ Phase 2 adds `run` (full pipeline with calibration and metrics).
 from __future__ import annotations
 
 import argparse
+import gc
 import os
 import shutil
 import sys
@@ -266,7 +267,8 @@ def cmd_fit(args) -> int:
               "    guess with error bars nobody has measured. It is written anyway,\n"
               "    and the model file records how few it saw.")
 
-    model = fit(samples, rasters=rasters, radius_m=args.radius)
+    model = fit(samples, rasters=rasters, radius_m=args.radius,
+                backbone=args.backbone)
     print()
     print(model.describe())
     if np.isfinite(model.loo_mae_alt_m) and model.loo_mae_alt_m != float("inf"):
@@ -279,6 +281,94 @@ def cmd_fit(args) -> int:
     print(f"\nwrote     {path}")
     print("          the pipeline loads this automatically; --scale-model off "
           "disables it")
+    return 0
+
+
+def deliver(run_dir: str, tile: int = 512, bits: int = 12, obj_stride: int = 2,
+            live=None, quiet: bool = False) -> dict:
+    """Phases 3 and 4 into the run's own directory. Reads, never recomputes.
+
+    Everything a scene produces belongs together: the rasters Phase 2 wrote, the
+    tileset the browser reads, and the OBJ that goes into anything else. Keeping
+    the delivery layer in sibling directories meant a scene was three folders
+    that had to be matched up by hand, and a tileset could outlive the run it was
+    built from without anything noticing.
+    """
+    from .mesh.build import build_tileset
+
+    tiles_dir = os.path.join(run_dir, "tiles3d")
+    manifest = build_tileset(run_dir, tiles_dir, tile=tile, pad=1,
+                             quantise_bits=bits,
+                             obj_stride=obj_stride, write_mesh=True,
+                             mesh_dir=os.path.join(run_dir, "mesh"),
+                             on_progress=(lambda d, n_: live.set(d, n_, f"lod {d - 1}"))
+                             if live else None)
+    if not quiet:
+        g = manifest["grid"]
+        n_tiles = sum(len(l["tiles"]) for l in manifest["lods"])
+        print(f"  tileset      {len(manifest['lods'])} LODs, {n_tiles} tiles, "
+              f"{g['width']} x {g['height']} px at {g['gsd_m']:.4g} m")
+        m = manifest.get("mesh") or {}
+        if m:
+            print(f"  mesh         {m['vertices']:,} vertices, {m['triangles']:,} triangles")
+            print(f"               {os.path.basename(m['obj'])} + "
+                  f"{os.path.basename(m.get('mtl', '-'))} + "
+                  f"{os.path.basename(m.get('texture', '-'))}")
+        for note in manifest.get("notes", []):
+            mark = {"critical": "!!", "warning": " !", "info": "  "}.get(note["level"], "  ")
+            print(f"  {mark} {note['text']}")
+    return manifest
+
+
+def cmd_build(args) -> int:
+    """Phases 1 to 4 on one image, into one directory.
+
+    `run` stops after Phase 2 because tiling is cheap and inference is not, and
+    that separation is worth keeping for iteration. It is not worth keeping for
+    delivery: what someone wants from a scene is the whole scene - rasters,
+    tileset, and a textured mesh - in a folder they can move.
+    """
+    from .api.pipeline import run as run_pipeline
+    from .core.progress import Live
+    from .core.types import Config
+    from .eval.metrics import format_table
+
+    cfg = Config(
+        backbone=args.backbone, chip=args.chip, overlap=args.overlap,
+        dem_source=args.dem, reference=args.ref, gcp_file=args.gcps,
+        n_bootstrap=args.bootstrap, lattice_stride=args.stride,
+        lam_a=args.lam, lam_b=args.lam,
+        extras={"batch_size": args.batch, "workers": args.workers,
+                "segmentation": "raster" if args.sem else "heuristic",
+                "segmentation_path": args.sem,
+                "scale_model": args.scale_model,
+                "dual_branch": args.scale_model not in ("off", "none", "no")},
+    )
+    live = Live(mode=args.progress)
+    t0 = time.time()
+    print(f"AYAMA build   {os.path.basename(args.image)} -> {args.out}/   {live.banner()}")
+
+    res = run_pipeline(args.image, cfg, gcps=_load_gcps(args.gcps),
+                       out_dir=args.out, live=live)
+
+    print(f"\nTier {res.tier.value} ({res.tier_reason})")
+    print(f"anchors: {res.anchors_used} used / {res.anchors_rejected} rejected   "
+          + "  ".join(f"{k}={v}" for k, v in res.anchor_counts.items() if k != "total"))
+    if res.metrics:
+        print()
+        print(format_table(res.metrics, "VALIDATION"))
+        if res.dem_metrics:
+            print(f"\n  floor  (DEM alone)        MAE {res.dem_metrics['mae_m']:.2f} m")
+
+    print("\ndelivery")
+    with live.task("tiling", None, "lod") as t:
+        deliver(args.out, tile=args.tile, bits=args.bits,
+                obj_stride=args.obj_stride, live=t)
+
+    print(f"\nwrote     {os.path.abspath(args.out)}")
+    print("            rasters + tiles3d/ + mesh/surface.{obj,mtl,jpg}")
+    print(f"\nview it:  python -m ayama.cli viewer {args.out}")
+    print(f"total     {time.time() - t0:.1f}s")
     return 0
 
 
@@ -486,6 +576,12 @@ def cmd_viewer(args) -> int:
     # Serve web/ at the root and the tileset under /data, so the page fetches a
     # relative URL and nothing depends on where either directory happens to sit.
     web_dir, data_dir = os.path.abspath(web), os.path.abspath(tiles)
+    # The OBJ lives beside the tileset, not inside it, so a scene is one folder.
+    # The manifest therefore records it as `../mesh/surface.obj`, which a browser
+    # normalises to `/mesh/surface.obj` before the request is ever sent - hence
+    # the second route. Without it the mesh download 404s and nothing else does,
+    # which is the kind of break that ships.
+    mesh_dir = os.path.abspath(os.path.join(data_dir, os.pardir, "mesh"))
 
     class Handler(http.server.SimpleHTTPRequestHandler):
         def translate_path(self, path):
@@ -493,6 +589,8 @@ def cmd_viewer(args) -> int:
             parts = [p for p in clean.split("/") if p not in ("", ".", "..")]
             if parts and parts[0] == "data":
                 return os.path.join(data_dir, *parts[1:])
+            if parts and parts[0] == "mesh":
+                return os.path.join(mesh_dir, *parts[1:])
             return os.path.join(web_dir, *parts) if parts else os.path.join(web_dir, "index.html")
 
         def log_message(self, fmt, *a):
@@ -529,7 +627,9 @@ def cmd_delivery(args) -> int:
     from .eval.delivery import run_delivery, write_report
     from .core.jsonio import save_json
 
-    out = args.out
+    # Default the report into the run it describes. A delivery.json sitting in a
+    # sibling folder outlives the run it was measured from and nothing notices.
+    out = args.out or args.run
     os.makedirs(out, exist_ok=True)
     t0 = time.time()
     print(f"AYAMA delivery   {args.run} -> {out}/")
@@ -564,6 +664,45 @@ def cmd_delivery(args) -> int:
         print(f"    ! lod {r['lod']} {r['layer']}: {r['max_abs_error_m']:.3g} m")
     print(f"\ndone      {time.time() - t0:.1f}s   {json_path}   {md_path}")
     return 1 if bad else 0
+
+
+def _completed_scene(ref, out_dir: str, want_delivery: bool):
+    """A finished scene's record, read back off disk, or None.
+
+    Lets a study be resumed rather than restarted. That is not a convenience:
+    inference peaks at over a gigabyte and a modest machine cannot always hold
+    it, so a study that cannot resume is a study that may never finish.
+    """
+    import json
+
+    path = os.path.join(out_dir, "summary.json")
+    if not os.path.exists(path):
+        return None
+    if want_delivery and not os.path.exists(
+            os.path.join(out_dir, "tiles3d", "tileset.json")):
+        return None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            summ = json.load(fh)
+    except Exception:
+        return None
+    if not summ.get("metrics"):
+        return None
+    rec = {"name": ref.name, "image": os.path.abspath(ref.image),
+           "reference_kind": ref.reference_kind, "resumed": True}
+    for key in ("tier", "tier_reason", "anchors", "timings_s", "metrics",
+                "metrics_by_class", "baseline_metrics", "dem_metrics",
+                "ndsm_metrics", "zero_baseline_metrics", "relief"):
+        if key in summ:
+            rec[key] = summ[key]
+    # A resumed scene reports the artifacts it already has, or the record would
+    # claim less than the folder contains.
+    tileset = os.path.join(out_dir, "tiles3d", "tileset.json")
+    obj = os.path.join(out_dir, "mesh", "surface.obj")
+    if os.path.exists(tileset):
+        rec["delivery"] = {"tileset": tileset,
+                           "mesh": obj if os.path.exists(obj) else None}
+    return rec
 
 
 def cmd_dataset(args) -> int:
@@ -636,12 +775,35 @@ def cmd_dataset(args) -> int:
             )
             out_dir = os.path.join(args.out, ref.name)
             try:
+                done = _completed_scene(ref, out_dir, args.deliver)
+                if args.resume and done is not None:
+                    records.append(done)
+                    live.log(f"  {ref.name}  already done, kept")
+                    overall.set(i, len(scenes), ref.name)
+                    continue
                 rec = run_scene(ref, out_dir, cfg)
+                # The scene's arrays are dead once the record exists, and the
+                # tiler is about to read them all back off disk. Collect first:
+                # a four-scene study on an 8 GB machine has no headroom to hold
+                # both, and it does not need to.
+                gc.collect()
+                # Phases 3 and 4 into the same directory, so each scene is one
+                # folder that can be opened, moved or shipped on its own.
+                if args.deliver:
+                    man = deliver(out_dir, tile=args.tile, bits=args.bits,
+                                  obj_stride=args.obj_stride, quiet=True)
+                    rec["delivery"] = {
+                        "tileset": os.path.join(out_dir, "tiles3d", "tileset.json"),
+                        "mesh": (man.get("mesh") or {}).get("obj"),
+                        "notes": [{"level": x["level"], "id": x["id"]}
+                                  for x in man.get("notes", [])],
+                    }
                 records.append(rec)
                 m = rec.get("metrics") or {}
                 mae = m.get("mae_m")
                 live.log(f"  {ref.name}  tier {rec['tier']}  "
-                         f"MAE {'-' if mae is None else f'{mae:.2f} m'}")
+                         f"MAE {'-' if mae is None else f'{mae:.2f} m'}"
+                         + ("  +3D" if args.deliver else ""))
             except Exception as exc:                    # one bad tile must not end the run
                 failures.append({"name": ref.name, "error": f"{type(exc).__name__}: {exc}"})
                 live.log(f"  {ref.name}  FAILED  {type(exc).__name__}: {exc}")
@@ -906,6 +1068,8 @@ def build_parser() -> argparse.ArgumentParser:
                       help="where that study wrote its per-scene artifacts")
     pfit.add_argument("--layout", default="generic", choices=["generic", "us3d"])
     pfit.add_argument("--out", default="ayama/learn/calibration.json")
+    pfit.add_argument("--backbone", default="dav2-vitl",
+                      help="the backbone whose runs these are; recorded in the model")
     pfit.add_argument("--radius", type=float, default=60.0,
                       help="frequency split, metres; must match the runs")
     pfit.add_argument("--suffix-image", default=None)
@@ -913,6 +1077,31 @@ def build_parser() -> argparse.ArgumentParser:
     pfit.add_argument("--suffix-semantics", default=None)
     pfit.add_argument("--suffix-dem", default=None)
     pfit.set_defaults(func=cmd_fit)
+
+    pb = sub.add_parser("build",
+                        help="phases 1-4 on one image, into one directory")
+    pb.add_argument("image")
+    pb.add_argument("--out", default="out/build")
+    pb.add_argument("--backbone", default="dav2-vitl")
+    pb.add_argument("--chip", type=int, default=512)
+    pb.add_argument("--overlap", type=float, default=0.25)
+    pb.add_argument("--batch", type=int, default=1)
+    pb.add_argument("--workers", type=int, default=0)
+    pb.add_argument("--dem", default=None)
+    pb.add_argument("--ref", default=None)
+    pb.add_argument("--sem", default=None)
+    pb.add_argument("--gcps", default=None)
+    pb.add_argument("--bootstrap", type=int, default=12)
+    pb.add_argument("--stride", type=int, default=32)
+    pb.add_argument("--lam", type=float, default=1.0)
+    pb.add_argument("--scale-model", default="auto",
+                    help="fitted structural scale: auto, off, a number, or a path")
+    pb.add_argument("--tile", type=int, default=512)
+    pb.add_argument("--bits", type=int, default=12)
+    pb.add_argument("--obj-stride", type=int, default=2,
+                    help="mesh decimation; 1 is full resolution")
+    pb.add_argument("--progress", default="auto", choices=["auto", "rich", "plain", "none"])
+    pb.set_defaults(func=cmd_build)
 
     pr = sub.add_parser("run", help="full pipeline: depth -> anchors -> metric DSM (Phase 2)")
     pr.add_argument("image")
@@ -998,9 +1187,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     pdel = sub.add_parser("delivery",
                           help="Phase 3/4 CPU benchmark: build cost, payload, viewer CPU")
-    pdel.add_argument("run", nargs="?", default="results/cpu/real_vitl_h1/zurich",
-                      help="a directory written by `ayama run`")
-    pdel.add_argument("--out", default="results", help="where delivery.json lands")
+    pdel.add_argument("run", nargs="?", default="results/cpu/real_vitl_learned/zurich",
+                      help="a directory written by `ayama run` or `ayama build`")
+    pdel.add_argument("--out", default=None,
+                      help="where delivery.json lands (default: inside the run "
+                           "directory, so a scene stays one folder)")
     pdel.add_argument("--tile", type=int, default=512, help="tile size for the reference build")
     pdel.add_argument("--tiles", default="128,256,512,1024", help="tile sizes to sweep")
     pdel.add_argument("--obj-strides", default="1,2,4,8", help="mesh decimations to sweep")
@@ -1030,6 +1221,13 @@ def build_parser() -> argparse.ArgumentParser:
     pds.add_argument("--workers", type=int, default=0)
     pds.add_argument("--scale-model", default="auto",
                      help="fitted structural scale: auto, off, a number, or a path")
+    pds.add_argument("--resume", action="store_true",
+                     help="keep scenes already finished in --out and skip them")
+    pds.add_argument("--deliver", action="store_true",
+                     help="also run phases 3 and 4 into each scene's own directory")
+    pds.add_argument("--tile", type=int, default=512)
+    pds.add_argument("--bits", type=int, default=12)
+    pds.add_argument("--obj-stride", type=int, default=2)
     pds.add_argument("--dual-branch", action="store_true",
                      help="experimental H2 calibration (README 5.5)")
     pds.add_argument("--progress", default="auto", choices=["auto", "rich", "plain", "none"])

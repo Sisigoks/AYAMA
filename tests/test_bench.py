@@ -75,6 +75,16 @@ def test_repeated_model_loads_survive_in_one_sweep():
     shape that used to take the interpreter down at the last stage.
     """
     rep = sweep(size=256, backbones=[BACKBONE], chips=[128, 256], batches=[1, 2])
-    assert len(rep["results"]) == 4
-    assert all("error" not in r for r in rep["results"]), \
-        [r.get("error") for r in rep["results"]]
+
+    # The contract is that a dead case is a ROW, not the end of the sweep. It is
+    # deliberately not "all four succeed": whether a case succeeds depends on how
+    # much memory the machine happens to have, and asserting that made this test
+    # fail on a loaded laptop while the code under test behaved exactly as
+    # designed - it recorded two OOMs as rows and finished the other two.
+    assert len(rep["results"]) == 4, "the sweep lost a case"
+    for r in rep["results"]:
+        assert {"backbone", "chip", "batch_size"} <= set(r)
+        if "error" not in r:
+            assert r["n_chips"] >= 1 and r["wall_s"] > 0
+    assert any("error" not in r for r in rep["results"]), \
+        "every case failed: " + str([x.get("error") for x in rep["results"]])

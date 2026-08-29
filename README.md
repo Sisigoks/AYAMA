@@ -17,7 +17,8 @@ negative result, and a diagnosed failure mode.
 > buildings do, and one affine field per neighbourhood serves the majority.
 >
 > Supplying that missing scale — **one constant, fitted once over the dataset**
-> — recovers **36% of true relief** and beats the flat-ground floor by **29%**,
+> — recovers **27–36% of true relief** and beats the flat-ground floor by
+> **19–29%**,
 > while elevation MAE gets *worse*. That trade is the finding: on this problem
 > the headline metric and reconstruction quality point in opposite directions.
 > The surface has stopped being flat; it has not started being right.
@@ -97,10 +98,10 @@ change that recovered any structure.**
 | H1 (spatial > global) | **supported** — MAE 8.39 vs 11.18 m |
 | Clears DEM-only floor? | **no** — 8.39 vs 8.47 m, a 0.9% margin on a 1.35 m spread |
 | Clears flat-ground floor? | **yes, with the fitted scale** — 5.41 vs 7.59 m (−29%); without it, no (−1%) |
-| Structure recovered | **36%** — 5.25 m of a true 14.38 m. Was 1.2% |
+| Structure recovered | **36%** (ViT-L), **27%** (ViT-S) — was 1.2% and 0.4% |
 | Structure *accurate*? | **no** — Zürich overshoots its tallest by 45%, Geneva undershoots by 27% |
 | Uncertainty calibrated | **no** — 1σ coverage 0.43, and blind to the bias that dominates |
-| Phases 3 & 4 | **run on CPU** on the real scene (§3.6) |
+| Delivery | **all four phases, one folder per scene** — rasters, tileset, textured OBJ (§3.6) |
 
 ---
 
@@ -653,6 +654,9 @@ error (§2.5).
 | ECE (m) | 5.50 ± 1.46 | 5.40 ± 1.85 | — | — |
 | **δ < 1.25** | **0.007 ± 0.009** | **0.174 ± 0.049** | — | — |
 
+Both columns are `dav2-vitl`, the primary arm. The `dav2-vits` equivalent is
+committed too (§3.2) — same shape, smaller margins.
+
 **H1 is supported.** Spatial calibration beats a single global `a·D + b` by a
 wide margin — 8.39 against 11.18 m, a 25% reduction. The anchor graph is doing
 real work relative to the scalar fit.
@@ -677,47 +681,53 @@ that was supplied, not inferred. The quantity ĀYĀMA claims is **height above
 ground**, and it is measurable here because a bare-earth lidar DTM ships with
 every tile.
 
-| | anchors only | anchors only | **+ fitted scale** |
-|---|---|---|---|
-| | ViT-S H1 | **ViT-L H1** | **ViT-L, `ayama fit`** |
-| nDSM MAE (m) | 7.573 | 7.513 | **5.413 ± 0.584** |
-| **flat ground — predict 0 everywhere (m)** | 7.592 | 7.592 | 7.592 |
-| **vs that floor** | −0.3% | −1.0% | **−28.7%** |
-| mean height recovered (m) | 0.058 | 0.170 | **5.246 ± 1.509** |
-| true mean height (m) | 14.376 | 14.376 | 14.376 |
-| **fraction of relief recovered** | 0.4% | 1.2% | **36.5%** |
-| edge F1 | 0.210 | 0.411 | **0.604 ± 0.095** |
-| δ < 1.25 | 0.009 | 0.007 | **0.174 ± 0.049** |
+| | anchors only | anchors only | **+ fitted scale** | **+ fitted scale** |
+|---|---|---|---|---|
+| | ViT-S | ViT-L | ViT-S | **ViT-L (primary)** |
+| nDSM MAE (m) | 7.573 | 7.513 | 6.14 | **5.41** |
+| **flat ground — predict 0 (m)** | 7.592 | 7.592 | 7.592 | 7.592 |
+| **vs that floor** | −0.3% | −1.0% | −19.1% | **−28.7%** |
+| mean height recovered (m) | 0.058 | 0.170 | 3.86 | **5.25** |
+| true mean height (m) | 14.376 | 14.376 | 14.376 | 14.376 |
+| **fraction of relief recovered** | 0.4% | 1.2% | 26.8% | **36.5%** |
+| edge F1 | 0.210 | 0.411 | 0.499 | **0.604** |
+| δ < 1.25 | 0.009 | 0.007 | 0.164 | **0.174** |
 
 > **The anchor graph alone cannot reconstruct.** Both backbones, both
 > calibrations, four cities: under 1.3% of the true relief, statistically
 > indistinguishable from a flat sheet, in scenes where 44–64% of pixels stand
 > more than 2 m above ground and buildings reach 63 m.
 >
-> **Supplying one fitted number changes that.** The same pipeline with a
-> structural scale fitted over the dataset (§5) recovers **36% of true relief**
-> and beats the flat-ground floor by **29%**. δ₁ rises 25-fold.
+> **Supplying one fitted number changes that** on both backbones — 27% and 36%
+> of true relief, against a flat-ground floor beaten by 19% and 29%. δ₁ rises
+> more than twentyfold.
 
-Per scene, with the fitted scale:
+Both fitted arms are delivered end to end (§3.6) and committed. `dav2-vitl` is
+the primary; the `dav2-vits` column is the cross-backbone check, and the two
+agreeing is what makes this a property of the formulation rather than of one
+depth model.
+
+Per scene, `dav2-vitl` with the fitted scale:
 
 | scene | nDSM MAE | flat floor | mean height | true | predicted max | true max |
 |---|---|---|---|---|---|---|
 | Bern | 6.17 m | 10.45 m | 7.55 m | 16.2 m | **65.0 m** | 63.0 m |
 | Geneva | 5.14 m | 6.90 m | 5.53 m | 15.7 m | 41.3 m | 56.5 m |
 | Lausanne | 4.63 m | 5.86 m | 3.52 m | 11.9 m | 32.0 m | 43.6 m |
-| Zürich | 5.72 m | 7.16 m | 4.38 m | 13.7 m | 53.6 m | 37.0 m |
+| Zürich | 5.72 m | 7.16 m | 4.38 m | 13.7 m | **53.6 m** | 37.0 m |
 
 **This is not accuracy, and the table says so.** Bern's tallest structure comes
-back at 65.0 m against a true 63.0 m; Zürich's at 53.6 m against a true 37.0 m —
-a 45% overshoot on the same scene where Geneva undershoots by 27%. The surface
-has stopped being flat. It has not started being right. A 5.4 m nDSM MAE on
-14 m structures is not a usable product, and §6 says what would be needed.
+back at 65.0 m against a true 63.0 m — and Zürich's at 53.6 m against a true
+37.0 m, a 45% overshoot on the scene where Geneva undershoots by 27%. A 5.4 m
+nDSM MAE on 14 m structures is not a usable product. The surface has stopped
+being flat; it has not started being right, and §6 says what that would take.
 
-**And elevation MAE gets worse.** 8.39 → 9.04 m, which is the honest cost of the
-trade: putting imperfectly-placed relief into a surface increases absolute error
-against the reference while making the surface a reconstruction rather than a
-resurfaced DEM. Any project that optimises the headline number will choose the
-flat sheet. That is the argument for §2.3's second floor, in one line.
+**And elevation MAE gets worse.** 8.39 → 9.04 m on ViT-L, 8.53 → 9.39 on ViT-S.
+That is the honest cost: putting imperfectly-placed relief into a surface
+increases absolute error against the reference while making the surface a
+reconstruction rather than a resurfaced DEM. Any project optimising the headline
+number will choose the flat sheet. That is the argument for §2.3's second floor,
+in one line.
 
 ## 3.3 Error by class
 
@@ -803,39 +813,55 @@ has no term for a systematically absent signal. σ cannot see the failure that
 matters, which is the honest general lesson: an uncertainty model built from
 residual spread cannot report a component the model never attempts.
 
-## 3.6 Phase 3 and Phase 4 on the real scene, CPU
+## 3.6 Delivery: one image, one folder, all four phases
 
-Both delivery phases run on the real Zürich reconstruction. Artifacts: [`results/cpu/phase3_tiles`](results/cpu/phase3_tiles) and
-[`results/cpu/phase4_delivery`](results/cpu/phase4_delivery).
+`ayama build` runs Phase 1 through Phase 4 on a single image and leaves
+everything in one directory. That is a correction, not a feature: the delivery
+layer used to write into sibling folders, so a scene was three directories that
+had to be matched up by hand and a tileset could outlive the run it was built
+from without anything noticing.
+
+```bash
+python -m ayama.cli build scene.tif --out results/cpu/zurich \
+    --dem copernicus.tif --ref lidar_dsm.tif
+```
 
 ```
-mesh      1024 x 1024 px at 0.5 m -> 4 LODs, 7 tiles of 512 px (+1 px pad)
-          layers  dsm  error  ndsm  normal  sigma  texture
-          mesh    mesh/surface.obj   262,144 vertices, 522,242 triangles
-          45.6 s
-          ! Height above ground reaches 4.80 m; structures look under-built.
+results/cpu/real_vitl_learned/zurich/
+  relative_depth.tif                                   phase 1
+  dsm.tif ndsm.tif sigma.tif error.tif sem.tif shadow.tif
+  dsm.png ndsm.png sigma.png error.png texture.jpg     phase 2
+  provenance.json
+  tiles3d/  tileset.json + tiles/                      phase 3
+  mesh/     surface.obj + surface.mtl + surface.jpg    phase 4
 ```
 
-That warning is derived from the data, not typed in — the tiler computes it from
-the nDSM range it was handed, so §3.2's finding propagates into the delivered
-artifact instead of being lost at the hand-off.
+**The mesh is the deliverable.** A textured OBJ with its material sidecar and
+the JPG it references — `mtllib` and `map_Kd` wired by name — which opens in
+Blender, MeshLab or CloudCompare with nothing installed. Vertices are in metres
+in the scene CRS, not pixels, which is asserted by a test because a mesh in
+pixel units is silently wrong in every downstream tool. The tileset is the
+browser view of the same surface, and the OBJ sits beside it rather than inside
+it so the folder can be moved as a unit.
 
-| delivery sweep | result |
+The tiler writes its own verdict into `tileset.json` from the height
+distribution it was handed, so §3.2's finding travels with the artifact instead
+of being lost at the hand-off. It uses neither ground truth nor segmentation —
+§8 records the two ways that check was wrong before it got there.
+
+| delivery sweep (Zürich, 1024², CPU) | result |
 |---|---|
-| build | 7.35 s tiles, 13.92 s with the OBJ (0.14 Mpix/s) |
-| payload | 44.9 MB total, **5.18 MB before first paint** |
+| build | 7.35 s tiles, 13.92 s with the OBJ |
+| payload | 5.5 MB whole pyramid, **1.45 MB for the LOD the viewer opens** |
 | tile size 128 / 256 / 512 / 1024 | 10.94 / 10.84 / 10.83 / 10.85 MB — flat |
 | mesh stride 2 → 4 | 522,242 → 130,050 triangles, 33.6 → 7.8 MB |
-| quantisation, 24-bit → 12-bit | nDSM 1274→576 kB (worst error 0.00175 m); σ 2365→538 kB; error 2745→1196 kB |
+| quantisation, 24-bit → 12-bit | nDSM 1274→576 kB, **worst error 1.75 mm** |
 | round trip | 16/16 layer-LOD pairs within half a step |
-| viewer | 66 ms before first paint (browser rasterisation not measured) |
+| viewer | 66 ms before first paint |
 
 Tile size is irrelevant to payload over a 16× range, so it is a latency and
 cache decision rather than a bandwidth one. 12-bit quantisation costs 1.75 mm on
-a layer whose true content spans 37 m — the encoding is not what is losing the
-structure.
-
----
+a layer spanning 53 m — the encoding is not what limits the result.
 
 # 4. Failure analysis: terrain and structure demand different scales
 
@@ -1062,6 +1088,16 @@ Depth inference does not, and there is no weightless stand-in — a placeholder
 that fabricates a plausible depth field is exactly how an invented number
 reaches a results table, so it was removed.
 
+Then, on any image, all four phases into one folder:
+
+```bash
+python -m ayama.cli build my_image.tif --out out/mine
+python -m ayama.cli viewer out/mine          # 3D at localhost:8020, press F to fly
+```
+
+That needs no reference data. Add `--dem` for a public DEM (Tier A) and `--ref`
+for a lidar DSM if you have one and want metrics.
+
 | command | produces | time (CPU) |
 |---|---|---|
 | `python scripts/fetch_swisstopo.py --out data/real/zurich` | one real scene + lidar truth (~91 MB) | 60 s |
@@ -1070,8 +1106,9 @@ reaches a results table, so it was removed.
 | `python -m ayama.cli sample --out data/sample.tif` | the bundled real sample scene, no download | 1 s |
 | `python -m ayama.cli run <scene> --workers 8` | one scene, threaded bootstrap | 42 s |
 | `python -m ayama.cli preflight` | end-to-end verdict on this machine | 20 s |
-| `python -m ayama.cli mesh results/cpu/real_vitl_h1/zurich --out results/cpu/phase3_tiles` | §3.6 — browser tileset + OBJ | 46 s |
-| `python -m ayama.cli delivery results/cpu/real_vitl_h1/zurich --out results/cpu/phase4_delivery` | §3.6 — `delivery.json` | 179 s |
+| **`python -m ayama.cli build <image> --out <dir>`** | **§3.6 — phases 1-4 into one folder: rasters, tileset, textured OBJ** | **~120 s** |
+| `python -m ayama.cli mesh <scene> ` | phase 3 alone, into `<scene>/tiles3d` | 10 s |
+| `python -m ayama.cli delivery <scene>` | the delivery benchmark sweep | 179 s |
 | `python -m ayama.cli viewer results/cpu/real_vitl_h1/zurich` | interactive 3D at `localhost:8020` | 5 s |
 | `python -m ayama.cli serve` | the web service: upload an image, get a 3D reconstruction | — |
 | `python -m ayama.cli dataset <root> --layout us3d` | the pipeline over a **real** dataset (§2.7) | — |
@@ -1167,7 +1204,7 @@ tile written from a Phase 2 raster, and `tileset.json` records which run.
 | quantisation cost | nDSM 24→12 bit, worst error **1.75 mm** on a 53 m range |
 | viewer first paint | 66 ms CPU (browser rasterisation not measured) |
 
-Full report: [`results/cpu/phase4_delivery/DELIVERY.md`](results/cpu/phase4_delivery/DELIVERY.md).
+Full report: [`results/cpu/real_vitl_learned/zurich/DELIVERY.md`](results/cpu/real_vitl_learned/zurich/DELIVERY.md).
 
 **Two encodings, because one is insufficient.** Mapbox Terrain-RGB's [5] fixed
 0.1 m step is right for elevation and wrong for the derived layers: σ spans
@@ -1404,7 +1441,7 @@ web/           the whole front end, one root, no build step
                data/        - the committed demo tileset the 3D loads (real Zurich)
 results/       cpu/  real_vitl_h1|h2, real_vits_h1|h2   anchors only
                      real_vitl_learned                  with the fitted scale (§5)
-                     phase3_tiles, phase4_delivery      the delivery layer
+               each scene is ONE folder: rasters + tiles3d/ + mesh/
 out/           local build artifacts only - gitignored, never committed
 ```
 

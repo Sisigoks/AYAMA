@@ -1,7 +1,7 @@
 """The delivery benchmark is evidence, so its shape and its honesty are a contract.
 
-`results/DELIVERY.md` is rendered from `results/delivery.json`, and the README
-quotes both. These tests run a miniature benchmark and assert the keys exist,
+`DELIVERY.md` is rendered from `delivery.json`, both written into the scene
+directory they describe, and the README quotes both. These tests run a miniature benchmark and assert the keys exist,
 the numbers are self-consistent, and - the part that matters - that the sweeps
 cannot report a saving which is really a deleted measurement.
 

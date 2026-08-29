@@ -112,6 +112,12 @@ def scene_target(pos_high: np.ndarray, ndsm_true: np.ndarray) -> float:
 class ScaleModel:
     """What gets shipped: a rule for turning high-band depth into metres."""
 
+    # Which depth model produced the fields this was fitted against. Relative
+    # depth is normalised per scene, but two backbones do not distribute it the
+    # same way, so a constant in metres per unit of high-band depth is only
+    # meaningful for the backbone that produced that band. Recorded, checked,
+    # and warned about rather than silently applied.
+    backbone: str = ""
     kind: str = "constant"            # "constant" | "linear"
     value: float = 0.0                # constant: the scale itself
     feature: Optional[str] = None     # linear: which feature
@@ -143,11 +149,12 @@ class ScaleModel:
         return 1.0 - self.loo_mae_m / self.floor_mae_m
 
     def describe(self) -> str:
+        head_bb = f" [{self.backbone}]" if self.backbone else ""
         if self.kind == "linear":
             head = f"linear on 1/{self.feature}: a = {self.coef:.3f}/x + {self.intercept:.1f}"
         else:
             head = f"constant a = {self.value:.1f} m per unit of high-band depth"
-        return (f"{head}\n"
+        return (f"{head}{head_bb}\n"
                 f"  fitted on {self.n_scenes} scene(s), held-out nDSM MAE "
                 f"{self.loo_mae_m:.2f} m vs a flat-ground floor of "
                 f"{self.floor_mae_m:.2f} m "
@@ -170,14 +177,30 @@ class ScaleModel:
         return cls(**{k: v for k, v in d.items() if k in known})
 
 
-def load_bundled() -> Optional[ScaleModel]:
-    """The calibration shipped with the package, or None if absent."""
-    if not os.path.exists(BUNDLED):
-        return None
-    try:
-        return ScaleModel.load(BUNDLED)
-    except Exception:
-        return None
+def load_bundled(backbone: str = "") -> Optional[ScaleModel]:
+    """The calibration shipped for `backbone`, or None if none applies.
+
+    One file per backbone, because the constant is only meaningful for the high
+    band the backbone that produced it emits. `calibration.json` is the primary
+    (dav2-vitl); others sit beside it as `calibration_<backbone>.json`. Asking
+    for a backbone with no fitted scale returns None rather than the wrong one.
+    """
+    candidates = []
+    if backbone:
+        candidates.append(os.path.join(os.path.dirname(__file__),
+                                       f"calibration_{backbone}.json"))
+    candidates.append(BUNDLED)
+    for path in candidates:
+        if not os.path.exists(path):
+            continue
+        try:
+            model = ScaleModel.load(path)
+        except Exception:
+            continue
+        if backbone and model.backbone and model.backbone != backbone:
+            continue
+        return model
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -206,7 +229,8 @@ def _held_out_mae(a_hat: float, pos: np.ndarray, ndsm_true: np.ndarray) -> float
 
 
 def fit(samples: Sequence[Sample], rasters: Optional[dict] = None,
-        radius_m: float = 60.0, feature: str = FEATURE) -> ScaleModel:
+        radius_m: float = 60.0, feature: str = FEATURE,
+        backbone: str = "") -> ScaleModel:
     """Fit the scale, and let leave-one-out choose the model family.
 
     `rasters` maps scene name -> (positive high band, true nDSM). When it is
@@ -253,6 +277,7 @@ def fit(samples: Sequence[Sample], rasters: Optional[dict] = None,
                            if np.isfinite(s.floor_mae)] or [float("nan")]))
 
     model = ScaleModel(
+        backbone=backbone,
         kind="linear" if use_linear else "constant",
         value=const_all,
         feature=feature if use_linear else None,

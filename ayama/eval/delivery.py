@@ -819,7 +819,7 @@ def write_report(rep: dict, path: str) -> str:
     A("## Reproducing this")
     A("")
     A("```bash")
-    A("python -m ayama.cli delivery results/cpu/real_vitl_h1/zurich --out results/cpu/phase4_delivery")
+    A("python -m ayama.cli delivery results/cpu/real_vitl_learned/zurich")
     A("```")
     A("")
 

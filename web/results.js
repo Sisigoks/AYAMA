@@ -21,6 +21,7 @@ const mean = (o) => (o && isFinite(o.mean)) ? o.mean : null;
 // gap between them is the finding.
 const ARMS = [
   { id: 'real_vitl_learned', backbone: 'dav2-vitl', calib: 'dual branch + fitted scale', primary: true },
+  { id: 'real_vits_learned', backbone: 'dav2-vits', calib: 'dual branch + fitted scale' },
   { id: 'real_vitl_h1', backbone: 'dav2-vitl', calib: 'single affine (H1)' },
   { id: 'real_vitl_h2', backbone: 'dav2-vitl', calib: 'dual branch (H2)' },
   { id: 'real_vits_h1', backbone: 'dav2-vits', calib: 'single affine (H1)' },
