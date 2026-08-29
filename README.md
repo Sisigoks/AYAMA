@@ -831,7 +831,7 @@ results/cpu/real_vitl_learned/zurich/
   relative_depth.tif                                   phase 1
   dsm.tif ndsm.tif sigma.tif error.tif sem.tif shadow.tif
   dsm.png ndsm.png sigma.png error.png texture.jpg     phase 2
-  provenance.json
+  provenance.json  summary.json                        what this scene scored
   tiles3d/  tileset.json + tiles/                      phase 3
   mesh/     surface.obj + surface.mtl + surface.jpg    phase 4
 ```
