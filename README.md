@@ -1418,46 +1418,47 @@ tour at all.
 
 ### The web service
 
-`traksha serve` turns the batch pipeline into something a person can use: upload a
-nadir image, watch it reconstruct, look at the result in 3D, download the
-GeoTIFFs.
+Upload an image, watch it reconstruct, look at it in 3D and download the mesh.
+This is the interactive front end; `viewer` serves one prebuilt scene and runs
+no pipeline.
 
 ```bash
-pip install -e ".[api]"
-python -m traksha.cli serve --port 8000 --device auto
+python -m traksha.cli serve           # http://127.0.0.1:8000
 ```
 
-| surface | what it is |
-|---|---|
-| `/` | upload form → live progress → the 3D viewer, one page |
-| `POST /api/jobs` | multipart upload, returns `202` and a job id |
-| `GET /api/jobs/{id}/events` | **SSE**, one message per pipeline stage |
-| `GET /api/jobs/{id}/tiles/…` | the tileset, in the layout the viewer already expects |
-| `GET /api/jobs/{id}/artifacts/{name}` | the COGs, so a result can leave the browser for QGIS |
+A 384 px upload takes about 20 s on the reference CPU and returns a tileset the
+viewer loads plus `surface.obj` + `.mtl` + `.jpg` to download. It runs the same
+pipeline as everything else, **including the fitted structural scale** — a test
+asserts an upload comes back with relief rather than a flat sheet, because it
+once did not: the job service built its own `Config` and never set
+`scale_model`, so uploads silently ran the anchors-only path and returned 0.4 m
+of relief on a scene carrying 33 m of it. The pipeline was behaving exactly as
+§3.2 describes and serving it as though it were the product.
 
-Three things worth stating about the design.
+There is no authentication and no rate limiting. It binds to localhost for that
+reason.
 
-**The viewer is unchanged.** `web/app.js` resolves its tileset from a base URL,
-so the same renderer serves a prebuilt local tileset (`traksha viewer`) and a
-freshly reconstructed job (`?job=<id>`). Nothing in the rendering path is
-service-specific, and the result URL is shareable.
+### Running it on Colab
 
-**Progress is streamed, not polled.** `StageEvent` was defined for this — the
-browser watches `anchors`, then `calibration`, then `uncertainty` go past with
-their real detail lines. A two-minute wait that names its stages is an
-explanation; a spinner is not.
+`http://127.0.0.1:8000` is inside the Colab VM and your browser cannot reach it,
+so the server starts, prints a URL, and the tab fails to open. `serve` detects
+this and prints the fix; here it is directly.
 
-**The result states its own defects.** `derive_notes` runs on the served surface,
-so a reconstruction that came out flat (§4) says so on the result screen rather
-than presenting a plausible-looking plain. The landing page says it before the
-upload, too.
+**`!python -m traksha.cli serve` cannot work.** It blocks the cell forever, and
+only a Python cell can ask Colab for a proxy URL. Use a Python cell:
 
-**What it deliberately is not:** no authentication, no rate limiting beyond a
-single worker slot, no persistence across restarts, no HTTPS. It is a demo
-server for a research artifact and should not be exposed to the internet
-unchanged. The upload path is the one hard edge — extension *and* magic-byte
-checks, a size cap, generated job ids, and path resolution that refuses anything
-escaping the job directory. Those are tested, including the refusals.
+```python
+import subprocess, time
+from google.colab.output import eval_js
+
+subprocess.Popen(['python', '-m', 'traksha.cli', 'serve',
+                  '--host', '0.0.0.0', '--port', '8000'])
+time.sleep(8)
+print(eval_js('google.colab.kernel.proxyPort(8000)'))
+```
+
+Open the URL that prints. The same pattern serves the results dashboard, with
+`scripts/serve.py --port 8000 --no-open` in place of the CLI call.
 
 ### Not implemented
 

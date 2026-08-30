@@ -963,6 +963,42 @@ def cmd_dataset(args) -> int:
     return 1 if failures and not records else 0
 
 
+def in_notebook_vm() -> str:
+    """"colab", "kaggle" or "" - a hosted VM whose localhost you cannot reach.
+
+    Worth detecting because the failure is silent and misleading: the server
+    starts, prints a URL, and the browser cannot open it, because 127.0.0.1 is
+    inside the VM and the browser is not. Printing a working instruction beats
+    printing an address that looks right.
+    """
+    import sys
+
+    if "google.colab" in sys.modules or os.path.isdir("/content"):
+        return "colab"
+    if os.environ.get("KAGGLE_KERNEL_RUN_TYPE"):
+        return "kaggle"
+    return ""
+
+
+def _print_hosted_help(port: int, what: str) -> None:
+    print()
+    print("  ! This looks like Colab. http://127.0.0.1:%d is inside the VM and" % port)
+    print("    your browser cannot reach it, so the tab will fail to open.")
+    print()
+    print("    Stop this cell, and run %s from a PYTHON cell instead:" % what)
+    print()
+    print("      import subprocess, time")
+    print("      from google.colab.output import eval_js")
+    print("      subprocess.Popen(['python', '-m', 'traksha.cli', 'serve',")
+    print("                        '--host', '0.0.0.0', '--port', '%d'])" % port)
+    print("      time.sleep(8)")
+    print("      print(eval_js('google.colab.kernel.proxyPort(%d)'))" % port)
+    print()
+    print("    Open the URL that prints. `!python ...` cannot do this: it blocks")
+    print("    the cell, and only a Python cell can ask Colab for a proxy URL.")
+    print()
+
+
 def cmd_serve(args) -> int:
     """Run the web service: upload a scene, watch it reconstruct, view it in 3D.
 
@@ -973,13 +1009,17 @@ def cmd_serve(args) -> int:
     """
     from .api.server import serve
 
+    hosted = in_notebook_vm()
     print(f"TRAKSHA serve   http://{args.host}:{args.port}/")
     print(f"  jobs         {os.path.abspath(args.jobs)}")
     print(f"  concurrency  {args.concurrency} reconstruction"
           f"{'' if args.concurrency == 1 else 's'} at a time")
     if args.host not in ("127.0.0.1", "localhost"):
         print("  ! bound beyond localhost: there is no auth and no rate limiting here")
-    print()
+    if hosted:
+        _print_hosted_help(args.port, "it")
+    else:
+        print()
     try:
         return serve(host=args.host, port=args.port, jobs_root=args.jobs,
                      max_concurrent=args.concurrency)

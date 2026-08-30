@@ -183,3 +183,50 @@ def test_health_reports_the_machine(client):
     h = client.get("/api/health").json()
     assert h["ok"] is True
     assert "cpu_count" in h and "torch" in h
+
+
+def test_an_upload_comes_back_with_relief_not_a_flat_sheet(client):
+    """The failure a user would actually see, and the one that shipped.
+
+    The job service built its own Config and never set `scale_model` or
+    `dual_branch`, so an upload ran the anchors-only path: 0.4 m of relief on a
+    scene carrying 33 m of it. The pipeline was working exactly as README
+    section 3.2 describes and serving the result as if it were the product.
+    """
+    import io as _io
+    import os as _os
+    import tempfile
+    import time
+
+    from traksha.data.sample import load_sample_scene
+    from traksha.dsm.cog import write_rgb
+
+    sc = load_sample_scene(size=384)
+    with tempfile.TemporaryDirectory() as d:
+        path = _os.path.join(d, "s.tif")
+        write_rgb(path, sc.rgb, sc.meta)
+        with open(path, "rb") as fh:
+            buf = _io.BytesIO(fh.read())
+
+    r = client.post("/api/jobs",
+                    files={"image": ("s.tif", buf, "image/tiff")},
+                    data={"backbone": "dav2-vits", "chip": "384",
+                          "bootstrap": "3", "mesh": "true"})
+    assert r.status_code == 202
+    jid = r.json()["id"]
+    for _ in range(600):
+        job = client.get(f"/api/jobs/{jid}").json()
+        if job["status"] in ("done", "error"):
+            break
+        time.sleep(0.5)
+    assert job["status"] == "done", job.get("error")
+
+    m = client.get(f"/api/jobs/{jid}/tiles/tileset.json").json()
+    assert m["layers"]["ndsm"]["stats"]["max"] > 5.0, (
+        "an upload came back flat - the job service lost the fitted "
+        "structural scale (traksha/api/jobs.py)")
+    # and the mesh a viewer can actually download
+    mesh = m.get("mesh")
+    assert mesh and mesh["triangles"] > 1000
+    for key in ("obj", "mtl", "texture"):
+        assert client.get(f"/api/jobs/{jid}/tiles/{mesh[key]}").status_code == 200

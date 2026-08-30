@@ -176,7 +176,16 @@ class JobStore:
                     reference=p.get("reference") or None,
                     extras={
                             "batch_size": int(p.get("batch", 0)),
-                            "workers": int(p.get("workers", 0))},
+                            "workers": int(p.get("workers", 0)),
+                            # The fitted structural scale, exactly as `run` and
+                            # `dataset` use it. Without these two an upload came
+                            # back as a flat sheet - 0.4 m of relief on a scene
+                            # with 33 m of it - which is the failure README
+                            # section 3.2 describes, served to a user as if it
+                            # were the product.
+                            "scale_model": p.get("scale_model", "auto"),
+                            "dual_branch": p.get("scale_model", "auto")
+                            not in ("off", "none", "no")},
                 )
                 out_dir = os.path.join(job.dir, "run")
                 res = run_pipeline(src, cfg=cfg, out_dir=out_dir,

@@ -61,6 +61,13 @@ def assemble(dest: str) -> str:
     return dest
 
 
+def _hosted() -> bool:
+    """Colab and friends: localhost is inside the VM, not in the browser."""
+    import sys
+
+    return "google.colab" in sys.modules or os.path.isdir("/content")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8000)
@@ -82,6 +89,18 @@ def main() -> int:
     with socketserver.TCPServer(("", args.port), Handler) as httpd:
         url = f"http://localhost:{args.port}/"
         print(f"serving {url}   (ctrl-c to stop)")
+    if _hosted():
+        print()
+        print("  ! On Colab this address is inside the VM and your browser")
+        print("    cannot open it. Run this from a PYTHON cell instead:")
+        print()
+        print("      import subprocess, time")
+        print("      from google.colab.output import eval_js")
+        print("      subprocess.Popen(['python', 'scripts/serve.py',")
+        print(f"                        '--port', '{args.port}', '--no-open'])")
+        print("      time.sleep(4)")
+        print(f"      print(eval_js('google.colab.kernel.proxyPort({args.port})'))")
+        print()
         if not args.no_open:
             webbrowser.open(url)
         try:
