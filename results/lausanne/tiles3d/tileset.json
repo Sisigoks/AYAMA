@@ -1,6 +1,6 @@
 {
-  "ayama_tileset_version": 1,
-  "generated_utc": "2026-08-30T07:33:57Z",
+  "traksha_tileset_version": 1,
+  "generated_utc": "2026-08-30T09:25:04Z",
   "source_run": "D:\\UNNAT\\results\\lausanne",
   "grid": {
     "width": 1024,
@@ -295,15 +295,21 @@
   "mesh": {
     "obj": "../mesh/surface.obj",
     "mtl": "../mesh/surface.mtl",
-    "vertices": 65536,
-    "triangles": 130050,
+    "vertices": 250302,
+    "triangles": 499125,
     "dropped_quads": 0,
     "grid": [
-      256,
-      256
+      1024,
+      1024
     ],
-    "step_m": 2.0,
+    "step_m": 0.5,
     "exaggeration": 1.0,
+    "adaptive": {
+      "tol_m": 1.875,
+      "block": 8,
+      "fine_blocks": 3214,
+      "blocks": 16384
+    },
     "texture": "../mesh/surface.jpg"
   },
   "provenance": {

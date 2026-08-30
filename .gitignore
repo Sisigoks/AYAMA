@@ -34,7 +34,7 @@ web/dist/
 # being a study you have to run before you can look at anything.
 #
 # Not committed: the GeoTIFFs (~12 MB a scene) and the tile pyramids. Both
-# rebuild from the committed inputs in seconds with `ayama build`, and the
+# rebuild from the committed inputs in seconds with `traksha build`, and the
 # published viewer already carries a tileset at web/data.
 results/**/*.tif
 results/**/*.tiff

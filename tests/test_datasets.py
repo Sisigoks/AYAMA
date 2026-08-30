@@ -19,7 +19,7 @@ import pytest
 
 pytest.importorskip("rasterio")
 
-from ayama.data import (SceneRef, aggregate, discover,  # noqa: E402
+from traksha.data import (SceneRef, aggregate, discover,  # noqa: E402
                         discover_generic, discover_us3d)
 
 
@@ -29,8 +29,8 @@ def _write_scene(d, stem, suffixes, seed=0, size=128):
     `seed` selects a different window of the same scene, so two scenes in one
     directory are not byte-identical.
     """
-    from ayama.data.sample import load_sample_scene
-    from ayama.dsm.cog import write_cog, write_rgb
+    from traksha.data.sample import load_sample_scene
+    from traksha.dsm.cog import write_cog, write_rgb
 
     sc = load_sample_scene(size=size, offset=(64 * (seed % 4), 64 * (seed % 4)))
     write_rgb(os.path.join(d, stem + suffixes["image"]), sc.rgb, sc.meta)
@@ -111,8 +111,8 @@ def test_us3d_scene_runs_and_is_scored_against_height_above_ground(tmp_path):
     this pipeline that is a live risk rather than a hypothetical - see README
     section 4.
     """
-    from ayama.core.types import Config
-    from ayama.data import run_scene
+    from traksha.core.types import Config
+    from traksha.data import run_scene
 
     d = str(tmp_path / "ds")
     os.makedirs(d)
@@ -172,10 +172,10 @@ def test_segmentation_accepts_both_bare_and_prefixed_paths(tmp_path):
     Passing it back in previously reached rasterio verbatim and killed the run
     at the segmentation stage with "does not exist in the file system".
     """
-    from ayama.core.types import Scene
-    from ayama.dsm.cog import write_cog
-    from ayama.data.sample import load_sample_scene
-    from ayama.semantics.segment import segment
+    from traksha.core.types import Scene
+    from traksha.dsm.cog import write_cog
+    from traksha.data.sample import load_sample_scene
+    from traksha.semantics.segment import segment
 
     sc = load_sample_scene(size=96)
     p = str(tmp_path / "labels.tif")
@@ -213,16 +213,16 @@ def test_a_dsm_reference_with_a_dtm_is_also_scored_as_height_above_ground(tmp_pa
     all. Where a bare-earth DTM ships, the height-above-ground metrics and the
     flat-ground floor are reported too - see README section 4.
     """
-    from ayama.core.types import Config
-    from ayama.data import run_scene
+    from traksha.core.types import Config
+    from traksha.data import run_scene
 
     d = str(tmp_path / "ds")
     os.makedirs(d)
     _write_scene(d, "tile", {"image": ".tif", "reference": "_dsm.tif",
                              "dem": "_dem.tif"}, size=192)
     # the DTM the generic layout looks for
-    from ayama.dsm.cog import write_cog
-    from ayama.data.sample import load_sample_scene
+    from traksha.dsm.cog import write_cog
+    from traksha.data.sample import load_sample_scene
     sc = load_sample_scene(size=192)
     write_cog(os.path.join(d, "tile_dtm.tif"), sc.dtm_m.astype(np.float32), sc.meta)
 

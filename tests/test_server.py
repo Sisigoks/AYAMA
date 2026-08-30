@@ -19,7 +19,7 @@ import pytest
 pytest.importorskip("rasterio")
 pytest.importorskip("fastapi")
 
-from ayama.api.jobs import (MAX_UPLOAD_BYTES, JobStore,  # noqa: E402
+from traksha.api.jobs import (MAX_UPLOAD_BYTES, JobStore,  # noqa: E402
                             UploadRejected, validate_upload)
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
@@ -82,8 +82,8 @@ def test_the_uploaders_filename_is_never_used_on_disk(tmp_path):
 # ------------------------------------------------------------- lifecycle
 @pytest.fixture(scope="module")
 def scene(tmp_path_factory):
-    from ayama.dsm.cog import write_rgb
-    from ayama.data.sample import load_sample_scene
+    from traksha.dsm.cog import write_rgb
+    from traksha.data.sample import load_sample_scene
 
     sc = load_sample_scene(size=256, sun=(210.0, 45.0))
     p = tmp_path_factory.mktemp("up") / "scene.tif"
@@ -95,7 +95,7 @@ def scene(tmp_path_factory):
 def client(tmp_path_factory):
     from fastapi.testclient import TestClient
 
-    from ayama.api.server import create_app
+    from traksha.api.server import create_app
 
     return TestClient(create_app(jobs_root=str(tmp_path_factory.mktemp("jobs"))))
 

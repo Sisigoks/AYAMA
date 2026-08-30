@@ -1,0 +1,628 @@
+{
+  "traksha_delivery_version": 1,
+  "generated_utc": "2026-08-30T12:51:19Z",
+  "environment": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "python": "3.13.5",
+    "cpu_count": 8,
+    "torch": "2.13.0+cpu",
+    "threads": 4,
+    "rasterio": "1.5.1",
+    "gdal": "3.12.4"
+  },
+  "source_run": "D:\\UNNAT\\results\\zurich",
+  "scene": {
+    "width": 1024,
+    "height": 1024,
+    "gsd_m": 0.5,
+    "megapixels": 1.049,
+    "extent_m": [
+      512.0,
+      512.0
+    ],
+    "crs": "EPSG:2056"
+  },
+  "config": {
+    "tile": 512,
+    "pad": 1,
+    "obj_stride": 2,
+    "repeats": 3,
+    "timed_in": "C:\\Users\\sisig\\AppData\\Local\\Temp",
+    "timing_note": "Build timings are disk-bound and vary with where they are written; an on-access virus scanner can change them several-fold. Every timed build here used one scratch directory, reported above."
+  },
+  "build": {
+    "full_s": 10.5,
+    "tiles_only_s": 4.83,
+    "obj_s": 5.67,
+    "lods": 4,
+    "n_tiles": 7,
+    "mpix_per_s": 0.217
+  },
+  "encode": [
+    {
+      "op": "encode terrain-rgb",
+      "megapixels": 1.049,
+      "seconds": 0.0333,
+      "mpix_per_s": 31.5
+    },
+    {
+      "op": "decode terrain-rgb",
+      "megapixels": 1.049,
+      "seconds": 0.0191,
+      "mpix_per_s": 54.8
+    },
+    {
+      "op": "encode linear",
+      "megapixels": 1.049,
+      "seconds": 0.0398,
+      "mpix_per_s": 26.3
+    },
+    {
+      "op": "decode linear",
+      "megapixels": 1.049,
+      "seconds": 0.0223,
+      "mpix_per_s": 46.9
+    },
+    {
+      "op": "normal map",
+      "megapixels": 1.049,
+      "seconds": 0.0946,
+      "mpix_per_s": 11.1
+    },
+    {
+      "op": "png encode, terrain-rgb",
+      "megapixels": 1.049,
+      "seconds": 1.5672,
+      "mpix_per_s": 0.7
+    },
+    {
+      "op": "png encode, linear",
+      "megapixels": 1.049,
+      "seconds": 0.2754,
+      "mpix_per_s": 3.8
+    }
+  ],
+  "stages": {
+    "tile": 512,
+    "pad": 1,
+    "n_tiles": 4,
+    "stages_s": {
+      "cut": 0.002,
+      "encode_dsm": 0.035,
+      "crop": 0.0,
+      "normals": 0.146,
+      "encode_linear_layers": 0.127,
+      "png_write_dsm": 1.715,
+      "png_write_linear_layers": 0.822,
+      "png_write_normals": 0.488
+    },
+    "total_s": 3.335
+  },
+  "tile_sweep": [
+    {
+      "tile": 128,
+      "lods": 4,
+      "n_tiles": 85,
+      "n_files": 510,
+      "seconds": 6.82,
+      "bytes": 12196015,
+      "mb": 12.2
+    },
+    {
+      "tile": 256,
+      "lods": 4,
+      "n_tiles": 22,
+      "n_files": 132,
+      "seconds": 5.05,
+      "bytes": 12112192,
+      "mb": 12.11
+    },
+    {
+      "tile": 512,
+      "lods": 4,
+      "n_tiles": 7,
+      "n_files": 42,
+      "seconds": 5.48,
+      "bytes": 12138954,
+      "mb": 12.14
+    },
+    {
+      "tile": 1024,
+      "lods": 4,
+      "n_tiles": 4,
+      "n_files": 24,
+      "seconds": 7.01,
+      "bytes": 12169713,
+      "mb": 12.17
+    }
+  ],
+  "obj_sweep": [
+    {
+      "stride": 2,
+      "vertices": 262144,
+      "triangles": 522242,
+      "seconds": 2.96,
+      "bytes": 31215031,
+      "mb": 31.22,
+      "bytes_per_triangle": 59.8
+    },
+    {
+      "stride": 4,
+      "vertices": 65536,
+      "triangles": 130050,
+      "seconds": 0.67,
+      "bytes": 7202476,
+      "mb": 7.2,
+      "bytes_per_triangle": 55.4
+    }
+  ],
+  "quantisation": [
+    {
+      "layer": "ndsm",
+      "bits": 24,
+      "variant": "24-bit (shipped)",
+      "step_m": 3.1931051210115923e-06,
+      "bytes": 1264513,
+      "kb": 1264.5,
+      "vs_24bit": 1.0,
+      "max_error_m": 1.9073486328125e-06,
+      "error_over_span": 0.0,
+      "error_over_sigma": 0.0,
+      "range_m": [
+        0.0,
+        53.5714
+      ],
+      "span_m": 53.5714111328125,
+      "degenerate": false,
+      "meaningful": true,
+      "recommended": false
+    },
+    {
+      "layer": "ndsm",
+      "bits": 16,
+      "variant": "16-bit",
+      "step_m": 0.0008174473355125124,
+      "bytes": 843549,
+      "kb": 843.5,
+      "vs_24bit": 0.6671,
+      "max_error_m": 0.001178741455078125,
+      "error_over_span": 2.2e-05,
+      "error_over_sigma": 0.000196,
+      "range_m": [
+        0.0,
+        53.5714
+      ],
+      "span_m": 53.5714111328125,
+      "degenerate": false,
+      "meaningful": true,
+      "recommended": false
+    },
+    {
+      "layer": "ndsm",
+      "bits": 12,
+      "variant": "12-bit",
+      "step_m": 0.013082151680784493,
+      "bytes": 567040,
+      "kb": 567.0,
+      "vs_24bit": 0.4484,
+      "max_error_m": 0.01885986328125,
+      "error_over_span": 0.000352,
+      "error_over_sigma": 0.003142,
+      "range_m": [
+        0.0,
+        53.5714
+      ],
+      "span_m": 53.5714111328125,
+      "degenerate": false,
+      "meaningful": true,
+      "recommended": true
+    },
+    {
+      "layer": "ndsm",
+      "bits": 8,
+      "variant": "8-bit",
+      "step_m": 0.21008396522671569,
+      "bytes": 224125,
+      "kb": 224.1,
+      "vs_24bit": 0.1772,
+      "max_error_m": 0.3026275634765625,
+      "error_over_span": 0.005649,
+      "error_over_sigma": 0.050413,
+      "range_m": [
+        0.0,
+        53.5714
+      ],
+      "span_m": 53.5714111328125,
+      "degenerate": false,
+      "meaningful": true,
+      "recommended": false
+    },
+    {
+      "layer": "sigma",
+      "bits": 24,
+      "variant": "24-bit (shipped)",
+      "step_m": 3.0491380128553908e-09,
+      "bytes": 2162112,
+      "kb": 2162.1,
+      "vs_24bit": 1.0,
+      "max_error_m": 0.0,
+      "error_over_span": 0.0,
+      "error_over_sigma": 0.0,
+      "range_m": [
+        6.0001,
+        6.0512
+      ],
+      "span_m": 0.051156044006347656,
+      "degenerate": false,
+      "meaningful": true,
+      "recommended": false
+    },
+    {
+      "layer": "sigma",
+      "bits": 16,
+      "variant": "16-bit",
+      "step_m": 7.805911956412246e-07,
+      "bytes": 885826,
+      "kb": 885.8,
+      "vs_24bit": 0.4097,
+      "max_error_m": 9.5367431640625e-07,
+      "error_over_span": 1.9e-05,
+      "error_over_sigma": 0.0,
+      "range_m": [
+        6.0001,
+        6.0512
+      ],
+      "span_m": 0.051156044006347656,
+      "degenerate": false,
+      "meaningful": true,
+      "recommended": false
+    },
+    {
+      "layer": "sigma",
+      "bits": 12,
+      "variant": "12-bit",
+      "step_m": 1.2492318438668536e-05,
+      "bytes": 382524,
+      "kb": 382.5,
+      "vs_24bit": 0.1769,
+      "max_error_m": 1.811981201171875e-05,
+      "error_over_span": 0.000354,
+      "error_over_sigma": 3e-06,
+      "range_m": [
+        6.0001,
+        6.0512
+      ],
+      "span_m": 0.051156044006347656,
+      "degenerate": false,
+      "meaningful": true,
+      "recommended": true
+    },
+    {
+      "layer": "sigma",
+      "bits": 8,
+      "variant": "8-bit",
+      "step_m": 0.00020061193727979472,
+      "bytes": 92914,
+      "kb": 92.9,
+      "vs_24bit": 0.043,
+      "max_error_m": 0.00029277801513671875,
+      "error_over_span": 0.005723,
+      "error_over_sigma": 4.9e-05,
+      "range_m": [
+        6.0001,
+        6.0512
+      ],
+      "span_m": 0.051156044006347656,
+      "degenerate": false,
+      "meaningful": true,
+      "recommended": false
+    },
+    {
+      "layer": "error",
+      "bits": 24,
+      "variant": "24-bit (shipped)",
+      "step_m": 5.383765121978678e-06,
+      "bytes": 2744358,
+      "kb": 2744.4,
+      "vs_24bit": 1.0,
+      "max_error_m": 3.814697265625e-06,
+      "error_over_span": 0.0,
+      "error_over_sigma": 1e-06,
+      "range_m": [
+        -51.3538,
+        38.9708
+      ],
+      "span_m": 90.3245849609375,
+      "degenerate": false,
+      "meaningful": true,
+      "recommended": false
+    },
+    {
+      "layer": "error",
+      "bits": 16,
+      "variant": "16-bit",
+      "step_m": 0.0013782648197289617,
+      "bytes": 1788793,
+      "kb": 1788.8,
+      "vs_24bit": 0.6518,
+      "max_error_m": 0.002040863037109375,
+      "error_over_span": 2.3e-05,
+      "error_over_sigma": 0.00034,
+      "range_m": [
+        -51.3538,
+        38.9708
+      ],
+      "span_m": 90.3245849609375,
+      "degenerate": false,
+      "meaningful": true,
+      "recommended": false
+    },
+    {
+      "layer": "error",
+      "bits": 12,
+      "variant": "12-bit",
+      "step_m": 0.022057285704746642,
+      "bytes": 1165598,
+      "kb": 1165.6,
+      "vs_24bit": 0.4247,
+      "max_error_m": 0.032962799072265625,
+      "error_over_span": 0.000365,
+      "error_over_sigma": 0.005491,
+      "range_m": [
+        -51.3538,
+        38.9708
+      ],
+      "span_m": 90.3245849609375,
+      "degenerate": false,
+      "meaningful": true,
+      "recommended": true
+    },
+    {
+      "layer": "error",
+      "bits": 8,
+      "variant": "8-bit",
+      "step_m": 0.3542140586703431,
+      "bytes": 489469,
+      "kb": 489.5,
+      "vs_24bit": 0.1784,
+      "max_error_m": 0.5244407653808594,
+      "error_over_span": 0.005806,
+      "error_over_sigma": 0.087363,
+      "range_m": [
+        -51.3538,
+        38.9708
+      ],
+      "span_m": 90.3245849609375,
+      "degenerate": false,
+      "meaningful": true,
+      "recommended": false
+    }
+  ],
+  "roundtrip": [
+    {
+      "lod": 0,
+      "layer": "dsm",
+      "encoding": "terrain-rgb",
+      "step_m": 0.1,
+      "max_abs_error_m": 0.04998779296875,
+      "within_half_a_step": true
+    },
+    {
+      "lod": 0,
+      "layer": "ndsm",
+      "encoding": "linear",
+      "step_m": 3.1931051210115923e-06,
+      "max_abs_error_m": 1.9073486328125e-06,
+      "within_half_a_step": true
+    },
+    {
+      "lod": 0,
+      "layer": "sigma",
+      "encoding": "linear",
+      "step_m": 3.0491380128553908e-09,
+      "max_abs_error_m": 0.0,
+      "within_half_a_step": true
+    },
+    {
+      "lod": 0,
+      "layer": "error",
+      "encoding": "linear",
+      "step_m": 5.383765121978678e-06,
+      "max_abs_error_m": 3.814697265625e-06,
+      "within_half_a_step": true
+    },
+    {
+      "lod": 1,
+      "layer": "dsm",
+      "encoding": "terrain-rgb",
+      "step_m": 0.1,
+      "max_abs_error_m": 0.04998779296875,
+      "within_half_a_step": true
+    },
+    {
+      "lod": 1,
+      "layer": "ndsm",
+      "encoding": "linear",
+      "step_m": 3.1931051210115923e-06,
+      "max_abs_error_m": 1.9073486328125e-06,
+      "within_half_a_step": true
+    },
+    {
+      "lod": 1,
+      "layer": "sigma",
+      "encoding": "linear",
+      "step_m": 3.0491380128553908e-09,
+      "max_abs_error_m": 0.0,
+      "within_half_a_step": true
+    },
+    {
+      "lod": 1,
+      "layer": "error",
+      "encoding": "linear",
+      "step_m": 5.383765121978678e-06,
+      "max_abs_error_m": 3.814697265625e-06,
+      "within_half_a_step": true
+    },
+    {
+      "lod": 2,
+      "layer": "dsm",
+      "encoding": "terrain-rgb",
+      "step_m": 0.1,
+      "max_abs_error_m": 0.04998779296875,
+      "within_half_a_step": true
+    },
+    {
+      "lod": 2,
+      "layer": "ndsm",
+      "encoding": "linear",
+      "step_m": 3.1931051210115923e-06,
+      "max_abs_error_m": 1.9073486328125e-06,
+      "within_half_a_step": true
+    },
+    {
+      "lod": 2,
+      "layer": "sigma",
+      "encoding": "linear",
+      "step_m": 3.0491380128553908e-09,
+      "max_abs_error_m": 0.0,
+      "within_half_a_step": true
+    },
+    {
+      "lod": 2,
+      "layer": "error",
+      "encoding": "linear",
+      "step_m": 5.383765121978678e-06,
+      "max_abs_error_m": 3.814697265625e-06,
+      "within_half_a_step": true
+    },
+    {
+      "lod": 3,
+      "layer": "dsm",
+      "encoding": "terrain-rgb",
+      "step_m": 0.1,
+      "max_abs_error_m": 0.04998779296875,
+      "within_half_a_step": true
+    },
+    {
+      "lod": 3,
+      "layer": "ndsm",
+      "encoding": "linear",
+      "step_m": 3.1931051210115923e-06,
+      "max_abs_error_m": 1.9073486328125e-06,
+      "within_half_a_step": true
+    },
+    {
+      "lod": 3,
+      "layer": "sigma",
+      "encoding": "linear",
+      "step_m": 3.0491380128553908e-09,
+      "max_abs_error_m": 0.0,
+      "within_half_a_step": true
+    },
+    {
+      "lod": 3,
+      "layer": "error",
+      "encoding": "linear",
+      "step_m": 5.383765121978678e-06,
+      "max_abs_error_m": 3.814697265625e-06,
+      "within_half_a_step": true
+    }
+  ],
+  "payload": {
+    "total_bytes": 49476426,
+    "tiles_bytes": 12130278,
+    "mesh_bytes": 37337083,
+    "by_layer": {
+      "error": 3684478,
+      "sigma": 2941630,
+      "normal": 2458591,
+      "ndsm": 1728977,
+      "dsm": 781087,
+      "texture": 535515
+    },
+    "by_lod": {
+      "lod0": 8822539,
+      "lod1": 2450391,
+      "lod2": 674679,
+      "lod3": 182669
+    },
+    "first_paint_bytes": 6078310,
+    "first_paint_lod": 0
+  },
+  "viewer": {
+    "node": "v20.19.4",
+    "platform": "win32",
+    "ops": [
+      {
+        "op": "parse tileset.json",
+        "ms": 0.225,
+        "units": null
+      },
+      {
+        "op": "decode terrain-rgb, whole scene",
+        "ms": 6.806,
+        "units": null
+      },
+      {
+        "op": "decode linear, whole scene",
+        "ms": 5.843,
+        "units": null
+      },
+      {
+        "op": "decode terrain-rgb, reusing the buffer",
+        "ms": 3.476,
+        "units": null
+      },
+      {
+        "op": "tileGeometry, one tile",
+        "ms": 2.396,
+        "units": null
+      },
+      {
+        "op": "gridIndices, one tile",
+        "ms": 4.38,
+        "units": null
+      },
+      {
+        "op": "colourize, one tile",
+        "ms": 4.817,
+        "units": null
+      },
+      {
+        "op": "build a 256-entry LUT",
+        "ms": 0.186,
+        "units": null
+      },
+      {
+        "op": "renderPanels (jsdom)",
+        "ms": null,
+        "note": "jsdom not installed"
+      }
+    ],
+    "scene": {
+      "width": 1024,
+      "height": 1024,
+      "megapixels": 1.049,
+      "tiles": 4,
+      "lods": 4
+    },
+    "totals_ms": {
+      "decode_all_layers": 23.37,
+      "geometry_all_tiles": 27.1,
+      "colourize_layer_switch": 19.27,
+      "first_paint_cpu": 50.47
+    },
+    "throughput_mpix_per_s": {
+      "decode_terrain_rgb": 154.1,
+      "decode_linear": 179.5
+    }
+  },
+  "notes": [
+    {
+      "level": "info",
+      "id": "heuristic_segmentation",
+      "text": "Semantics came from the colour heuristic, not a trained model."
+    }
+  ],
+  "wall_s": 101.4
+}

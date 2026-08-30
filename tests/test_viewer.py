@@ -5,7 +5,7 @@ Two contracts are under test.
 `build_tileset` must not alter the surface: a tile decoded back must equal the
 raster it came from, at every LOD, with every pixel accounted for.
 
-`web/` must agree with `ayama/mesh/`. The manifest is the only thing joining a
+`web/` must agree with `traksha/mesh/`. The manifest is the only thing joining a
 Python writer to a JavaScript reader, and nothing else in the suite would notice
 if the two drifted apart - the page would simply render a wrong surface without
 complaining. The checks here are structural (every element the script reaches
@@ -21,10 +21,10 @@ import re
 import numpy as np
 import pytest
 
-from ayama.core.types import SceneMeta
-from ayama.dsm.cog import write_cog, write_rgb
-from ayama.mesh.build import build_tileset, derive_notes, load_run
-from ayama.mesh.encode import decode_linear, decode_terrain_rgb
+from traksha.core.types import SceneMeta
+from traksha.dsm.cog import write_cog, write_rgb
+from traksha.mesh.build import build_tileset, derive_notes, load_run
+from traksha.mesh.encode import decode_linear, decode_terrain_rgb
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.path.join(ROOT, "web")
@@ -37,7 +37,7 @@ DELIVERED_RUN = os.path.join(ROOT, "results", "zurich")
 # --------------------------------------------------------------------- fixture
 @pytest.fixture(scope="module")
 def fake_run(tmp_path_factory):
-    """A small run directory with the artifacts `ayama run` writes."""
+    """A small run directory with the artifacts `traksha run` writes."""
     d = tmp_path_factory.mktemp("run")
     h = w = 96
     rr, cc = np.mgrid[0:h, 0:w]
@@ -85,7 +85,7 @@ def test_manifest_is_strict_json(built):
 
 def test_manifest_carries_the_grid_and_georeference(built):
     m, _, _ = built
-    assert m["ayama_tileset_version"] >= 1
+    assert m["traksha_tileset_version"] >= 1
     assert m["grid"] == {"width": 96, "height": 96, "gsd_m": 0.5, "tile": 32, "pad": 1,
                          "extent_m": [48.0, 48.0], "quantise_bits": 24}
     assert m["crs"] == "EPSG:32644"
@@ -113,7 +113,7 @@ def test_tiles_cover_every_pixel_at_every_lod(built):
 
 
 def test_lod_count_is_derived_from_the_raster_size():
-    from ayama.mesh.build import _lod_count
+    from traksha.mesh.build import _lod_count
 
     assert _lod_count((96, 96), 32) == 1            # already near the floor
     assert _lod_count((1024, 1024), 512) == 4       # 1024 / 512 / 256 / 128
@@ -258,7 +258,7 @@ def test_the_page_reads_only_manifest_keys_the_builder_writes(built):
 
 def test_the_page_and_the_encoder_share_the_terrain_rgb_constants():
     """Two implementations of one packing. Drift here is silent and total."""
-    from ayama.mesh.encode import MAX_CODE, TERRAIN_BASE_M, TERRAIN_STEP_M
+    from traksha.mesh.encode import MAX_CODE, TERRAIN_BASE_M, TERRAIN_STEP_M
 
     app = _read("app.js")
     assert f"TERRAIN_BASE = {TERRAIN_BASE_M}" in app
@@ -284,7 +284,7 @@ def test_the_page_declares_no_external_resources():
 
 def test_colour_ramps_match_the_png_previews():
     """The page and cog.py must not disagree about what a height looks like."""
-    from ayama.dsm.cog import _fallback_lut
+    from traksha.dsm.cog import _fallback_lut
 
     app = _read("app.js")
     for name, key in (("viridis", "viridis"), ("magma", "magma"), ("terrain", "terrain")):
@@ -309,7 +309,7 @@ def test_the_relief_note_fires_on_a_flat_surface_and_not_on_a_built_one():
     surface with 53 m of genuine relief (README section 3.4 shows why that class
     cannot be trusted). It now reads only the height distribution.
     """
-    from ayama.mesh.build import derive_notes
+    from traksha.mesh.build import derive_notes
 
     rng = np.random.default_rng(21)
     sem = np.full((256, 256), 2, np.int16)
@@ -330,7 +330,7 @@ def test_the_relief_note_is_a_warning_in_the_ambiguous_band():
     """Between the two is genuinely ambiguous - low-rise ground looks like a
     failed reconstruction - so it warns and names the check rather than
     delivering a verdict it cannot support."""
-    from ayama.mesh.build import derive_notes
+    from traksha.mesh.build import derive_notes
 
     rng = np.random.default_rng(22)
     low = np.abs(rng.normal(0, 1.2, (256, 256))).astype(np.float32)

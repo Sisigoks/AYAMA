@@ -29,7 +29,7 @@ if (typeof globalThis.ImageData === 'undefined') {
   };
 }
 
-const AYAMA = require(path.join(ROOT, 'web/app.js'));
+const TRAKSHA = require(path.join(ROOT, 'web/app.js'));
 
 function best(label, fn, repeats, units) {
   let t = Infinity;
@@ -77,34 +77,34 @@ for (let i = 0; i < px; i++) {
   rgba[i * 4] = i & 255; rgba[i * 4 + 1] = (i >> 8) & 255;
   rgba[i * 4 + 2] = (i >> 16) & 255; rgba[i * 4 + 3] = 255;
 }
-const heights = AYAMA.decodeTerrainRGBA(rgba);
-add(best('decode terrain-rgb, whole scene', () => AYAMA.decodeTerrainRGBA(rgba), R));
-add(best('decode linear, whole scene', () => AYAMA.decodeLinearRGBA(rgba, 0, 42), R));
+const heights = TRAKSHA.decodeTerrainRGBA(rgba);
+add(best('decode terrain-rgb, whole scene', () => TRAKSHA.decodeTerrainRGBA(rgba), R));
+add(best('decode linear, whole scene', () => TRAKSHA.decodeLinearRGBA(rgba, 0, 42), R));
 
 // Reused output buffer: the allocation is a real part of the cost, and the page
 // could avoid it. Measuring both says how much that optimisation is worth.
 const scratch = new Float32Array(px);
 add(best('decode terrain-rgb, reusing the buffer',
-         () => AYAMA.decodeTerrainRGBA(rgba, scratch), R));
+         () => TRAKSHA.decodeTerrainRGBA(rgba, scratch), R));
 
 // ── geometry: what goes into the GL buffers ─────────────────────────────────
 const t = lod0.tiles[0];
 const tw = t.width, th = t.height;
 const tileHeights = heights.subarray(0, tw * th);
 add(best('tileGeometry, one tile',
-         () => AYAMA.tileGeometry(tileHeights, tw, th, lod0.gsd_m, t.x0, t.y0,
+         () => TRAKSHA.tileGeometry(tileHeights, tw, th, lod0.gsd_m, t.x0, t.y0,
                                   lod0.height, [0, 0]), R));
-add(best('gridIndices, one tile', () => AYAMA.gridIndices(tw, th, true), R));
+add(best('gridIndices, one tile', () => TRAKSHA.gridIndices(tw, th, true), R));
 
 // ── colour: what a layer switch costs ───────────────────────────────────────
-if (AYAMA.colourize) {
+if (TRAKSHA.colourize) {
   add(best('colourize, one tile',
-           () => AYAMA.colourize(tileHeights, tw, th, 'viridis', 0, 1), R));
+           () => TRAKSHA.colourize(tileHeights, tw, th, 'viridis', 0, 1), R));
 } else {
   report.ops.push({ op: 'colourize, one tile', ms: null,
                     note: 'not exported from web/app.js' });
 }
-add(best('build a 256-entry LUT', () => AYAMA.lut('magma'), R));
+add(best('build a 256-entry LUT', () => TRAKSHA.lut('magma'), R));
 
 // ── per-scene totals: what the page really pays at LOD 0 ────────────────────
 const nTiles = lod0.tiles.length;
@@ -133,10 +133,10 @@ try {
   const vc = new VirtualConsole();
   const dom = new JSDOM(html, { runScripts: 'outside-only', virtualConsole: vc });
   const w = dom.window;
-  w.UNNAT_NO_AUTOBOOT = true; w.AYAMA_NO_AUTOBOOT = true;
+  w.UNNAT_NO_AUTOBOOT = true; w.TRAKSHA_NO_AUTOBOOT = true;
   w.HTMLCanvasElement.prototype.getContext = function () { return null; };
   w.eval(fs.readFileSync(path.join(ROOT, 'web/app.js'), 'utf8'));
-  const U = w.AYAMA;
+  const U = w.TRAKSHA;
   add(best('renderPanels (jsdom)', () => U.renderPanels(manifest), 3));
 } catch (e) {
   report.ops.push({ op: 'renderPanels (jsdom)', ms: null,

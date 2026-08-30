@@ -13,7 +13,7 @@ import time
 
 import pytest
 
-from ayama.core.progress import Live, _fmt_dur
+from traksha.core.progress import Live, _fmt_dur
 
 
 # ── progress ────────────────────────────────────────────────────────────────
@@ -87,6 +87,6 @@ def test_duration_formatting_is_readable():
 
 
 def test_the_banner_names_the_machine():
-    """AYAMA runs on the CPU only, so the banner says so and never probes a card."""
+    """TRAKSHA runs on the CPU only, so the banner says so and never probes a card."""
     banner = Live(mode="none").banner()
     assert isinstance(banner, str) and "CPU" in banner

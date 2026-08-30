@@ -9,7 +9,7 @@
 // before a single triangle is drawn - manifest parsing, the panels, the decode
 // arithmetic that turns 8-bit channels back into metres.
 //
-// The decode check matters most. `web/app.js` and `ayama/mesh/encode.py` are two
+// The decode check matters most. `web/app.js` and `traksha/mesh/encode.py` are two
 // independent implementations of the same packing; if they ever disagree the
 // viewer draws a confidently wrong surface, and nothing else in the suite would
 // notice.
@@ -30,7 +30,7 @@ const tilesetDir = process.argv[2] || path.join(ROOT, 'web/data');
 const manifestPath = path.join(tilesetDir, 'tileset.json');
 if (!fs.existsSync(manifestPath)) {
   console.log(`skip: no tileset at ${manifestPath}`);
-  console.log('      build one: python -m ayama.cli mesh <run> --out web/data --no-mesh --bits 12');
+  console.log('      build one: python -m traksha.cli mesh <run> --out web/data --no-mesh --bits 12');
   process.exit(0);
 }
 
@@ -52,7 +52,7 @@ const dom = new JSDOM(html, {
 });
 const w = dom.window;
 
-w.AYAMA_NO_AUTOBOOT = true;
+w.TRAKSHA_NO_AUTOBOOT = true;
 w.HTMLCanvasElement.prototype.getContext = function () { return null; };  // no WebGL here
 w.requestAnimationFrame = () => 0;
 w.fetch = (url) => Promise.resolve({
@@ -63,15 +63,15 @@ w.fetch = (url) => Promise.resolve({
 
 try { w.eval(app); } catch (e) { errors.push('eval threw: ' + e.stack); }
 
-const U = w.AYAMA;
+const U = w.TRAKSHA;
 function check(name, cond, detail) {
   if (cond) { console.log('  ok   ' + name); } else { errors.push(name + (detail ? ' — ' + detail : '')); }
 }
 
 if (!U) {
-  errors.push('app.js did not expose window.AYAMA');
+  errors.push('app.js did not expose window.TRAKSHA');
 } else {
-  // ── decode arithmetic must match ayama/mesh/encode.py exactly ──────────────
+  // ── decode arithmetic must match traksha/mesh/encode.py exactly ──────────────
   // Tolerances are float32's, not float64's: the decoders write into a
   // Float32Array on purpose (it is what goes straight into a GL buffer), so
   // ~1e-7 relative is the floor. A wrong formula is off by orders of magnitude,

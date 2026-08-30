@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ayama"
+name = "traksha"
 version = "0.1.0"
 description = "Physics-anchored monocular elevation: single RGB image to metric DSM"
 requires-python = ">=3.10"
@@ -26,18 +26,18 @@ api = ["fastapi>=0.110", "uvicorn[standard]>=0.29", "python-multipart>=0.0.9", "
 dev = ["pytest>=8.0"]
 
 [project.scripts]
-ayama = "ayama.cli:main"
+traksha = "traksha.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["ayama*"]
+include = ["traksha*"]
 
 # The bundled sample scene: a real lidar crop of central Zurich (about 2.5 MB).
-# It has to travel with the package, because `ayama preflight` and `ayama
+# It has to travel with the package, because `traksha preflight` and `traksha
 # sample` both run on it and neither should need a 350 MB download to work on a
-# fresh install. See ayama/data/sample.py and the swisstopo licence in
-# ayama/data/fixture/ATTRIBUTION.md.
+# fresh install. See traksha/data/sample.py and the swisstopo licence in
+# traksha/data/fixture/ATTRIBUTION.md.
 [tool.setuptools.package-data]
-"ayama.data" = ["fixture/*.tif", "fixture/*.md"]
+"traksha.data" = ["fixture/*.tif", "fixture/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

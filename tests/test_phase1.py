@@ -7,12 +7,12 @@ from datetime import datetime, timezone
 import numpy as np
 import pytest
 
-from ayama.core.geo import (gsd_metres, percentile_stretch, pixel_to_world,
+from traksha.core.geo import (gsd_metres, percentile_stretch, pixel_to_world,
                             shadow_height, shadow_length, sun_vector, world_to_pixel)
-from ayama.core.solar import solar_position
-from ayama.core.types import Scene, SceneMeta
+from traksha.core.solar import solar_position
+from traksha.core.types import Scene, SceneMeta
 
-from ayama.depth.infer import (blend_window, n_chips, predict_depth, rank_normalise,
+from traksha.depth.infer import (blend_window, n_chips, predict_depth, rank_normalise,
                                tile_offsets)
 
 
@@ -161,8 +161,8 @@ rasterio = pytest.importorskip("rasterio")
 
 
 def test_geotiff_roundtrip_preserves_geometry_and_sun(tmp_path):
-    from ayama.core.ingest import ingest
-    from ayama.dsm.cog import write_rgb
+    from traksha.core.ingest import ingest
+    from traksha.dsm.cog import write_rgb
 
     meta = SceneMeta(
         crs="EPSG:32644",
@@ -186,7 +186,7 @@ def test_geotiff_roundtrip_preserves_geometry_and_sun(tmp_path):
 
 
 def test_write_cog_preserves_values_and_nodata(tmp_path):
-    from ayama.dsm.cog import write_cog
+    from traksha.dsm.cog import write_cog
 
     meta = SceneMeta(crs="EPSG:32644", transform=(1.0, 0, 0, 0, -1.0, 0), gsd_m=1.0)
     a = np.arange(64 * 64, dtype=np.float32).reshape(64, 64)
@@ -207,7 +207,7 @@ def test_the_bundled_sample_is_real_and_self_consistent():
     the surface cannot dip below the bare earth - not ones a renderer was told
     to satisfy.
     """
-    from ayama.data.sample import load_sample_scene
+    from traksha.data.sample import load_sample_scene
 
     sc = load_sample_scene(size=256)
     assert np.isfinite(sc.dsm_m).all() and np.isfinite(sc.dtm_m).all()
@@ -230,7 +230,7 @@ def test_the_bundled_sample_is_real_and_self_consistent():
 
 def test_a_sun_supplied_by_the_caller_produces_a_truth_shadow_mask():
     """Shadow physics needs an angle. The caller states it; the fixture never does."""
-    from ayama.data.sample import load_sample_scene
+    from traksha.data.sample import load_sample_scene
 
     sc = load_sample_scene(size=256, sun=(150.0, 40.0))
     assert sc.meta.has_sun
@@ -239,7 +239,7 @@ def test_a_sun_supplied_by_the_caller_produces_a_truth_shadow_mask():
 
 def test_the_sample_crop_carries_a_transform_that_follows_the_offset():
     """An offset crop with the parent transform is an off-by-N projection bug."""
-    from ayama.data.sample import load_sample_scene
+    from traksha.data.sample import load_sample_scene
 
     a = load_sample_scene(size=128)
     b = load_sample_scene(size=128, offset=(64, 64))

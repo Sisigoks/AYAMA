@@ -1,8 +1,8 @@
-# ĀYĀMA image.
+# TRAKSHA image.
 #
-#   docker build -t ayama .
-#   docker run --rm -it -v "$PWD:/work" ayama bash scripts/harness.sh
-#   docker run --rm -it ayama python -m ayama.cli doctor
+#   docker build -t traksha .
+#   docker run --rm -it -v "$PWD:/work" traksha bash scripts/harness.sh
+#   docker run --rm -it traksha python -m traksha.cli doctor
 #
 # CPU only, and deliberately so. The one stage that could use an accelerator is
 # depth inference, and measuring it showed the speed-up does not reach the
@@ -39,9 +39,9 @@ RUN python -m pip install --upgrade pip wheel \
 COPY . .
 
 # Model weights live in a cache volume so a container restart does not
-# re-download 1.3 GB of ViT-L. Mount it with:  -v ayama-cache:/cache
+# re-download 1.3 GB of ViT-L. Mount it with:  -v traksha-cache:/cache
 VOLUME ["/cache"]
 
-RUN python -c "import ayama.core.types" && python -m ayama.cli backbones
+RUN python -c "import traksha.core.types" && python -m traksha.cli backbones
 
-CMD ["python", "-m", "ayama.cli", "doctor"]
+CMD ["python", "-m", "traksha.cli", "doctor"]

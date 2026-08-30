@@ -1,10 +1,10 @@
-/* AYAMA results site.
+/* TRAKSHA results site.
  *
  * Renders the real-imagery study: four Swiss city centres with airborne lidar
  * truth, read live from results/dataset.json. It invents nothing. If
  * a field is missing the panel says so rather than showing a plausible number.
  *
- * Re-run `python -m ayama.cli dataset data/real --layout generic` and the page
+ * Re-run `python -m traksha.cli dataset data/real --layout generic` and the page
  * shows the new measurements.
  */
 'use strict';
@@ -154,7 +154,7 @@ function renderHeadline(agg) {
      `<b>${fmt(mean(agg.zero_baseline_metrics_mae_m))}</b> <small>flat ground</small>`],
   ];
   host.innerHTML = `<table class="data">
-    <thead><tr><th>metric</th><th>ĀYĀMA</th><th>global affine</th><th>floor</th></tr></thead>
+    <thead><tr><th>metric</th><th>TRAKSHA</th><th>global affine</th><th>floor</th></tr></thead>
     <tbody>${rows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td>${r[3]}</td></tr>`).join('')}</tbody>
   </table>`;
 }
@@ -353,7 +353,7 @@ function renderFooter(study) {
 // ── static UI ────────────────────────────────────────────────────────────────
 function wireStaticUI() {
   wireWizard();
-  const repo = 'https://github.com/Sisigoks/AYAMA';
+  const repo = 'https://github.com/Sisigoks/TRAKSHA';
   const link = $('#repo-link'); if (link) link.href = repo;
   $$('.copy').forEach(btn => btn.addEventListener('click', () => {
     const code = btn.previousElementSibling;
@@ -415,7 +415,7 @@ function updateWizard(s) {
   $('#wiz-expl').textContent = expl;
 
   const img = s.geo === 'yes' ? 'my_scene.tif' : 'my_photo.jpg';
-  const lines = [`python -m ayama.cli run ${img} --out out/mine \\`,
+  const lines = [`python -m traksha.cli run ${img} --out out/mine \\`,
                  `    --backbone dav2-vitl \\`];
   if (demUsable) lines.push(`    --dem my_dem.tif \\`);
   if (hasGcp) lines.push(`    --gcps my_gcps.csv \\`);
@@ -438,7 +438,7 @@ function showMissingResults(err) {
     host.innerHTML = `<div class="loading">
       Could not load <code>results/dataset.json</code> (${err.message}).<br>
       Run <code>python scripts/fetch_swisstopo.py --out data/real/zurich</code> then
-      <code>python -m ayama.cli dataset data/real --layout generic --deliver --out results</code>.
+      <code>python -m traksha.cli dataset data/real --layout generic --deliver --out results</code>.
     </div>`;
   }
 }

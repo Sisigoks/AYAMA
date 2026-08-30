@@ -4,10 +4,10 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from ayama.chhaya.agmc import (apply_calibration, global_affine, make_lattice,
+from traksha.chhaya.agmc import (apply_calibration, global_affine, make_lattice,
                                solve_agmc)
-from ayama.chhaya.anchors import harvest_dem, harvest_water
-from ayama.core.types import (BARE_GROUND, BUILDING, WATER, Anchor, Config,
+from traksha.chhaya.anchors import harvest_dem, harvest_water
+from traksha.core.types import (BARE_GROUND, BUILDING, WATER, Anchor, Config,
                               DepthField, SceneMeta)
 
 META = SceneMeta(crs="EPSG:32644", transform=(0.5, 0, 0, 0, -0.5, 0), gsd_m=0.5)
@@ -128,7 +128,7 @@ def test_water_without_a_dem_falls_back_to_relative_constraints():
 
 
 def test_dem_weight_reflects_datasheet_accuracy():
-    from ayama.chhaya.anchors import dem_weight
+    from traksha.chhaya.anchors import dem_weight
 
     assert dem_weight("copernicus") > dem_weight("srtm") > dem_weight("aster")
 
@@ -224,7 +224,7 @@ def _bootstrap_inputs(size=96, seed=3):
     """A small scene with enough anchors that the bootstrap does real work."""
     import numpy as np
 
-    from ayama.core.types import Anchor, Config, DepthField, SceneMeta
+    from traksha.core.types import Anchor, Config, DepthField, SceneMeta
 
     rng = np.random.default_rng(seed)
     rel = rng.random((size, size)).astype(np.float32)
@@ -248,7 +248,7 @@ def test_parallel_bootstrap_is_bit_identical_to_serial():
     """
     import numpy as np
 
-    from ayama.chhaya.uncertainty import bootstrap_sigma
+    from traksha.chhaya.uncertainty import bootstrap_sigma
 
     depth, anchors, cfg = _bootstrap_inputs()
     mean_s, sigma_s = bootstrap_sigma(depth, anchors, cfg, n_boot=8, workers=1)
@@ -261,7 +261,7 @@ def test_parallel_bootstrap_is_bit_identical_to_serial():
 
 def test_bootstrap_worker_count_is_bounded():
     """Never more threads than solves, and never an unbounded pool."""
-    from ayama.chhaya.uncertainty import _default_workers
+    from traksha.chhaya.uncertainty import _default_workers
 
     assert _default_workers(1, 24) == 1
     assert _default_workers(4, 24) == 4
@@ -271,7 +271,7 @@ def test_bootstrap_worker_count_is_bounded():
 
 
 def test_bootstrap_reports_progress_once_per_resample():
-    from ayama.chhaya.uncertainty import bootstrap_sigma
+    from traksha.chhaya.uncertainty import bootstrap_sigma
 
     depth, anchors, cfg = _bootstrap_inputs()
     seen = []
@@ -286,7 +286,7 @@ def test_decompose_depth_splits_by_metres_not_pixels():
     """The cutoff is physical, so the same split means the same thing at any GSD."""
     import numpy as np
 
-    from ayama.chhaya.agmc import decompose_depth
+    from traksha.chhaya.agmc import decompose_depth
 
     rng = np.random.default_rng(2)
     D = rng.random((128, 128)).astype(np.float32)
@@ -311,8 +311,8 @@ def test_dual_branch_releases_the_scale_field_from_its_floor():
     """
     import numpy as np
 
-    from ayama.chhaya.agmc import solve_agmc
-    from ayama.core.types import Anchor, Config, DepthField, SceneMeta, Tier
+    from traksha.chhaya.agmc import solve_agmc
+    from traksha.core.types import Anchor, Config, DepthField, SceneMeta, Tier
 
     rng = np.random.default_rng(5)
     size = 96
@@ -352,8 +352,8 @@ def test_dual_branch_calibration_is_applied_to_the_band_it_was_fitted_to():
     """
     import numpy as np
 
-    from ayama.chhaya.agmc import apply_calibration, decompose_depth, solve_agmc
-    from ayama.core.types import Anchor, Config, DepthField, SceneMeta, Tier
+    from traksha.chhaya.agmc import apply_calibration, decompose_depth, solve_agmc
+    from traksha.core.types import Anchor, Config, DepthField, SceneMeta, Tier
 
     size = 64
     yy, xx = np.mgrid[0:size, 0:size]
@@ -381,8 +381,8 @@ def test_single_branch_remains_the_default():
     """H2 is a hypothesis under test, not the shipped calibration."""
     import numpy as np
 
-    from ayama.chhaya.agmc import solve_agmc
-    from ayama.core.types import Anchor, Config, DepthField, SceneMeta, Tier
+    from traksha.chhaya.agmc import solve_agmc
+    from traksha.core.types import Anchor, Config, DepthField, SceneMeta, Tier
 
     meta = SceneMeta(gsd_m=0.5)
     depth = DepthField(relative=np.linspace(0, 1, 64 * 64).reshape(64, 64).astype(np.float32),

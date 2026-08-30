@@ -12,14 +12,14 @@ import os
 import numpy as np
 import pytest
 
-from ayama.mesh.encode import (MAX_CODE, TERRAIN_BASE_M, TERRAIN_STEP_M,
+from traksha.mesh.encode import (MAX_CODE, TERRAIN_BASE_M, TERRAIN_STEP_M,
                                decode_linear, decode_normal_map,
                                decode_terrain_rgb, encode_linear,
                                encode_linear_bits, encode_terrain_rgb,
                                linear_range_for_bits, linear_step,
                                normal_map, quantisation_step)
-from ayama.mesh.obj import write_obj
-from ayama.mesh.tiles import (cut, grid_size, interior, pyramid, reassemble,
+from traksha.mesh.obj import write_obj
+from traksha.mesh.tiles import (cut, grid_size, interior, pyramid, reassemble,
                               tile_specs)
 
 
@@ -356,7 +356,7 @@ def test_quantising_shrinks_the_encoded_png():
     Not on a small tile: below a few tens of kB a PNG is mostly header and
     filter choice, and 12 bits can come out larger than 24 by pure noise.
     """
-    from ayama.dsm.cog import _apply_cmap  # noqa: F401  (PIL is a core dep)
+    from traksha.dsm.cog import _apply_cmap  # noqa: F401  (PIL is a core dep)
 
     import io as _io
 

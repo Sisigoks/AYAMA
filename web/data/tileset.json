@@ -1,7 +1,7 @@
 {
-  "ayama_tileset_version": 1,
-  "generated_utc": "2026-08-29T17:29:54Z",
-  "source_run": "D:\\UNNAT\\results\\cpu\\real_vitl_learned\\zurich",
+  "traksha_tileset_version": 1,
+  "generated_utc": "2026-08-30T09:29:22Z",
+  "source_run": "D:\\UNNAT\\results\\zurich",
   "grid": {
     "width": 1024,
     "height": 1024,

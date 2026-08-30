@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ĀYĀMA — metric elevation from a single image</title>
+<title>TRAKSHA — metric elevation from a single image</title>
 <meta name="description" content="Physics-anchored monocular elevation: one RGB image to a metric DSM with honest uncertainty. Reproducible study and results.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⛰️</text></svg>">
 <link rel="stylesheet" href="results.css">
@@ -16,8 +16,7 @@
   <div class="wrap bar">
     <div class="brand">
       <span class="mark" aria-hidden="true"></span>
-      <span class="name">ĀYĀMA</span>
-      <span class="deva" lang="hi">आयाम</span>
+      <span class="name">TRAKSHA</span>
     </div>
     <nav>
       <a href="#results">Results</a>
@@ -61,7 +60,7 @@
       Four real city centres &mdash; Z&uuml;rich, Bern, Geneva, Lausanne &mdash; with airborne
       lidar for ground truth. Every number on this page is read live from
       <code>results/dataset.json</code>, produced by
-      <code>python -m ayama.cli dataset data/real --layout generic</code>. Nothing is
+      <code>python -m traksha.cli dataset data/real --layout generic</code>. Nothing is
       typed in by hand. Re-run it on your own machine and this page renders your numbers.
     </p>
 
@@ -172,7 +171,7 @@
 
     <div class="viewer-frame">
       <iframe id="viewer-embed" src="index.html" loading="lazy"
-              title="ĀYĀMA 3D viewer — the calibrated surface, its uncertainty and its error"></iframe>
+              title="TRAKSHA 3D viewer — the calibrated surface, its uncertainty and its error"></iframe>
     </div>
 
     <div class="viewer-actions">
@@ -221,7 +220,7 @@
 
       <figure class="method-fig">
         <svg viewBox="0 0 420 560" role="img" aria-labelledby="pipe-title">
-          <title id="pipe-title">ĀYĀMA pipeline: image to metric DSM</title>
+          <title id="pipe-title">TRAKSHA pipeline: image to metric DSM</title>
           <defs>
             <marker id="arw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
               <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
@@ -324,32 +323,32 @@
       </div>
 
       <div class="tabpane on" data-pane="local">
-        <pre><code>git clone &lt;repo&gt; &amp;&amp; cd ayama
+        <pre><code>git clone &lt;repo&gt; &amp;&amp; cd traksha
 python -m venv .venv &amp;&amp; .venv/bin/pip install -r requirements.txt
 .venv/bin/pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 .venv/bin/pip install transformers
 
-python -m ayama.cli doctor         # is this machine ready
-python -m ayama.cli sample --out data/sample.tif   # a real scene, no download
+python -m traksha.cli doctor         # is this machine ready
+python -m traksha.cli sample --out data/sample.tif   # a real scene, no download
 
 # the four real scenes, then everything on this page
 python scripts/fetch_swisstopo.py --out data/real/zurich   --bbox 8.530,47.365,8.545,47.375
 python scripts/fetch_swisstopo.py --out data/real/bern     --bbox 7.440,46.945,7.455,46.952
 python scripts/fetch_swisstopo.py --out data/real/geneva   --bbox 6.140,46.200,6.155,46.208
 python scripts/fetch_swisstopo.py --out data/real/lausanne --bbox 6.625,46.515,6.640,46.525
-python -m ayama.cli dataset data/real --layout generic \
+python -m traksha.cli dataset data/real --layout generic \
     --backbone dav2-vitl --out results
 
 # refit the structural scale on those scenes (the only learning step)
-python -m ayama.cli fit data/real --runs results</code><button class="copy">Copy</button></pre>
+python -m traksha.cli fit data/real --runs results</code><button class="copy">Copy</button></pre>
         <p>Your own image, all four phases into one folder:</p>
-        <pre><code>python -m ayama.cli build my_image.tif --out out/mine
+        <pre><code>python -m traksha.cli build my_image.tif --out out/mine
 
 # out/mine/
 #   dsm.tif ndsm.tif sigma.tif ...        the calibrated surface
 #   tiles3d/tileset.json                  the browser view
 #   mesh/surface.obj + .mtl + .jpg        a textured mesh for Blender/MeshLab
-python -m ayama.cli viewer out/mine       # 3D at localhost:8020</code><button class="copy">Copy</button></pre>
+python -m traksha.cli viewer out/mine       # 3D at localhost:8020</code><button class="copy">Copy</button></pre>
         <p class="note-sm">
           CPU only, and deliberately so &mdash; an order of magnitude more backbone
           moved recovered relief by less than a metre, because the bottleneck is
@@ -358,9 +357,9 @@ python -m ayama.cli viewer out/mine       # 3D at localhost:8020</code><button c
       </div>
 
       <div class="tabpane" data-pane="docker">
-        <pre><code>docker build -t ayama .
-docker run --rm -it -v ayama-cache:/cache -v "$PWD:/work" \
-    ayama bash scripts/harness.sh</code><button class="copy">Copy</button></pre>
+        <pre><code>docker build -t traksha .
+docker run --rm -it -v traksha-cache:/cache -v "$PWD:/work" \
+    traksha bash scripts/harness.sh</code><button class="copy">Copy</button></pre>
         <p>The <code>/cache</code> volume keeps model weights across container restarts.</p>
       </div>
     </div>
@@ -473,7 +472,7 @@ docker run --rm -it -v ayama-cache:/cache -v "$PWD:/work" \
 
 <footer class="site">
   <div class="wrap">
-    <p><strong>ĀYĀMA</strong> · आयाम, “dimension, extent” · calibration engine <strong>Chhaya</strong> · छाया, “shadow”</p>
+    <p><strong>TRAKSHA</strong> · calibration engine <strong>Chhaya</strong> · <span class="deva" lang="hi">छाया</span>, “shadow”</p>
     <p class="meta" id="footer-meta"></p>
   </div>
 </footer>

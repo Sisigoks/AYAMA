@@ -1,8 +1,8 @@
-/* ĀYĀMA — the upload and progress half of the app.
+/* TRAKSHA — the upload and progress half of the app.
  *
  * Deliberately separate from app.js: that file renders a tileset and knows
  * nothing about jobs, and this one drives a job and knows nothing about WebGL.
- * The join between them is a single call to AYAMA.boot() once a tileset exists.
+ * The join between them is a single call to TRAKSHA.boot() once a tileset exists.
  *
  * The progress display is the reason this uses SSE rather than polling. A
  * reconstruction takes tens of seconds to minutes, and the stages have names
@@ -11,7 +11,7 @@
  */
 'use strict';
 
-var AYAMA_JOB = (function () {
+var TRAKSHA_JOB = (function () {
 
 var STAGE_LABEL = {
   ingest: 'reading the image and its metadata',
@@ -189,8 +189,8 @@ function openViewer(job) {
       dl.appendChild(li);
     });
   }
-  if (window.AYAMA && window.AYAMA.boot) {
-    window.AYAMA.boot().catch(function () { /* surfaced in the DOM */ });
+  if (window.TRAKSHA && window.TRAKSHA.boot) {
+    window.TRAKSHA.boot().catch(function () { /* surfaced in the DOM */ });
   }
 }
 
@@ -283,7 +283,7 @@ function init() {
 
 if (typeof document !== 'undefined' && document.addEventListener) {
   document.addEventListener('DOMContentLoaded', function () {
-    if (!window.AYAMA_NO_AUTOBOOT) init();
+    if (!window.TRAKSHA_NO_AUTOBOOT) init();
   });
 }
 
@@ -293,5 +293,5 @@ return { init: init, follow: follow, submit: submit, show: show,
 
 })();
 
-if (typeof window !== 'undefined') { window.AYAMA_JOB = AYAMA_JOB; }
-if (typeof module !== 'undefined' && module.exports) { module.exports = AYAMA_JOB; }
+if (typeof window !== 'undefined') { window.TRAKSHA_JOB = TRAKSHA_JOB; }
+if (typeof module !== 'undefined' && module.exports) { module.exports = TRAKSHA_JOB; }

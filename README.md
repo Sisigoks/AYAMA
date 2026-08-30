@@ -1,30 +1,33 @@
-# ĀYĀMA — आयाम
+# TRAKSHA
 
 **An investigation into metric grounding of monocular depth for DSM
-reconstruction** — an anchor-graph calibration formulation, a controlled
-negative result, and a diagnosed failure mode.
+reconstruction** — an anchor-graph calibration formulation, a diagnosed failure
+mode, and a partial repair measured on real imagery.
 
-> ### Research status — failure diagnosed, and partly repaired
+> ### Research status — failure diagnosed, partly repaired
 >
-> ĀYĀMA demonstrates reproducible spatially-varying metric calibration on
-> **real imagery with airborne lidar ground truth**, and **does not yet produce
-> a usable Digital Surface Model.**
+> TRAKSHA performs reproducible spatially-varying metric calibration on **real
+> imagery with airborne lidar ground truth**, and **does not yet produce a
+> usable Digital Surface Model.**
 >
 > Calibrated from anchors alone it is indistinguishable from a flat sheet across
 > four European city centres — **1.2% of true relief**, 1% better than
-> predicting zero height everywhere. The cause is measured: on real imagery
-> every anchor is a *ground* anchor, terrain needs a scale **51× smaller** than
-> buildings do, and one affine field per neighbourhood serves the majority.
+> predicting zero height everywhere. The cause is measured, not guessed: on real
+> imagery every anchor is a *ground* anchor, terrain needs a scale **51× smaller**
+> than buildings do, and one affine field per neighbourhood serves the majority.
 >
-> Supplying that missing scale — **one constant, fitted once over the dataset**
-> — recovers **27–36% of true relief** and beats the flat-ground floor by
-> **19–29%**,
+> Supplying that missing scale — **one constant, fitted once over the dataset** —
+> recovers **36% of true relief** and beats the flat-ground floor by **29%**,
 > while elevation MAE gets *worse*. That trade is the finding: on this problem
-> the headline metric and reconstruction quality point in opposite directions.
-> The surface has stopped being flat; it has not started being right.
+> the headline metric and reconstruction quality point in opposite directions,
+> so a project steering by MAE would reject the only change that recovered any
+> structure. The surface has stopped being flat; it has not started being right.
 
-
----
+**Reading order.** §3.1 and §3.2 are the result and the reason it needs two
+tables. §4 is why. §5 is the one thing here that is learned, and §5.6–§5.7 are
+two refinements that were built, measured and found not to work — recorded so
+they are not built again. Everything is CPU-only and reproducible from two
+commands (§2.7).
 
 ## Research question
 
@@ -314,8 +317,8 @@ So $a$ is supplied from outside the image:
 
 $$ a^\star = \arg\min_a \lVert a \cdot \max(D_{\text{hi}}, 0) - \mathrm{nDSM}_{\text{true}} \rVert^2 $$
 
-fitted once over a dataset by `ayama fit` and held fixed at inference, where
-nothing in the scene can argue with it. This is the only quantity in ĀYĀMA
+fitted once over a dataset by `traksha fit` and held fixed at inference, where
+nothing in the scene can argue with it. This is the only quantity in TRAKSHA
 learned from data outside the image it is applied to, and the calibration field
 records it as such (`scale_source: "fitted"`) so a supplied number can never be
 mistaken for a solved one. §5 is the whole of it.
@@ -334,7 +337,7 @@ mistaken for a solved one. §5 is the whole of it.
 | Backbone | `depth-anything/Depth-Anything-V2-Small-hf` [1], 24.8 M params, float32 |
 | Threads | 4 (torch) |
 
-Recorded per run in each `dataset.json` → `config`, and by `ayama doctor`.
+Recorded per run in each `dataset.json` → `config`, and by `traksha doctor`.
 
 ### Models
 
@@ -345,7 +348,7 @@ backbone is the only thing carrying parameters, and it is used as-is. That is
 why §5.4's conclusion matters: predicting the structural scale would be the
 first component this project actually trains.
 
-Registry is [`ayama/depth/backbones/__init__.py`](ayama/depth/backbones/__init__.py);
+Registry is [`traksha/depth/backbones/__init__.py`](traksha/depth/backbones/__init__.py);
 select with `--backbone <key>`.
 
 | key | checkpoint | native input | status in this study |
@@ -357,7 +360,7 @@ select with `--backbone <key>`.
 | `dpt-hybrid` | `Intel/dpt-hybrid-midas` [2] | 384 px | registered, never run |
 
 Parameter counts are given only where measured. `dav2-vits` at 24.8 M was
-counted on this machine by `ayama bench`; the rest were not loaded here and are
+counted on this machine by `traksha bench`; the rest were not loaded here and are
 not guessed at.
 
 Two things this table is meant to make impossible to miss. **Every backbone
@@ -513,7 +516,7 @@ outside the image it is applied to.
 ```bash
 # fetch one real scene with its lidar truth (~91 MB), then run the study
 python scripts/fetch_swisstopo.py --out data/real/zurich --bbox 8.530,47.365,8.545,47.375
-python -m ayama.cli dataset data/real --layout generic     --backbone dav2-vitl --out results
+python -m traksha.cli dataset data/real --layout generic     --backbone dav2-vitl --out results
 ```
 
 Two points of discipline live in that fetcher. The survey-grade DTM is
@@ -530,8 +533,8 @@ The same command reads directories you supply. It downloads nothing — a pipeli
 that quietly proceeds with data it failed to fetch is worse than one that stops.
 
 ```bash
-python -m ayama.cli dataset /data/dfc2019/Track1 --layout us3d --list   # what did it find?
-python -m ayama.cli dataset /data/dfc2019/Track1 --layout us3d \\
+python -m traksha.cli dataset /data/dfc2019/Track1 --layout us3d --list   # what did it find?
+python -m traksha.cli dataset /data/dfc2019/Track1 --layout us3d \\
     --out results/us3d --backbone dav2-vitl
 ```
 
@@ -557,7 +560,7 @@ is what that machinery found, and none of it is visible in MAE.
 Individual scenes also work through `run` with ordinary file paths:
 
 ```bash
-python -m ayama.cli run scene.tif --out out/run     --dem copernicus_tile.tif --ref lidar_dsm.tif --sem labels.tif
+python -m traksha.cli run scene.tif --out out/run     --dem copernicus_tile.tif --ref lidar_dsm.tif --sem labels.tif
 ```
 
 **What is still missing.** No Copernicus tile fetcher for arbitrary scenes
@@ -591,9 +594,9 @@ no account are required.
 > terms, which permit free use including commercial use provided the source is
 > named: <https://www.swisstopo.admin.ch/en/terms-of-use-free-geodata-and-geoservices>.
 >
-> The 576 × 576 crop bundled in [`ayama/data/fixture/`](ayama/data/fixture/) is
+> The 576 × 576 crop bundled in [`traksha/data/fixture/`](traksha/data/fixture/) is
 > redistributed under those same terms; its provenance is recorded in
-> [`ayama/data/fixture/ATTRIBUTION.md`](ayama/data/fixture/ATTRIBUTION.md).
+> [`traksha/data/fixture/ATTRIBUTION.md`](traksha/data/fixture/ATTRIBUTION.md).
 
 **Copernicus GLO-30** is referenced but not downloaded. `simulate_public_dem`
 degrades the survey-grade swissALTI3D DTM to GLO-30's 30 m posting and 3 m
@@ -639,7 +642,7 @@ and its three sibling arms. Regenerate with the two commands in §2.7.
 
 Two arms of the same pipeline on the same four scenes: `dav2-vitl` calibrated
 from anchors alone, and the same run with the structural scale supplied by
-`ayama fit` (§5). ± is the population SD over the four scenes, not a standard
+`traksha fit` (§5). ± is the population SD over the four scenes, not a standard
 error (§2.5).
 
 | metric | **anchors only** | **+ fitted scale** | global affine | DEM-only (floor) |
@@ -677,7 +680,7 @@ reliably select the wrong surface.
 Elevation MAE flatters this pipeline, and on real city scenes it flatters it
 harder than any renderer did. Around half of every scene is ground; the anchor
 DEM already knows the ground; an 8 m elevation error is dominated by terrain
-that was supplied, not inferred. The quantity ĀYĀMA claims is **height above
+that was supplied, not inferred. The quantity TRAKSHA claims is **height above
 ground**, and it is measurable here because a bare-earth lidar DTM ships with
 every tile.
 
@@ -815,14 +818,14 @@ residual spread cannot report a component the model never attempts.
 
 ## 3.6 Delivery: one image, one folder, all four phases
 
-`ayama build` runs Phase 1 through Phase 4 on a single image and leaves
+`traksha build` runs Phase 1 through Phase 4 on a single image and leaves
 everything in one directory. That is a correction, not a feature: the delivery
 layer used to write into sibling folders, so a scene was three directories that
 had to be matched up by hand and a tileset could outlive the run it was built
 from without anything noticing.
 
 ```bash
-python -m ayama.cli build scene.tif --out results/zurich \
+python -m traksha.cli build scene.tif --out results/zurich \
     --dem copernicus.tif --ref lidar_dsm.tif
 ```
 
@@ -833,7 +836,7 @@ results/zurich/
   dsm.png ndsm.png sigma.png error.png texture.jpg     phase 2
   provenance.json  summary.json                        what this scene scored
   tiles3d/  tileset.json + tiles/                      phase 3
-  mesh/     surface.obj + surface.mtl + surface.jpg    phase 4
+  mesh/     surface.obj + surface.mtl + surface.jpg    phase 4 (adaptive)
 ```
 
 **The mesh is the deliverable, and it is committed.** A textured OBJ with its
@@ -842,17 +845,60 @@ name — which opens in Blender, MeshLab or CloudCompare with nothing installed.
 Vertices are in metres in the scene CRS, not pixels, asserted by a test because
 a mesh in pixel units is silently wrong in every downstream tool.
 
+### The grid is chosen per block, not once
+
+A uniform stride is the wrong instrument for this surface. Decimating the
+delivered Zürich DSM to a 2 m grid is within **0.9 m of the full-resolution
+surface on average and 61 m out at worst**, because the misses are not spread
+around — they are all on the few cells where a sampling step cuts across a
+twenty-metre wall. A finer uniform grid pays for detail everywhere to fix a
+problem that lives in a few places.
+
+So each block is measured against the bilinear patch through its corners, and
+emitted fine or coarse accordingly ([`traksha/mesh/adaptive.py`](traksha/mesh/adaptive.py)):
+
+| Zürich, 1024² | triangles | worst-case error |
+|---|---|---|
+| uniform stride 4 (2 m) | 130,050 | 60.9 m |
+| uniform stride 2 (1 m) | 522,242 | 45.8 m |
+| **adaptive, 500k budget** | **493,598** | **≤ 2.62 m, by construction** |
+
+Same triangle budget as the 1 m grid, worst case bounded **seventeen times
+tighter** — and bounded rather than discovered, since a block is only left
+coarse if the patch already explains it to within the tolerance.
+
+**Mixing resolutions is where this usually goes wrong.** A coarse triangle whose
+edge passes through a fine neighbour's vertex is a T-junction, and a T-junction
+is a hairline crack you can see through. It cannot form here: a coarse block is
+not two big triangles but a fan from its centre out to exactly the perimeter
+vertices its neighbours kept. Tests assert zero non-manifold edges, zero
+zero-footprint slivers, no unreferenced vertices, and that every triangle faces
+up — the last one caught a real bug, where fanning from a corner instead of the
+centre produced 21,000 vertical slivers along block edges.
+
+**The budget, not the tolerance, is the knob.** A tolerance is a quality
+guarantee and a triangle count is a file size, and only one can be chosen
+freely: at a fixed 2 m, dense Bern produced a 58 MB OBJ while flat Lausanne
+produced a small one. `--obj-tol` still exists, but the delivery path sets
+`max_triangles` and reports the tolerance that fit — 6.19 m for Bern, 1.88 m for
+Lausanne, both at ~499k triangles. Below a few triangles per block the scheme
+has a floor, and the search says so rather than pretending.
+
+### Committed
+
 It was gitignored at first, which made this a study you had to run before you
-could look at anything. Two changes made it worth committing: vertices are
-written to the **millimetre with trailing zeros stripped**, because tenths of a
-millimetre on a surface with metre-scale error is bytes spent on noise; and
-`.gitattributes` pins the OBJ and MTL to LF so a Windows checkout gets the same
-bytes the writer produced. Four scenes at stride 4 are 30.6 MB of ASCII that
-deflates to **8.2 MB in the pack**. A test asserts every delivered scene ships
-one and that it is tracked, so it cannot quietly vanish again.
+could look at anything. Vertices are written to the **millimetre with trailing
+zeros stripped** — tenths of a millimetre on a surface with metre-scale error is
+bytes spent on noise — and `.gitattributes` pins the OBJ and MTL to LF so a
+Windows checkout gets the bytes the writer produced. Four scenes are 122 MB of
+ASCII that deflates to **26.8 MB in the pack**, largest file 30.3 MB. A test
+asserts every delivered scene ships a mesh *and that git tracks it*, so it
+cannot quietly vanish again.
 
 The tileset is the browser view of the same surface, and the OBJ sits beside it
-rather than inside it so the folder moves as a unit.
+rather than inside it so the folder moves as a unit. The published demo at
+`web/data` carries a uniform 8k-triangle mesh instead: it is a taster, and it
+sits below the adaptive scheme's floor.
 
 The tiler writes its own verdict into `tileset.json` from the height
 distribution it was handed, so §3.2's finding travels with the artifact instead
@@ -861,17 +907,18 @@ of being lost at the hand-off. It uses neither ground truth nor segmentation —
 
 | delivery sweep (Zürich, 1024², CPU) | result |
 |---|---|
-| build | 7.35 s tiles, 13.92 s with the OBJ |
-| payload | 5.5 MB whole pyramid, **1.45 MB for the LOD the viewer opens** |
-| tile size 128 / 256 / 512 / 1024 | 10.94 / 10.84 / 10.83 / 10.85 MB — flat |
-| mesh stride 2 → 4 | 522,242 → 130,050 triangles, 33.6 → 7.8 MB |
-| quantisation, 24-bit → 12-bit | nDSM 1274→576 kB, **worst error 1.75 mm** |
+| build | 4.83 s tiles, 10.50 s with the OBJ (0.22 Mpix/s) |
+| payload | 12.1 MB whole pyramid, **6.08 MB before first paint** |
+| tile size 128 / 256 / 512 / 1024 | 12.20 / 12.11 / 12.14 / 12.17 MB — flat |
+| mesh, 500k budget | adaptive: 493,598 triangles, error ≤ 2.62 m (uniform 1 m grid: 45.8 m) |
+| quantisation, 24-bit → 12-bit | nDSM 1265→567 kB, **worst error 19 mm** on a 53 m range |
 | round trip | 16/16 layer-LOD pairs within half a step |
-| viewer | 66 ms before first paint |
+| viewer | 50 ms before first paint (browser rasterisation not measured) |
 
 Tile size is irrelevant to payload over a 16× range, so it is a latency and
-cache decision rather than a bandwidth one. 12-bit quantisation costs 1.75 mm on
-a layer spanning 53 m — the encoding is not what limits the result.
+cache decision rather than a bandwidth one. 12-bit quantisation costs 19 mm on a
+layer spanning 53 m — four orders of magnitude under the surface's own 5.4 m
+error, so the encoding is not what limits the result.
 
 # 4. Failure analysis: terrain and structure demand different scales
 
@@ -939,7 +986,7 @@ computed automatically whenever a bare-earth DTM is present:
 
 ## 4.4 Consequence
 
-ĀYĀMA does not currently produce a usable nDSM on real imagery, and no claim of
+TRAKSHA does not currently produce a usable nDSM on real imagery, and no claim of
 state of the art is made or implied. What it does produce is a resurfaced public
 DEM with an uncertainty field that does not know it is wrong.
 
@@ -987,7 +1034,7 @@ it cannot come from the anchor ladder, which observes only ground.
 
 ## 5.2 So it is learned, once, and shipped
 
-`ayama fit` reads a completed study and solves, per scene, the one number the
+`traksha fit` reads a completed study and solves, per scene, the one number the
 ladder cannot see:
 
 $$a^\star = \arg\min_a \lVert a \cdot \max(D_{\mathrm{hi}}, 0) - \mathrm{nDSM}_{\mathrm{true}} \rVert^2$$
@@ -998,7 +1045,7 @@ It is a **calibration constant** — metres of height per unit of high-band dept
 the scene can argue with it (`scale_source: "fitted"`).
 
 ```bash
-python -m ayama.cli fit data/real --runs results
+python -m traksha.cli fit data/real --runs results
 ```
 
 ```
@@ -1079,7 +1126,7 @@ The mean-zero constraint is the important one: the refinement may move height
 *within* a neighbourhood and may not move the neighbourhood, so it cannot
 rewrite the calibrated datum. It is implemented as a guided filter with the
 orthophoto's luminance as the guide
-([`ayama/mesh/refine.py`](ayama/mesh/refine.py)) — the standard depth-refinement
+([`traksha/mesh/refine.py`](traksha/mesh/refine.py)) — the standard depth-refinement
 operator, no training, no second network, no generative prior.
 
 **It does nothing.** Over the four scenes, best parameters found by sweep:
@@ -1115,7 +1162,7 @@ missing.** §3.2 shows that assumption does not hold here yet. The refinement is
 therefore kept as a diagnostic rather than shipped as a stage —
 
 ```bash
-python -m ayama.cli refine results/zurich \
+python -m traksha.cli refine results/zurich \
     --ref data/real/zurich/zurich_dsm.tif --dtm data/real/zurich/zurich_dtm.tif
 ```
 
@@ -1131,11 +1178,52 @@ vary *where* the height goes, not merely how much of it there is.
 
 ---
 
+## 5.7 A learned *local* scale — the signal is there, the data is not
+
+§5.4 names the next rung: predict $a(p)$ per region instead of once per scene.
+§5.2's oracle bounds it generously, so it is worth knowing whether the bound is
+reachable. It was tested rather than assumed.
+
+Per 64 px block (32 m), over the four scenes, 978 blocks with something to
+scale: fit the least-squares $a^\star$ against lidar, then try to predict it
+from evidence available at inference — high-band statistics, image texture and
+luminance, local DEM relief, depth spread. Ridge in log space, scored **leave
+one scene out** in nDSM MAE on the held-out city.
+
+| | held-out nDSM MAE |
+|---|---|
+| global constant (§5.2) | 4.866 m |
+| **learned local $a(p)$** | **4.849 m** |
+| per-block oracle | **3.467 m** |
+
+**The learned model captures none of the gap.** It is 0.3% better than a
+constant — noise — while the oracle over the same blocks is 1.4 m better. The
+result is stable across four orders of ridge regularisation, and it is not a
+case of one bad feature: no single feature correlates with $\log a^\star$ above
+|r| = 0.20, and local $a^\star$ ranges over an interquartile 86 to 216 against a
+global constant of 104.
+
+So the ceiling is real and the route to it is blocked, and the block is **data,
+not architecture**. 978 training blocks from four cities in one country is not
+a training set; a higher-capacity model — a graph transformer over projected
+image features, say — has strictly more ways to overfit it than ridge did, and
+would report a better training loss while doing worse on a held-out city.
+
+**What would change the answer.** More scenes, and that is fetchable: the
+swisstopo STAC covers the whole country and `scripts/fetch_swisstopo.py` takes a
+tile key. Forty scenes is ~10,000 blocks and roughly 4 GB, and would make the
+question answerable. Satellite imagery with co-registered truth (DFC2019/US3D)
+would answer it for satellite geometry, at the cost of the registration wall in
+§2.8. Until one of those is paid for, a larger model here would be a claim the
+evidence cannot support.
+
+---
+
 # 6. Limitations
 
 Beyond the protocol limits in §2.6:
 
-- **The headline claim is a negative result.** ĀYĀMA does not currently produce
+- **The headline claim is a negative result.** TRAKSHA does not currently produce
   a usable DSM, and no claim of state of the art is made or implied.
 - **σ is not calibrated on real data** — 1σ coverage 0.537 against 0.683 — and
   structurally cannot see the bias that dominates the error (§3.5).
@@ -1169,8 +1257,8 @@ reaches a results table, so it was removed.
 Then, on any image, all four phases into one folder:
 
 ```bash
-python -m ayama.cli build my_image.tif --out out/mine
-python -m ayama.cli viewer out/mine          # 3D at localhost:8020, press F to fly
+python -m traksha.cli build my_image.tif --out out/mine
+python -m traksha.cli viewer out/mine          # 3D at localhost:8020, press F to fly
 ```
 
 That needs no reference data. Add `--dem` for a public DEM (Tier A) and `--ref`
@@ -1179,17 +1267,17 @@ for a lidar DSM if you have one and want metrics.
 | command | produces | time (CPU) |
 |---|---|---|
 | `python scripts/fetch_swisstopo.py --out data/real/zurich` | one real scene + lidar truth (~91 MB) | 60 s |
-| `python -m ayama.cli dataset data/real --layout generic --backbone dav2-vitl` | §3 and §4 — `dataset.json` over four scenes | 634 s |
-| **`python -m ayama.cli fit data/real --runs results`** | **§5 — the structural scale, leave-one-out validated** | **1 s** |
-| `python -m ayama.cli sample --out data/sample.tif` | the bundled real sample scene, no download | 1 s |
-| `python -m ayama.cli run <scene> --workers 8` | one scene, threaded bootstrap | 42 s |
-| `python -m ayama.cli preflight` | end-to-end verdict on this machine | 20 s |
-| **`python -m ayama.cli build <image> --out <dir>`** | **§3.6 — phases 1-4 into one folder: rasters, tileset, textured OBJ** | **~120 s** |
-| `python -m ayama.cli mesh <scene> ` | phase 3 alone, into `<scene>/tiles3d` | 10 s |
-| `python -m ayama.cli delivery <scene>` | the delivery benchmark sweep | 179 s |
-| `python -m ayama.cli viewer results/zurich` | interactive 3D at `localhost:8020` | 5 s |
-| `python -m ayama.cli serve` | the web service: upload an image, get a 3D reconstruction | — |
-| `python -m ayama.cli dataset <root> --layout us3d` | the pipeline over a **real** dataset (§2.7) | — |
+| `python -m traksha.cli dataset data/real --layout generic --backbone dav2-vitl` | §3 and §4 — `dataset.json` over four scenes | 634 s |
+| **`python -m traksha.cli fit data/real --runs results`** | **§5 — the structural scale, leave-one-out validated** | **1 s** |
+| `python -m traksha.cli sample --out data/sample.tif` | the bundled real sample scene, no download | 1 s |
+| `python -m traksha.cli run <scene> --workers 8` | one scene, threaded bootstrap | 42 s |
+| `python -m traksha.cli preflight` | end-to-end verdict on this machine | 20 s |
+| **`python -m traksha.cli build <image> --out <dir>`** | **§3.6 — phases 1-4 into one folder: rasters, tileset, textured OBJ** | **~120 s** |
+| `python -m traksha.cli mesh <scene> ` | phase 3 alone, into `<scene>/tiles3d` | 10 s |
+| `python -m traksha.cli delivery <scene>` | the delivery benchmark sweep | 179 s |
+| `python -m traksha.cli viewer results/zurich` | interactive 3D at `localhost:8020` | 5 s |
+| `python -m traksha.cli serve` | the web service: upload an image, get a 3D reconstruction | — |
+| `python -m traksha.cli dataset <root> --layout us3d` | the pipeline over a **real** dataset (§2.7) | — |
 | `python -m pytest tests -q` | 201 passed, 0 skipped | 220 s |
 
 ## 7.2 Reproduce the §4 diagnosis
@@ -1238,7 +1326,7 @@ failure — add `print((cal.a <= 0.0501).mean())` after a `solve_agmc` call; it 
 ## 7.3 Compute
 
 Everything in this README was measured on the CPU, because that is the only way
-ĀYĀMA runs. There is no GPU path, no device flag and no accelerator to
+TRAKSHA runs. There is no GPU path, no device flag and no accelerator to
 configure, and that is a decision with a measurement behind it rather than a
 gap: an order of magnitude more backbone (`dav2-vits` → `dav2-vitl`) moved
 recovered relief from 0.06 m to 0.17 m against a true 14.4 m, because the
@@ -1276,11 +1364,11 @@ tile written from a Phase 2 raster, and `tileset.json` records which run.
 
 | | measured (CPU, 1024² real scene) |
 |---|---|
-| tileset build | 7.35 s (13.92 s with OBJ export) |
+| tileset build | 4.83 s (10.50 s with OBJ export) |
 | round-trip fidelity | **16/16** layer-LOD pairs within half an encoding step |
-| payload | 5.5 MB at 12-bit, whole pyramid; 1.45 MB for the LOD the viewer opens |
-| quantisation cost | nDSM 24→12 bit, worst error **1.75 mm** on a 53 m range |
-| viewer first paint | 66 ms CPU (browser rasterisation not measured) |
+| payload | 12.1 MB at 12-bit, whole pyramid; 1.45 MB for the LOD the viewer opens |
+| quantisation cost | nDSM 24→12 bit, worst error **19 mm** on a 53 m range |
+| viewer first paint | 50 ms CPU (browser rasterisation not measured) |
 
 Full report: [`results/zurich/DELIVERY.md`](results/zurich/DELIVERY.md).
 
@@ -1293,7 +1381,7 @@ single level. Those layers get a linear encoding fitted to their own range.
 flattened city that does not say so is worse than no 3D view, so the tiler
 computes its own verdict from the height distribution it was handed. That check
 has been wrong twice and the comments in
-[`ayama/mesh/build.py`](ayama/mesh/build.py) record both: an absolute threshold
+[`traksha/mesh/build.py`](traksha/mesh/build.py) record both: an absolute threshold
 missed a real collapse, and a comparison against the colour heuristic's
 `building` class raised a **false alarm on a surface with 53 m of genuine
 relief** — because §3.4 shows that heuristic does not find buildings. It now
@@ -1330,13 +1418,13 @@ tour at all.
 
 ### The web service
 
-`ayama serve` turns the batch pipeline into something a person can use: upload a
+`traksha serve` turns the batch pipeline into something a person can use: upload a
 nadir image, watch it reconstruct, look at the result in 3D, download the
 GeoTIFFs.
 
 ```bash
 pip install -e ".[api]"
-python -m ayama.cli serve --port 8000 --device auto
+python -m traksha.cli serve --port 8000 --device auto
 ```
 
 | surface | what it is |
@@ -1350,7 +1438,7 @@ python -m ayama.cli serve --port 8000 --device auto
 Three things worth stating about the design.
 
 **The viewer is unchanged.** `web/app.js` resolves its tileset from a base URL,
-so the same renderer serves a prebuilt local tileset (`ayama viewer`) and a
+so the same renderer serves a prebuilt local tileset (`traksha viewer`) and a
 freshly reconstructed job (`?job=<id>`). Nothing in the rendering path is
 service-specific, and the result URL is shareable.
 
@@ -1420,7 +1508,7 @@ V2 [1] is the backbone used here; Marigold [3] takes a diffusion approach.
 All predict relative depth; none produce metres for a nadir remote-sensing scene.
 
 **Metric monocular depth.** ZoeDepth [7] adds a learned metric head, which is
-the main alternative to the approach taken here. ĀYĀMA deliberately does *not*
+the main alternative to the approach taken here. TRAKSHA deliberately does *not*
 learn a metric head — the constraint is that metric grounding should come from
 observable scene evidence (DEM, shadows, water) rather than from a prior baked
 into weights at training time. Whether that constraint is worth its cost is
@@ -1499,7 +1587,7 @@ different terms from Small/Base and should be checked before any commercial use.
 # Appendix: repository layout and conventions
 
 ```
-ayama/
+traksha/
   core/        types.py (contracts), geo.py, solar.py, ingest.py
   depth/       backbones/{base,hf}.py, infer.py
   semantics/   segment.py, shadow.py
@@ -1527,7 +1615,7 @@ out/           local build artifacts only - gitignored, never committed
 ```
 
 Every stage is a pure function `stage(input) -> output` over the dataclasses in
-[`ayama/core/types.py`](ayama/core/types.py). That is what makes the ablation
+[`traksha/core/types.py`](traksha/core/types.py). That is what makes the ablation
 cheap: `ablate` runs inference once and re-solves only the calibration per
 variant.
 

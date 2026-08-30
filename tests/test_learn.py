@@ -1,6 +1,6 @@
 """The structural scale: fitting it, choosing a model, and applying it.
 
-This is the only part of ĀYĀMA that carries anything between images, so it is
+This is the only part of TRAKSHA that carries anything between images, so it is
 the only part where a bug can quietly make every future scene wrong in the same
 direction. The tests below are mostly about refusals: refusing to prefer a
 model the data does not support, refusing to apply a scale fitted under a
@@ -14,7 +14,7 @@ import pytest
 
 pytest.importorskip("rasterio")
 
-from ayama.learn.scale import (ScaleModel, Sample, fit,  # noqa: E402
+from traksha.learn.scale import (ScaleModel, Sample, fit,  # noqa: E402
                                high_band, scene_features, scene_target)
 
 
@@ -121,17 +121,17 @@ def test_an_unknown_field_in_the_file_does_not_break_loading(tmp_path):
 
     p = str(tmp_path / "c.json")
     with open(p, "w", encoding="utf-8") as fh:
-        json.dump({"ayama_scale_model_version": 99, "kind": "constant",
+        json.dump({"traksha_scale_model_version": 99, "kind": "constant",
                    "value": 50.0, "something_new": [1, 2, 3]}, fh)
     assert ScaleModel.load(p).value == 50.0
 
 
 def test_the_bundled_model_is_present_and_sane():
     """It ships, so it is tested. A wrong constant makes every scene wrong."""
-    from ayama.learn.scale import load_bundled
+    from traksha.learn.scale import load_bundled
 
     m = load_bundled()
-    assert m is not None, "no calibration.json ships - run `ayama fit`"
+    assert m is not None, "no calibration.json ships - run `traksha fit`"
     assert m.kind in ("constant", "linear")
     assert 10.0 < m.predict({"hi_p99": 0.3}) < 1000.0
     assert m.n_scenes >= 1
@@ -147,8 +147,8 @@ def test_the_scale_prior_is_held_when_no_object_anchor_can_argue_with_it():
     (README §4.2). When a scale is supplied and nothing in the data speaks to
     it, it has to come out the other side unchanged.
     """
-    from ayama.chhaya.agmc import solve_agmc
-    from ayama.core.types import Anchor, Config, DepthField, SceneMeta, Tier
+    from traksha.chhaya.agmc import solve_agmc
+    from traksha.core.types import Anchor, Config, DepthField, SceneMeta, Tier
 
     rng = np.random.default_rng(7)
     rel = rng.random((96, 96)).astype(np.float32)
@@ -164,8 +164,8 @@ def test_the_scale_prior_is_held_when_no_object_anchor_can_argue_with_it():
 
 
 def test_without_a_prior_the_scale_is_still_solved_from_anchors():
-    from ayama.chhaya.agmc import solve_agmc
-    from ayama.core.types import Anchor, Config, DepthField, SceneMeta, Tier
+    from traksha.chhaya.agmc import solve_agmc
+    from traksha.core.types import Anchor, Config, DepthField, SceneMeta, Tier
 
     rng = np.random.default_rng(8)
     rel = rng.random((96, 96)).astype(np.float32)
@@ -184,8 +184,8 @@ def test_the_bootstrap_carries_the_scale_rather_than_discarding_it():
     one, so enabling the bootstrap - the default - threw the fitted scale away
     and shipped a flattened surface with a sigma computed for a different one.
     """
-    from ayama.chhaya.uncertainty import bootstrap_sigma
-    from ayama.core.types import Anchor, Config, DepthField, SceneMeta
+    from traksha.chhaya.uncertainty import bootstrap_sigma
+    from traksha.core.types import Anchor, Config, DepthField, SceneMeta
 
     rng = np.random.default_rng(9)
     rel = rng.random((64, 64)).astype(np.float32)
@@ -206,8 +206,8 @@ def test_the_bootstrap_carries_the_scale_rather_than_discarding_it():
 def test_a_model_fitted_under_a_different_split_is_not_applied(tmp_path):
     """A scale in metres per unit of high-band depth only means anything under
     the split that produced it. Applying it to another is a units error."""
-    from ayama.api.pipeline import _fitted_scale
-    from ayama.core.types import Config, DepthField, SceneMeta
+    from traksha.api.pipeline import _fitted_scale
+    from traksha.core.types import Config, DepthField, SceneMeta
 
     p = str(tmp_path / "c.json")
     ScaleModel(kind="constant", value=90.0, radius_m=30.0).save(p)
@@ -222,8 +222,8 @@ def test_a_model_fitted_under_a_different_split_is_not_applied(tmp_path):
 
 
 def test_the_scale_model_can_be_switched_off_and_overridden():
-    from ayama.api.pipeline import _fitted_scale
-    from ayama.core.types import Config, DepthField, SceneMeta
+    from traksha.api.pipeline import _fitted_scale
+    from traksha.core.types import Config, DepthField, SceneMeta
 
     depth = DepthField(relative=np.random.default_rng(4).random((32, 32)).astype(np.float32),
                        meta=SceneMeta(gsd_m=0.5), backbone="test-fixture")
@@ -240,7 +240,7 @@ def test_the_refinement_cannot_move_the_calibrated_datum():
     shift the local mean it has rewritten the calibration, which is the one
     thing the anchors were for.
     """
-    from ayama.mesh.refine import refine_heights
+    from traksha.mesh.refine import refine_heights
 
     rng = np.random.default_rng(11)
     z = np.zeros((256, 256), np.float32)
@@ -264,7 +264,7 @@ def test_the_refinement_cannot_move_the_calibrated_datum():
 
 
 def test_the_refinement_is_bounded_and_keeps_ground_at_ground():
-    from ayama.mesh.refine import refine_heights
+    from traksha.mesh.refine import refine_heights
 
     rng = np.random.default_rng(12)
     z = np.abs(rng.normal(0, 3, (128, 128))).astype(np.float32)
@@ -276,7 +276,7 @@ def test_the_refinement_is_bounded_and_keeps_ground_at_ground():
 
 def test_the_guided_filter_keeps_an_edge_the_guide_has():
     """If it cannot preserve a step in the guide it is just a blur."""
-    from ayama.mesh.refine import guided_filter
+    from traksha.mesh.refine import guided_filter
 
     step = np.zeros((64, 64), np.float32)
     step[:, 32:] = 1.0

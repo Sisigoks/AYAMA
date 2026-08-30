@@ -5,8 +5,8 @@ that is deliberate: every number this project publishes comes from real imagery,
 and a suite that exercises the pipeline on invented pixels is testing a
 different pipeline from the one that ships.
 
-The scene is the one bundled with the package - see `ayama/data/sample.py` for
-what it is and `ayama/data/fixture/ATTRIBUTION.md` for the swisstopo licence.
+The scene is the one bundled with the package - see `traksha/data/sample.py` for
+what it is and `traksha/data/fixture/ATTRIBUTION.md` for the swisstopo licence.
 It is committed, so a fresh clone runs the whole suite with no network.
 
 It carries **no sun angles**, because none is published. Tests needing shadow
@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 
-from ayama.data.sample import load_sample_scene  # noqa: F401  (re-exported for tests)
+from traksha.data.sample import load_sample_scene  # noqa: F401  (re-exported for tests)
 
 
 def pytest_configure(config):

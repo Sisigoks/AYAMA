@@ -1,0 +1,28 @@
+{
+  "traksha_scale_model_version": 1,
+  "backbone": "dav2-vits",
+  "kind": "constant",
+  "value": 98.67256488899679,
+  "feature": null,
+  "coef": 0.0,
+  "intercept": 0.0,
+  "radius_m": 60.0,
+  "n_scenes": 4,
+  "loo_mae_m": 5.661449193954468,
+  "loo_mae_alt_m": 6.383374094963074,
+  "floor_mae_m": 7.591875076293945,
+  "scenes": [
+    "bern",
+    "geneva",
+    "lausanne",
+    "zurich"
+  ],
+  "targets": [
+    103.635,
+    139.396,
+    73.788,
+    77.871
+  ],
+  "fitted_utc": "2026-08-29T16:49:26+00:00",
+  "notes": "Selected by leave-one-out. A constant won; a one-feature model fitted on the remaining scenes did not beat it. Add scenes and refit - this choice is made by the data, not in code."
+}

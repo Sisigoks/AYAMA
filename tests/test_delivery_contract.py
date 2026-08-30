@@ -19,14 +19,14 @@ import pytest
 
 pytest.importorskip("rasterio")
 
-from ayama.eval import delivery as D  # noqa: E402
+from traksha.eval import delivery as D  # noqa: E402
 
 
 @pytest.fixture(scope="module")
 def mini(tmp_path_factory):
     """A small run and its benchmark. Sweeps trimmed so the suite stays fast."""
-    from ayama.core.types import SceneMeta
-    from ayama.dsm.cog import write_cog, write_rgb
+    from traksha.core.types import SceneMeta
+    from traksha.dsm.cog import write_cog, write_rgb
 
     d = tmp_path_factory.mktemp("run")
     h = w = 128
@@ -56,7 +56,7 @@ def mini(tmp_path_factory):
 
 # ------------------------------------------------------------------- shape
 def test_report_carries_every_top_level_block(mini):
-    for key in ("ayama_delivery_version", "generated_utc", "environment", "scene",
+    for key in ("traksha_delivery_version", "generated_utc", "environment", "scene",
                 "config", "build", "encode", "stages", "tile_sweep", "obj_sweep",
                 "quantisation", "roundtrip", "payload", "viewer", "wall_s"):
         assert key in mini, f"delivery.json is missing '{key}'"
@@ -64,7 +64,7 @@ def test_report_carries_every_top_level_block(mini):
 
 def test_report_is_strict_json(mini, tmp_path):
     """A bare NaN parses in Python and breaks every strict reader downstream."""
-    from ayama.core.jsonio import dumps
+    from traksha.core.jsonio import dumps
 
     import json
 
@@ -74,7 +74,7 @@ def test_report_is_strict_json(mini, tmp_path):
 def test_markdown_renders_from_the_json(mini, tmp_path):
     path = D.write_report(mini, str(tmp_path / "DELIVERY.md"))
     text = open(path, encoding="utf-8").read()
-    for heading in ("# AYAMA delivery benchmark", "## Headline", "## Encoding throughput",
+    for heading in ("# TRAKSHA delivery benchmark", "## Headline", "## Encoding throughput",
                     "## Tile size", "## Mesh decimation", "## What full precision costs",
                     "## The surface survives the trip", "## Payload", "## Viewer CPU"):
         assert heading in text, f"report lost the '{heading}' section"
@@ -142,7 +142,7 @@ def test_fewer_bits_is_never_bigger_on_a_real_run():
     128 px layer came out 174, 172, 177 and 171 bytes, which measures nothing.
     That threshold is what the `meaningful` flag records.
     """
-    from ayama.mesh.build import load_run
+    from traksha.mesh.build import load_run
 
     rows = D.quantisation_sweep(load_run(str(REAL_RUN)))
     by_layer: dict = {}

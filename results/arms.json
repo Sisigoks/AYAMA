@@ -1,6 +1,6 @@
 {
-  "ayama_arms_version": 1,
-  "note": "Comparison arms, metrics only. These are the controls section 3 is measured against - the same pipeline without a fitted structural scale, and the cross-backbone check. Their per-scene rasters and meshes are not kept: they deliver no usable surface, which is the finding, and the numbers are the evidence for it. Regenerate any of them with `ayama dataset ... --scale-model off`.",
+  "traksha_arms_version": 1,
+  "note": "Comparison arms, metrics only. These are the controls section 3 is measured against - the same pipeline without a fitted structural scale, and the cross-backbone check. Their per-scene rasters and meshes are not kept: they deliver no usable surface, which is the finding, and the numbers are the evidence for it. Regenerate any of them with `traksha dataset ... --scale-model off`.",
   "arms": {
     "real_vitl_h1": {
       "label": "dav2-vitl, anchors only",

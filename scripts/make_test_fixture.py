@@ -12,7 +12,7 @@ DSM and DTM for the same ground.
 It is committed (about 2 MB) so that a fresh clone can run the whole suite with
 no network and no 350 MB download. swisstopo publishes these products as Open
 Government Data permitting redistribution with attribution; see the licence note
-in ayama/data/fixture/ATTRIBUTION.md, which this script writes.
+in traksha/data/fixture/ATTRIBUTION.md, which this script writes.
 
 The crop is chosen for building density rather than for looking nice: the
 calibration is most interesting where there is relief to recover.
@@ -24,7 +24,7 @@ import sys
 
 SIZE = 576
 SRC = "data/real/zurich"
-DST = "ayama/data/fixture"
+DST = "traksha/data/fixture"
 
 ATTRIBUTION = """# Test fixture provenance
 
@@ -56,9 +56,9 @@ def main() -> int:
     import rasterio
     from rasterio.transform import Affine
 
-    from ayama.core.types import Scene, SceneMeta
-    from ayama.dsm.cog import write_cog, write_rgb
-    from ayama.semantics.segment import segment
+    from traksha.core.types import Scene, SceneMeta
+    from traksha.dsm.cog import write_cog, write_rgb
+    from traksha.semantics.segment import segment
 
     if not os.path.isdir(SRC):
         print(f"error: {SRC} not found. Run scripts/fetch_swisstopo.py first.",
@@ -96,7 +96,7 @@ def main() -> int:
     with rasterio.open(os.path.join(SRC, "zurich.tif")) as ds:
         rgb = np.stack([ds.read(b)[sl] for b in (1, 2, 3)], axis=-1).astype("uint8")
     write_rgb(os.path.join(DST, "zurich_rgb.tif"), rgb, meta,
-              tags={"AYAMA_SOURCE": "swisstopo SWISSIMAGE 10cm"})
+              tags={"TRAKSHA_SOURCE": "swisstopo SWISSIMAGE 10cm"})
     write_cog(os.path.join(DST, "zurich_dsm.tif"), full[sl].astype("float32"), meta,
               description="swissSURFACE3D lidar DSM (m)")
     write_cog(os.path.join(DST, "zurich_dtm.tif"), dtm_full[sl].astype("float32"), meta,

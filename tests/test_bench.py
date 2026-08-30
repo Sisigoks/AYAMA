@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from ayama.eval.bench import device_report, format_bench, sweep
+from traksha.eval.bench import device_report, format_bench, sweep
 
 # The weightless placeholder backbone has been removed along with everything
 # else that produced invented pixels, so every case here loads real weights.

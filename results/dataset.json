@@ -1,5 +1,5 @@
 {
-  "ayama_dataset_version": 1,
+  "traksha_dataset_version": 1,
   "root": "D:\\UNNAT\\data\\real",
   "layout": "generic",
   "config": {
@@ -302,8 +302,8 @@
         "pred_max_height_m": 65.040771484375
       },
       "delivery": {
-        "tileset": "results/cpu/real_vitl_learned\\bern\\tiles3d\\tileset.json",
-        "mesh": "results/cpu/real_vitl_learned\\bern\\mesh\\surface.obj"
+        "tileset": "results\\bern\\tiles3d\\tileset.json",
+        "mesh": "results\\bern\\mesh\\surface.obj"
       }
     },
     {
@@ -509,8 +509,8 @@
         "pred_max_height_m": 41.25164794921875
       },
       "delivery": {
-        "tileset": "results/cpu/real_vitl_learned\\geneva\\tiles3d\\tileset.json",
-        "mesh": "results/cpu/real_vitl_learned\\geneva\\mesh\\surface.obj"
+        "tileset": "results\\geneva\\tiles3d\\tileset.json",
+        "mesh": "results\\geneva\\mesh\\surface.obj"
       }
     },
     {
@@ -716,8 +716,8 @@
         "pred_max_height_m": 32.015380859375
       },
       "delivery": {
-        "tileset": "results/cpu/real_vitl_learned\\lausanne\\tiles3d\\tileset.json",
-        "mesh": "results/cpu/real_vitl_learned\\lausanne\\mesh\\surface.obj"
+        "tileset": "results\\lausanne\\tiles3d\\tileset.json",
+        "mesh": "results\\lausanne\\mesh\\surface.obj"
       }
     },
     {
@@ -923,8 +923,8 @@
         "pred_max_height_m": 53.5714111328125
       },
       "delivery": {
-        "tileset": "results/cpu/real_vitl_learned\\zurich\\tiles3d\\tileset.json",
-        "mesh": "results/cpu/real_vitl_learned\\zurich\\mesh\\surface.obj"
+        "tileset": "results\\zurich\\tiles3d\\tileset.json",
+        "mesh": "results\\zurich\\mesh\\surface.obj"
       }
     }
   ],

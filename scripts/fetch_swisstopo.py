@@ -29,7 +29,7 @@ It is degraded to Copernicus GLO-30's 30 m posting and 3 m correlated noise by
 would give and the imagery and the truth are the only real advantages.
 
 Sun angles are computed from the acquisition date and the tile centre with
-`ayama.core.solar`, and written into the GeoTIFF. Read the caveat that prints
+`traksha.core.solar`, and written into the GeoTIFF. Read the caveat that prints
 with them: an orthophoto is a mosaic of many frames, so one sun vector is an
 approximation in a way it is not for a single satellite acquisition.
 """
@@ -49,7 +49,7 @@ COLLECTIONS = {
     "dsm": "ch.swisstopo.swisssurface3d-raster",
     "dtm": "ch.swisstopo.swissalti3d",
 }
-UA = {"User-Agent": "ayama-fetch/0.1"}
+UA = {"User-Agent": "traksha-fetch/0.1"}
 
 
 def _get_json(url: str) -> dict:
@@ -121,10 +121,10 @@ def build_scene(raw: dict, out: str, size: int, gsd: float, when: str,
     from rasterio.enums import Resampling
     from rasterio.warp import reproject
 
-    from ayama.core.solar import solar_position
-    from ayama.core.types import SceneMeta
-    from ayama.dsm.cog import write_cog, write_rgb
-    from ayama.eval.simulate import simulate_public_dem
+    from traksha.core.solar import solar_position
+    from traksha.core.types import SceneMeta
+    from traksha.dsm.cog import write_cog, write_rgb
+    from traksha.eval.simulate import simulate_public_dem
 
     # The DSM defines the grid: it is the reference, and resampling truth is
     # worse than resampling the inputs onto it.
@@ -182,7 +182,7 @@ def build_scene(raw: dict, out: str, size: int, gsd: float, when: str,
                      acquired_utc=dt.isoformat() if dt else None, source="swisstopo")
 
     os.makedirs(out, exist_ok=True)
-    tags = {"AYAMA_SOURCE": "swisstopo swissimage-dop10"}
+    tags = {"TRAKSHA_SOURCE": "swisstopo swissimage-dop10"}
     if az is not None:
         tags.update({"SUN_AZIMUTH": f"{az:.4f}", "SUN_ELEVATION": f"{el:.4f}"})
     write_rgb(os.path.join(out, stem + ".tif"), rgb, meta, tags=tags)
@@ -226,7 +226,7 @@ def main() -> int:
     args = ap.parse_args()
 
     socket.setdefaulttimeout(120)
-    print("AYAMA fetch   swisstopo open government data")
+    print("TRAKSHA fetch   swisstopo open government data")
     sel = find_assets(args.bbox, args.tile)
     print(f"  tile         {sel['tile']}")
 
@@ -240,10 +240,10 @@ def main() -> int:
     build_scene(raw, args.out, args.size, args.gsd, args.when or when or "", stem)
     print(f"\n  written to   {os.path.abspath(args.out)}")
     print("\n  run it:")
-    print(f"    python -m ayama.cli run {args.out}/{stem}.tif --out out/real \\")
+    print(f"    python -m traksha.cli run {args.out}/{stem}.tif --out out/real \\")
     print(f"        --dem {args.out}/{stem}_dem.tif --ref {args.out}/{stem}_dsm.tif")
     print("\n  or the whole collection at once:")
-    print(f"    python -m ayama.cli dataset {os.path.dirname(args.out)} --layout generic \\")
+    print(f"    python -m traksha.cli dataset {os.path.dirname(args.out)} --layout generic \\")
     print("        --backbone dav2-vitl --out results/real")
     return 0
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from ayama.core.types import (BARE_GROUND, BUILDING, Config, Scene, Tier)
+from traksha.core.types import (BARE_GROUND, BUILDING, Config, Scene, Tier)
 
 rasterio = pytest.importorskip("rasterio")
 
@@ -27,8 +27,8 @@ def written_scene(tmp_path_factory):
     swisstopo publishes none, so this angle is a test parameter, not a
     measurement.
     """
-    from ayama.data.sample import load_sample_scene
-    from ayama.dsm.cog import write_cog, write_rgb
+    from traksha.data.sample import load_sample_scene
+    from traksha.dsm.cog import write_cog, write_rgb
 
     d = tmp_path_factory.mktemp("scene")
     sc = load_sample_scene(size=384, sun=(150.0, 45.0))
@@ -46,7 +46,7 @@ def written_scene(tmp_path_factory):
 
 # ------------------------------------------------------------------- semantics
 def test_heuristic_segmentation_finds_the_classes_that_exist(written_scene):
-    from ayama.semantics.segment import class_fractions, segment
+    from traksha.semantics.segment import class_fractions, segment
 
     sc, _ = written_scene
     scene = Scene(rgb=sc.rgb, meta=sc.meta)
@@ -59,8 +59,8 @@ def test_heuristic_segmentation_finds_the_classes_that_exist(written_scene):
 
 
 def test_segmentation_can_be_supplied_as_a_raster(written_scene, tmp_path):
-    from ayama.dsm.cog import write_cog
-    from ayama.semantics.segment import segment
+    from traksha.dsm.cog import write_cog
+    from traksha.semantics.segment import segment
 
     sc, _ = written_scene
     p = str(tmp_path / "sem.tif")
@@ -73,7 +73,7 @@ def test_segmentation_can_be_supplied_as_a_raster(written_scene, tmp_path):
 
 # ---------------------------------------------------------------------- shadow
 def test_shadow_quality_gate_follows_the_sun():
-    from ayama.semantics.shadow import quality_from_sun_elevation
+    from traksha.semantics.shadow import quality_from_sun_elevation
 
     assert quality_from_sun_elevation(None) == 0.0
     assert quality_from_sun_elevation(12.0) == 0.0     # too low, shadows sprawl
@@ -92,7 +92,7 @@ def test_the_shadow_detector_flags_pixels_that_are_actually_dark(written_scene):
     no sun at all - the mask must be non-degenerate, and it must actually be
     dark.
     """
-    from ayama.semantics.shadow import detect_shadow
+    from traksha.semantics.shadow import detect_shadow
 
     sc, _ = written_scene
     mask = detect_shadow(sc.as_scene(), sc.sem)
@@ -116,8 +116,8 @@ def test_what_the_shadow_detector_flags_is_in_geometric_shadow(written_scene):
     detector sees only the dark ones, and on this crop it recovers under a third
     of them. That gap is a real limitation, not a bug - see README section 3.4.
     """
-    from ayama.eval.shadow_truth import cast_shadow_mask
-    from ayama.semantics.shadow import detect_shadow
+    from traksha.eval.shadow_truth import cast_shadow_mask
+    from traksha.semantics.shadow import detect_shadow
 
     sc, _ = written_scene
     mask = detect_shadow(sc.as_scene(), sc.sem)
@@ -133,7 +133,7 @@ def test_what_the_shadow_detector_flags_is_in_geometric_shadow(written_scene):
 
 def test_shadow_anchors_recover_building_heights(written_scene):
     """The physics, checked against the DSM that cast the shadows."""
-    from ayama.chhaya.anchors import harvest_shadow
+    from traksha.chhaya.anchors import harvest_shadow
 
     sc, _ = written_scene
     scene = Scene(rgb=sc.rgb, meta=sc.meta)
@@ -150,7 +150,7 @@ def test_shadow_anchors_recover_building_heights(written_scene):
 def test_shadow_anchors_are_empty_without_sun_metadata(written_scene):
     from dataclasses import replace
 
-    from ayama.chhaya.anchors import harvest_shadow
+    from traksha.chhaya.anchors import harvest_shadow
 
     sc, _ = written_scene
     blind = replace(sc.meta, sun_azimuth_deg=None, sun_elevation_deg=None)
@@ -162,8 +162,8 @@ def test_shadow_anchors_are_empty_without_sun_metadata(written_scene):
 def test_tier_selection_walks_the_ladder(written_scene):
     from dataclasses import replace
 
-    from ayama.chhaya.ladder import select_tier
-    from ayama.core.types import GCP
+    from traksha.chhaya.ladder import select_tier
+    from traksha.core.types import GCP
 
     sc, paths = written_scene
     scene = Scene(rgb=sc.rgb, meta=sc.meta)
@@ -180,7 +180,7 @@ def test_tier_selection_walks_the_ladder(written_scene):
 
 # -------------------------------------------------------------------- assembly
 def test_ndsm_is_never_negative_and_dtm_sits_under_the_dsm(written_scene):
-    from ayama.dsm.assemble import assemble
+    from traksha.dsm.assemble import assemble
 
     sc, _ = written_scene
     surf = assemble(sc.dsm_m, sc.sem, sc.meta, tier=Tier.A)
@@ -216,7 +216,7 @@ def test_the_colour_heuristic_does_not_find_buildings_on_real_imagery(written_sc
 
 
 def test_hole_filling_removes_non_finite_pixels():
-    from ayama.dsm.assemble import fill_holes
+    from traksha.dsm.assemble import fill_holes
 
     a = np.arange(64, dtype=np.float32).reshape(8, 8)
     a[3:5, 3:5] = np.nan
@@ -228,7 +228,7 @@ def test_hole_filling_removes_non_finite_pixels():
 # -------------------------------------------------------------------- pipeline
 @pytest.mark.slow
 def test_full_run_produces_artifacts_and_metrics(written_scene):
-    from ayama.api.pipeline import run
+    from traksha.api.pipeline import run
 
     sc, paths = written_scene
     cfg = Config(backbone=BACKBONE, chip=256, overlap=0.25,
@@ -248,7 +248,7 @@ def test_full_run_produces_artifacts_and_metrics(written_scene):
 
     with rasterio.open(res.artifacts["dsm"]) as ds:
         assert ds.crs is not None
-        assert ds.tags().get("AYAMA_BACKBONE") == BACKBONE
+        assert ds.tags().get("TRAKSHA_BACKBONE") == BACKBONE
 
     for stage in ("ingest", "depth", "anchors", "calibration", "assemble"):
         assert stage in res.timings_s
@@ -256,7 +256,7 @@ def test_full_run_produces_artifacts_and_metrics(written_scene):
 
 @pytest.mark.slow
 def test_run_without_a_dem_drops_to_tier_c(written_scene):
-    from ayama.api.pipeline import run
+    from traksha.api.pipeline import run
 
     sc, paths = written_scene
     cfg = Config(backbone=BACKBONE, chip=256, n_bootstrap=0)
@@ -269,7 +269,7 @@ def test_run_without_a_dem_drops_to_tier_c(written_scene):
 @pytest.mark.slow
 def test_missing_dem_file_fails_loudly(written_scene):
     """A run must never silently proceed with a DEM it could not load."""
-    from ayama.api.pipeline import run
+    from traksha.api.pipeline import run
 
     sc, paths = written_scene
     cfg = Config(backbone=BACKBONE, chip=256, dem_source="copernicus", n_bootstrap=0)
@@ -279,12 +279,12 @@ def test_missing_dem_file_fails_loudly(written_scene):
 
 @pytest.mark.slow
 def test_ablation_variants_share_one_inference(written_scene):
-    from ayama.api.pipeline import load_dem
-    from ayama.core.ingest import ingest
-    from ayama.depth.infer import predict_depth
-    from ayama.eval.ablation import run_variants
-    from ayama.semantics.segment import segment
-    from ayama.semantics.shadow import detect_shadow
+    from traksha.api.pipeline import load_dem
+    from traksha.core.ingest import ingest
+    from traksha.depth.infer import predict_depth
+    from traksha.eval.ablation import run_variants
+    from traksha.semantics.segment import segment
+    from traksha.semantics.shadow import detect_shadow
 
     sc, paths = written_scene
     scene = ingest(paths["rgb"])
@@ -308,9 +308,9 @@ def test_reference_is_reprojected_not_squashed(written_scene, tmp_path):
     Reading with out_shape alone squashes a wider lidar DSM onto the tile, and
     every metric computed against it then looks plausible and means nothing.
     """
-    from ayama.api.pipeline import load_reference
-    from ayama.core.ingest import ingest
-    from ayama.dsm.cog import write_cog
+    from traksha.api.pipeline import load_reference
+    from traksha.core.ingest import ingest
+    from traksha.dsm.cog import write_cog
 
     sc, paths = written_scene
     scene = ingest(paths["rgb"])
@@ -335,7 +335,7 @@ def test_reference_is_reprojected_not_squashed(written_scene, tmp_path):
 @pytest.mark.slow
 def test_delta1_is_reported_against_reference_heights(written_scene):
     """delta1 needs heights above ground on both sides, or it is meaningless."""
-    from ayama.api.pipeline import run
+    from traksha.api.pipeline import run
 
     sc, paths = written_scene
     cfg = Config(backbone=BACKBONE, chip=256, dem_source=f"sim:{paths['dtm']}",
@@ -354,7 +354,7 @@ def test_preflight_passes_end_to_end_on_this_machine():
     proves sample -> depth -> anchors -> AGMC -> uncertainty -> artifacts ->
     tileset, which is what someone with a fresh checkout needs to know.
     """
-    from ayama.cli import main
+    from traksha.cli import main
 
     assert main(["preflight", "--backbone", BACKBONE,
                  "--size", "256", "--chip", "256", "--bootstrap", "3"]) == 0
@@ -371,8 +371,8 @@ def test_every_registered_backbone_is_documented():
     """
     from pathlib import Path
 
-    from ayama.depth.backbones import BACKBONES
-    from ayama.depth.backbones.hf import CHECKPOINTS
+    from traksha.depth.backbones import BACKBONES
+    from traksha.depth.backbones.hf import CHECKPOINTS
 
     readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
 
@@ -389,10 +389,10 @@ def test_the_project_trains_nothing():
     If this ever fails it is good news - it means a trainable component landed -
     but the README says the opposite in three places and would need updating.
     """
-    import ayama
+    import traksha
     from pathlib import Path
 
-    root = Path(ayama.__file__).parent
+    root = Path(traksha.__file__).parent
     offenders = []
     for path in root.rglob("*.py"):
         text = path.read_text(encoding="utf-8")

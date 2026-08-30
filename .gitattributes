@@ -3,7 +3,7 @@
 # The OBJ and MTL are text, and without this Git would CRLF-convert them on a
 # Windows checkout: the file a collaborator gets would not be the file the
 # writer produced, its size would grow, and every diff would be whole-file.
-# They are written LF by `ayama.mesh.obj` and stay LF everywhere.
+# They are written LF by `traksha.mesh.obj` and stay LF everywhere.
 *.obj text eol=lf
 *.mtl text eol=lf
 

@@ -1,8 +1,8 @@
-/* AYAMA viewer — Phase 4.
+/* TRAKSHA viewer — Phase 4.
  *
  * No frameworks, no CDN, no build step, no network. The same reason every
  * raster is written as a COG: the deliverable has to be openable by someone who
- * will not install anything first. `python -m ayama.cli viewer <run>` serves
+ * will not install anything first. `python -m traksha.cli viewer <run>` serves
  * this directory and the tileset, and that is the whole toolchain.
  *
  * Two decisions worth stating, because both are correctness rather than taste.
@@ -21,7 +21,7 @@
  */
 'use strict';
 
-var AYAMA = (function () {
+var TRAKSHA = (function () {
 
 // ── pure helpers ────────────────────────────────────────────────────────────
 
@@ -29,7 +29,7 @@ var MAX_CODE = 256 * 256 * 256 - 1;      // 16777215
 var TERRAIN_BASE = -10000.0;
 var TERRAIN_STEP = 0.1;
 
-/** RGBA bytes -> metres, Mapbox Terrain-RGB. Mirrors ayama/mesh/encode.py. */
+/** RGBA bytes -> metres, Mapbox Terrain-RGB. Mirrors traksha/mesh/encode.py. */
 function decodeTerrainRGBA(data, out) {
   var n = data.length / 4;
   out = out || new Float32Array(n);
@@ -50,7 +50,7 @@ function decodeLinearRGBA(data, vmin, vmax, out) {
   return out;
 }
 
-/* Colour ramps, anchor-for-anchor the same as ayama/dsm/cog.py's fallback LUT,
+/* Colour ramps, anchor-for-anchor the same as traksha/dsm/cog.py's fallback LUT,
    so a PNG preview and this page never disagree about what a height looks like. */
 var RAMPS = {
   terrain: [[51, 51, 153], [0, 153, 102], [243, 226, 137], [140, 92, 61], [255, 255, 255]],
@@ -349,7 +349,7 @@ function renderPanels(manifest, onLayer, onLod) {
 
 // ── where the tiles live ────────────────────────────────────────────────────
 // One viewer, two deployments: a prebuilt tileset served beside the page by
-// `ayama viewer`, or a freshly reconstructed job served by `ayama serve`. The
+// `traksha viewer`, or a freshly reconstructed job served by `traksha serve`. The
 // only difference is a base URL, so it is resolved once here rather than
 // threaded through every fetch.
 function dataBase() {
@@ -1119,8 +1119,8 @@ function boot() {
     })
     .catch(function (e) {
       setStatusError('Could not load ' + dataBase() + 'tileset.json.',
-        'Build one with: python -m ayama.cli mesh &lt;run&gt; — or serve this page with ' +
-        'python -m ayama.cli viewer &lt;run&gt;. (' + e.message + ')');
+        'Build one with: python -m traksha.cli mesh &lt;run&gt; — or serve this page with ' +
+        'python -m traksha.cli viewer &lt;run&gt;. (' + e.message + ')');
       throw e;
     });
 }
@@ -1129,7 +1129,7 @@ if (typeof document !== 'undefined' && document.addEventListener) {
   document.addEventListener('DOMContentLoaded', function () {
     // `serve` shows an upload form first and boots the viewer itself once a
     // job finishes; `viewer` has a tileset sitting there and boots immediately.
-    if (window.AYAMA_NO_AUTOBOOT) return;
+    if (window.TRAKSHA_NO_AUTOBOOT) return;
     if (document.getElementById('landing') && !new URLSearchParams(location.search).get('job')) return;
     boot().catch(function () { /* surfaced in the DOM */ });
   });
@@ -1151,5 +1151,5 @@ return {
 
 /* Explicit global. `'use strict'` means a `var` in eval'd code stays in the eval
    scope, so scripts/check_app.js would otherwise never see the module. */
-if (typeof window !== 'undefined') { window.AYAMA = AYAMA; }
-if (typeof module !== 'undefined' && module.exports) { module.exports = AYAMA; }
+if (typeof window !== 'undefined') { window.TRAKSHA = TRAKSHA; }
+if (typeof module !== 'undefined' && module.exports) { module.exports = TRAKSHA; }

@@ -26,7 +26,7 @@ cd "$(dirname "$0")/.."
 # work we say so once, at the top, instead of eight times.
 usable() {
   [ -x "$1" ] || command -v "$1" >/dev/null 2>&1 || return 1
-  "$1" -c "import numpy, scipy, ayama" >/dev/null 2>&1
+  "$1" -c "import numpy, scipy, traksha" >/dev/null 2>&1
 }
 
 PYBIN=""
@@ -36,11 +36,11 @@ for cand in ${PYBIN_OVERRIDE:-} .venv/bin/python .venv/Scripts/python.exe python
 done
 
 if [ -z "$PYBIN" ]; then
-  echo "harness: no interpreter here can 'import numpy, scipy, ayama'." >&2
+  echo "harness: no interpreter here can 'import numpy, scipy, traksha'." >&2
   echo "" >&2
   for cand in .venv/bin/python .venv/Scripts/python.exe python3 python; do
     if [ -x "$cand" ] || command -v "$cand" >/dev/null 2>&1; then
-      why=$("$cand" -c "import numpy, scipy, ayama" 2>&1 | tail -1)
+      why=$("$cand" -c "import numpy, scipy, traksha" 2>&1 | tail -1)
       echo "  $cand -> $why" >&2
     fi
   done
@@ -77,29 +77,29 @@ run() { echo "\$ $*" | tee -a "$LOG"; "$@" 2>&1 | tee -a "$LOG"; return "${PIPES
 echo "harness: using $PYBIN ($("$PYBIN" --version 2>&1))"
 
 say "1/8  doctor"
-run "$PYBIN" -m ayama.cli doctor --load "$BACKBONES"
+run "$PYBIN" -m traksha.cli doctor --load "$BACKBONES"
 
 if [ -z "$IMAGE" ]; then
   say "2/8  bundled sample scene (${SIZE}x${SIZE}, real lidar truth)"
-  run "$PYBIN" -m ayama.cli sample --out "$OUT/scene.tif" --size "$SIZE"
+  run "$PYBIN" -m traksha.cli sample --out "$OUT/scene.tif" --size "$SIZE"
   IMAGE="$OUT/scene.tif"
   REF="$OUT/scene_dsm.tif"
   DEM="sim:$OUT/scene_dtm.tif"
 else
   say "2/8  using supplied image"
-  run "$PYBIN" -m ayama.cli info "$IMAGE"
+  run "$PYBIN" -m traksha.cli info "$IMAGE"
 fi
 
 say "3/8  unit tests"
 run "$PYBIN" -m pytest tests -q
 
 say "4/8  throughput sweep"
-run "$PYBIN" -m ayama.cli bench --image "$IMAGE" --backbones "$BACKBONES" \
+run "$PYBIN" -m traksha.cli bench --image "$IMAGE" --backbones "$BACKBONES" \
     --chips "$CHIPS" --batches "$BATCHES" \
     --json "$OUT/bench.json"
 
 say "5/8  full pipeline run"
-CMD=("$PYBIN" -m ayama.cli run "$IMAGE" --out "$OUT/run" --backbone "$PRIMARY"
+CMD=("$PYBIN" -m traksha.cli run "$IMAGE" --out "$OUT/run" --backbone "$PRIMARY"
      --batch 0 --bootstrap "$BOOTSTRAP" --json "$OUT/run_summary.json")
 [ -n "$DEM" ] && CMD+=(--dem "$DEM")
 [ -n "$REF" ] && CMD+=(--ref "$REF")
@@ -107,7 +107,7 @@ run "${CMD[@]}"
 
 if [ -n "$REF" ]; then
   say "6/8  ablation table"
-  ABL=("$PYBIN" -m ayama.cli ablate "$IMAGE" --ref "$REF" --backbone "$PRIMARY"
+  ABL=("$PYBIN" -m traksha.cli ablate "$IMAGE" --ref "$REF" --backbone "$PRIMARY"
        --batch 0 --bootstrap "$BOOTSTRAP" --json "$OUT/ablation.json")
   [ -n "$DEM" ] && ABL+=(--dem "$DEM")
   run "${ABL[@]}"
@@ -116,7 +116,7 @@ else
 fi
 
 say "7/8  Phase 3 tileset + mesh"
-run "$PYBIN" -m ayama.cli mesh "$OUT/run" --out "$OUT/tiles3d" --progress plain
+run "$PYBIN" -m traksha.cli mesh "$OUT/run" --out "$OUT/tiles3d" --progress plain
 if command -v node >/dev/null 2>&1; then
   run node scripts/check_app.js "$OUT/tiles3d"
 else
@@ -124,7 +124,7 @@ else
 fi
 
 say "8/8  Phase 3/4 delivery benchmark"
-run "$PYBIN" -m ayama.cli delivery "$OUT/run" --out "$OUT/delivery"     --obj-strides 2,4
+run "$PYBIN" -m traksha.cli delivery "$OUT/run" --out "$OUT/delivery"     --obj-strides 2,4
 
 say "done"
 echo "results in $OUT:" | tee -a "$LOG"

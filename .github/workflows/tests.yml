@@ -1,4 +1,4 @@
-# The whole suite. AYAMA is CPU-only, so what runs here is what runs anywhere -
+# The whole suite. TRAKSHA is CPU-only, so what runs here is what runs anywhere -
 # there is no second, unrun configuration to drift out of sync.
 name: tests
 
@@ -29,7 +29,7 @@ jobs:
           pip install ruff
 
       - name: Lint
-        run: ruff check ayama tests --select F,E9
+        run: ruff check traksha tests --select F,E9
 
       - name: Test
         run: pytest tests -q -rs
@@ -40,18 +40,18 @@ jobs:
       # reaches a results table - so the smallest real model runs instead.
       - name: Pipeline smoke test on the bundled real scene
         run: |
-          python -m ayama.cli sample --out /tmp/s.tif --size 384
-          python -m ayama.cli info /tmp/s.tif
-          python -m ayama.cli run /tmp/s.tif --out /tmp/run --backbone dav2-vits \
+          python -m traksha.cli sample --out /tmp/s.tif --size 384
+          python -m traksha.cli info /tmp/s.tif
+          python -m traksha.cli run /tmp/s.tif --out /tmp/run --backbone dav2-vits \
               --chip 256 --dem sim:/tmp/s_dtm.tif --ref /tmp/s_dsm.tif --bootstrap 4
 
       # Phase 3 and 4. The tileset is built from the run above rather than from a
       # fixture, so CI exercises the same path a user does, and the viewer is then
       # executed headlessly against that manifest - the only check that catches
-      # web/app.js and ayama/mesh/encode.py drifting apart on the encoding.
+      # web/app.js and traksha/mesh/encode.py drifting apart on the encoding.
       - name: Phase 3 tileset
         run: |
-          python -m ayama.cli mesh /tmp/run --out /tmp/tiles3d --progress plain
+          python -m traksha.cli mesh /tmp/run --out /tmp/tiles3d --progress plain
           test -f /tmp/tiles3d/tileset.json
           test -f /tmp/tiles3d/mesh/surface.obj
 
