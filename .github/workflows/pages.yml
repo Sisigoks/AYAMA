@@ -1,7 +1,7 @@
 # Publish the results site to GitHub Pages.
 #
 # The site is static and needs no build step: it is a renderer for
-# results/cpu/*/dataset.json, so republishing after a new run is just a commit.
+# results/dataset.json, so republishing after a new run is just a commit.
 name: pages
 
 on:

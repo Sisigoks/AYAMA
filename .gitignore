@@ -23,34 +23,20 @@ web/dist/
 .idea/
 .DS_Store
 
-# Study outputs. Keep dataset.json and the per-scene quick-look PNGs - those
-# are the evidence, and results.html renders them straight out of the repo.
-# Drop the GeoTIFFs: they are ~12 MB per scene and rebuild from the recorded
-# inputs.
+# Study outputs. results/ is ONE delivered study: four scene folders, each
+# holding rasters, a tileset and a textured mesh, plus dataset.json and the
+# control arms' numbers in arms.json.
+#
+# Committed: dataset.json, arms.json, summary.json, the quick-look PNGs the
+# site renders, every tileset.json, and - the point of the whole delivery layer -
+# each scene's textured mesh. An OBJ at stride 4 is 7.2 MB of ASCII that deflates
+# to 1.6 MB, so four of them cost the pack about 8 MB and the repository stops
+# being a study you have to run before you can look at anything.
+#
+# Not committed: the GeoTIFFs (~12 MB a scene) and the tile pyramids. Both
+# rebuild from the committed inputs in seconds with `ayama build`, and the
+# published viewer already carries a tileset at web/data.
 results/**/*.tif
 results/**/*.tiff
-
-# Phase 3 and 4 output now lives inside each scene's own directory, which is
-# the point - a scene is one folder. It is not committed: the tileset for the
-# demo scene is already at web/data/, an OBJ at stride 2 is 34 MB on its own,
-# and both rebuild from the committed rasters in seconds with `ayama build` or
-# `ayama mesh`. tileset.json IS committed, so what was built stays on record.
 results/**/tiles3d/tiles/
-results/**/mesh/
 results/_delivery_work/
-
-# Quick-look rasters are committed for the primary arm only - the one with the
-# fitted structural scale, which is what results.html shows for every arm. The
-# others are near-identical to the eye (the finding is in the metrics, not the
-# pictures) and five copies would put 40 MB in the repository for nothing. The
-# dataset.json of EVERY arm is committed: that is where the findings live.
-results/cpu/real_vitl_h1/**/*.png
-results/cpu/real_vitl_h1/**/*.jpg
-results/cpu/real_vits_learned/**/*.png
-results/cpu/real_vits_learned/**/*.jpg
-results/cpu/real_vitl_h2/**/*.png
-results/cpu/real_vitl_h2/**/*.jpg
-results/cpu/real_vits_h1/**/*.png
-results/cpu/real_vits_h1/**/*.jpg
-results/cpu/real_vits_h2/**/*.png
-results/cpu/real_vits_h2/**/*.jpg

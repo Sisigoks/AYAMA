@@ -513,7 +513,7 @@ outside the image it is applied to.
 ```bash
 # fetch one real scene with its lidar truth (~91 MB), then run the study
 python scripts/fetch_swisstopo.py --out data/real/zurich --bbox 8.530,47.365,8.545,47.375
-python -m ayama.cli dataset data/real --layout generic     --backbone dav2-vitl --out results/cpu/real_vitl_h1
+python -m ayama.cli dataset data/real --layout generic     --backbone dav2-vitl --out results
 ```
 
 Two points of discipline live in that fetcher. The survey-grade DTM is
@@ -532,7 +532,7 @@ that quietly proceeds with data it failed to fetch is worse than one that stops.
 ```bash
 python -m ayama.cli dataset /data/dfc2019/Track1 --layout us3d --list   # what did it find?
 python -m ayama.cli dataset /data/dfc2019/Track1 --layout us3d \\
-    --out results/cpu/us3d --backbone dav2-vitl
+    --out results/us3d --backbone dav2-vitl
 ```
 
 | layout | expects | reference is |
@@ -632,7 +632,7 @@ Four real city centres, real airborne orthophotos, airborne lidar truth (§2.2).
 No training and no fine-tuning anywhere. CPU only — the reference machine
 is CPU-only by design, so every timing here is CPU (§7.3).
 
-Full data: [`results/cpu/real_vitl_h1/dataset.json`](results/cpu/real_vitl_h1/dataset.json)
+Full data: [`results/dataset.json`](results/dataset.json)
 and its three sibling arms. Regenerate with the two commands in §2.7.
 
 ## 3.1 Headline
@@ -822,12 +822,12 @@ had to be matched up by hand and a tileset could outlive the run it was built
 from without anything noticing.
 
 ```bash
-python -m ayama.cli build scene.tif --out results/cpu/zurich \
+python -m ayama.cli build scene.tif --out results/zurich \
     --dem copernicus.tif --ref lidar_dsm.tif
 ```
 
 ```
-results/cpu/real_vitl_learned/zurich/
+results/zurich/
   relative_depth.tif                                   phase 1
   dsm.tif ndsm.tif sigma.tif error.tif sem.tif shadow.tif
   dsm.png ndsm.png sigma.png error.png texture.jpg     phase 2
@@ -836,13 +836,23 @@ results/cpu/real_vitl_learned/zurich/
   mesh/     surface.obj + surface.mtl + surface.jpg    phase 4
 ```
 
-**The mesh is the deliverable.** A textured OBJ with its material sidecar and
-the JPG it references — `mtllib` and `map_Kd` wired by name — which opens in
-Blender, MeshLab or CloudCompare with nothing installed. Vertices are in metres
-in the scene CRS, not pixels, which is asserted by a test because a mesh in
-pixel units is silently wrong in every downstream tool. The tileset is the
-browser view of the same surface, and the OBJ sits beside it rather than inside
-it so the folder can be moved as a unit.
+**The mesh is the deliverable, and it is committed.** A textured OBJ with its
+material sidecar and the JPG it references — `mtllib` and `map_Kd` wired by
+name — which opens in Blender, MeshLab or CloudCompare with nothing installed.
+Vertices are in metres in the scene CRS, not pixels, asserted by a test because
+a mesh in pixel units is silently wrong in every downstream tool.
+
+It was gitignored at first, which made this a study you had to run before you
+could look at anything. Two changes made it worth committing: vertices are
+written to the **millimetre with trailing zeros stripped**, because tenths of a
+millimetre on a surface with metre-scale error is bytes spent on noise; and
+`.gitattributes` pins the OBJ and MTL to LF so a Windows checkout gets the same
+bytes the writer produced. Four scenes at stride 4 are 30.6 MB of ASCII that
+deflates to **8.2 MB in the pack**. A test asserts every delivered scene ships
+one and that it is tracked, so it cannot quietly vanish again.
+
+The tileset is the browser view of the same surface, and the OBJ sits beside it
+rather than inside it so the folder moves as a unit.
 
 The tiler writes its own verdict into `tileset.json` from the height
 distribution it was handed, so §3.2's finding travels with the artifact instead
@@ -988,7 +998,7 @@ It is a **calibration constant** — metres of height per unit of high-band dept
 the scene can argue with it (`scale_source: "fitted"`).
 
 ```bash
-python -m ayama.cli fit data/real --runs results/cpu/real_vitl_h1
+python -m ayama.cli fit data/real --runs results
 ```
 
 ```
@@ -1053,6 +1063,74 @@ field; only the assignment is missing.
 
 ---
 
+## 5.6 Image-conditioned mesh refinement — tried, measured, does not help
+
+The standard next step for a rough mesh is to refine it against the image it
+came from: predict normals, sharpen edges, add a displacement field, keep the
+coarse geometry and improve the detail. For a 2.5D height field most of that
+machinery collapses to one operation — displacement along the surface normal
+*is* a change in Z — so what transfers is a residual refinement with an
+image-conditioned edge term:
+
+$$ Z_{\text{final}}(p) = Z_{\text{rough}}(p) + \Delta Z(p), \qquad
+   |\Delta Z| \le c, \qquad \overline{\Delta Z}\big|_{30\text{ m}} = 0 $$
+
+The mean-zero constraint is the important one: the refinement may move height
+*within* a neighbourhood and may not move the neighbourhood, so it cannot
+rewrite the calibrated datum. It is implemented as a guided filter with the
+orthophoto's luminance as the guide
+([`ayama/mesh/refine.py`](ayama/mesh/refine.py)) — the standard depth-refinement
+operator, no training, no second network, no generative prior.
+
+**It does nothing.** Over the four scenes, best parameters found by sweep:
+
+| | nDSM MAE | edge F1 |
+|---|---|---|
+| rough | 5.413 | 0.569 |
+| refined | 5.413 | 0.566 |
+| **delta** | **−0.000** | **−0.003** |
+
+It moves 56% of pixels by more than 5 cm and changes neither metric. Larger
+windows make both worse; unsharp variants make both worse.
+
+### Why, and it is not a tuning problem
+
+Because the error is not detail-shaped. On Zürich the mean error over object
+pixels is 10.57 m, and the single best global rescale of the whole prediction —
+the cheapest possible magnitude fix — leaves 10.37 m:
+
+```
+object error 10.57 m; one global rescale (k = 1.22) leaves 10.37 m
+-> 2% of it is magnitude, 98% is placement
+```
+
+**Ninety-eight per cent of the error is placement.** The surface puts height
+where there is none and misses it where there is. An edge-aware filter moves
+height by a pixel or two; the error is tens of metres away from where it needs
+to be. No amount of guide-image sharpening reaches it.
+
+That is a precondition worth stating for anyone reaching for this technique:
+**refinement assumes the coarse geometry is right and only the detail is
+missing.** §3.2 shows that assumption does not hold here yet. The refinement is
+therefore kept as a diagnostic rather than shipped as a stage —
+
+```bash
+python -m ayama.cli refine results/zurich \
+    --ref data/real/zurich/zurich_dsm.tif --dtm data/real/zurich/zurich_dtm.tif
+```
+
+— which reports the delta *and* the magnitude/placement split, so the question
+"is refinement worth it on my data" is answered by measurement rather than by
+assumption. It writes nothing unless `--write` is passed.
+
+**What this rules in.** The same decomposition says where the effort belongs:
+not in a better filter, and not in a generative 3D prior that would hallucinate
+terrain, but in getting structure into the right place — the per-pixel $a(p)$ of
+§5.4, whose oracle recovers 84% of relief precisely because it is allowed to
+vary *where* the height goes, not merely how much of it there is.
+
+---
+
 # 6. Limitations
 
 Beyond the protocol limits in §2.6:
@@ -1102,14 +1180,14 @@ for a lidar DSM if you have one and want metrics.
 |---|---|---|
 | `python scripts/fetch_swisstopo.py --out data/real/zurich` | one real scene + lidar truth (~91 MB) | 60 s |
 | `python -m ayama.cli dataset data/real --layout generic --backbone dav2-vitl` | §3 and §4 — `dataset.json` over four scenes | 634 s |
-| **`python -m ayama.cli fit data/real --runs results/cpu/real_vitl_h1`** | **§5 — the structural scale, leave-one-out validated** | **1 s** |
+| **`python -m ayama.cli fit data/real --runs results`** | **§5 — the structural scale, leave-one-out validated** | **1 s** |
 | `python -m ayama.cli sample --out data/sample.tif` | the bundled real sample scene, no download | 1 s |
 | `python -m ayama.cli run <scene> --workers 8` | one scene, threaded bootstrap | 42 s |
 | `python -m ayama.cli preflight` | end-to-end verdict on this machine | 20 s |
 | **`python -m ayama.cli build <image> --out <dir>`** | **§3.6 — phases 1-4 into one folder: rasters, tileset, textured OBJ** | **~120 s** |
 | `python -m ayama.cli mesh <scene> ` | phase 3 alone, into `<scene>/tiles3d` | 10 s |
 | `python -m ayama.cli delivery <scene>` | the delivery benchmark sweep | 179 s |
-| `python -m ayama.cli viewer results/cpu/real_vitl_h1/zurich` | interactive 3D at `localhost:8020` | 5 s |
+| `python -m ayama.cli viewer results/zurich` | interactive 3D at `localhost:8020` | 5 s |
 | `python -m ayama.cli serve` | the web service: upload an image, get a 3D reconstruction | — |
 | `python -m ayama.cli dataset <root> --layout us3d` | the pipeline over a **real** dataset (§2.7) | — |
 | `python -m pytest tests -q` | 201 passed, 0 skipped | 220 s |
@@ -1122,7 +1200,7 @@ about 10 s.
 ```bash
 python - <<'PY'
 import numpy as np, rasterio
-R, O = 'data/real/zurich/', 'results/cpu/real_vitl_h1/zurich/'
+R, O = 'data/real/zurich/', 'results/zurich/'
 rd    = rasterio.open(O + 'relative_depth.tif').read(1)
 dsm_p = rasterio.open(O + 'dsm.tif').read(1)
 nd_p  = rasterio.open(O + 'ndsm.tif').read(1)
@@ -1204,7 +1282,7 @@ tile written from a Phase 2 raster, and `tileset.json` records which run.
 | quantisation cost | nDSM 24→12 bit, worst error **1.75 mm** on a 53 m range |
 | viewer first paint | 66 ms CPU (browser rasterisation not measured) |
 
-Full report: [`results/cpu/real_vitl_learned/zurich/DELIVERY.md`](results/cpu/real_vitl_learned/zurich/DELIVERY.md).
+Full report: [`results/zurich/DELIVERY.md`](results/zurich/DELIVERY.md).
 
 **Two encodings, because one is insufficient.** Mapbox Terrain-RGB's [5] fixed
 0.1 m step is right for elevation and wrong for the derived layers: σ spans
@@ -1437,11 +1515,14 @@ ayama/
                server.py, jobs.py — the upload/reconstruct service
 web/           the whole front end, one root, no build step
                index.html   - the app: upload -> reconstruct -> 3D
-               results.html - the study dashboard, renders results/cpu/*/dataset.json
-               data/        - the committed demo tileset the 3D loads (real Zurich)
-results/       cpu/  real_vitl_h1|h2, real_vits_h1|h2   anchors only
-                     real_vitl_learned                  with the fitted scale (§5)
-               each scene is ONE folder: rasters + tiles3d/ + mesh/
+               results.html - the study dashboard, renders results/dataset.json
+               data/        - the committed demo tileset + mesh the 3D loads
+results/       ONE delivered study. Each scene is ONE folder:
+               bern|geneva|lausanne|zurich/
+                   rasters + summary.json + tiles3d/ + mesh/surface.{obj,mtl,jpg}
+               dataset.json  the study
+               arms.json     the control arms, metrics only - they deliver no
+                             usable surface, which is the finding (§3.2)
 out/           local build artifacts only - gitignored, never committed
 ```
 

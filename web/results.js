@@ -1,7 +1,7 @@
 /* AYAMA results site.
  *
  * Renders the real-imagery study: four Swiss city centres with airborne lidar
- * truth, read live from results/cpu/<arm>/dataset.json. It invents nothing. If
+ * truth, read live from results/dataset.json. It invents nothing. If
  * a field is missing the panel says so rather than showing a plausible number.
  *
  * Re-run `python -m ayama.cli dataset data/real --layout generic` and the page
@@ -16,17 +16,12 @@ const fmt = (v, d = 2) => (v === null || v === undefined || !isFinite(v)) ? '–
 const pm = (o, d = 2) => o ? `${fmt(o.mean, d)} <small>± ${fmt(o.std, d)}</small>` : '–';
 const mean = (o) => (o && isFinite(o.mean)) ? o.mean : null;
 
-// The arms of the study. The fitted one leads because it is the result; the
-// others are what the same pipeline does without a structural scale, and the
-// gap between them is the finding.
-const ARMS = [
-  { id: 'real_vitl_learned', backbone: 'dav2-vitl', calib: 'dual branch + fitted scale', primary: true },
-  { id: 'real_vits_learned', backbone: 'dav2-vits', calib: 'dual branch + fitted scale' },
-  { id: 'real_vitl_h1', backbone: 'dav2-vitl', calib: 'single affine (H1)' },
-  { id: 'real_vitl_h2', backbone: 'dav2-vitl', calib: 'dual branch (H2)' },
-  { id: 'real_vits_h1', backbone: 'dav2-vits', calib: 'single affine (H1)' },
-  { id: 'real_vits_h2', backbone: 'dav2-vits', calib: 'dual branch (H2)' },
-];
+// results/ is one delivered study: four scenes, each a folder with rasters, a
+// tileset and a textured mesh. The comparison arms are metrics only, in
+// arms.json - they deliver no usable surface, which is the finding, so keeping
+// their rasters would be keeping four copies of a flat sheet.
+const STUDY = 'results/dataset.json';
+const ARMS_FILE = 'results/arms.json';
 
 // Layers the explorer can show. Each is a PNG the pipeline writes per scene.
 const LAYERS = [
@@ -37,34 +32,31 @@ const LAYERS = [
   { id: 'sigma.png',   name: 'Uncertainty σ', note: 'Per-pixel 1σ. Bright where anchors are sparse.' },
 ];
 
-const state = { arms: {}, arm: 'real_vitl_learned' };
+const state = { study: null, arms: {} };
 
 // Quick-look rasters are committed for the primary arm only. Across arms they
 // differ by amounts no eye can see - the finding is in the metrics, not the
 // pictures - and four copies would put 28 MB in the repository for nothing.
-const IMAGE_ARM = 'real_vitl_learned';
+
 
 async function init() {
   wireStaticUI();
-  const loaded = await Promise.all(ARMS.map(async (a) => {
+  const grab = async (url) => {
     try {
-      const res = await fetch(`results/cpu/${a.id}/dataset.json`, { cache: 'no-cache' });
+      const res = await fetch(url, { cache: 'no-cache' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return [a.id, await res.json()];
-    } catch (err) { return [a.id, null]; }
-  }));
-  loaded.forEach(([id, d]) => { if (d) state.arms[id] = d; });
-
-  if (!state.arms[state.arm]) {
-    const first = Object.keys(state.arms)[0];
-    if (!first) { showMissingResults(new Error('no dataset.json could be loaded')); return; }
-    state.arm = first;
-  }
+      return await res.json();
+    } catch (err) { return null; }
+  };
+  state.study = await grab(STUDY);
+  const arms = await grab(ARMS_FILE);
+  state.arms = (arms && arms.arms) || {};
+  if (!state.study) { showMissingResults(new Error('no dataset.json')); return; }
   render();
 }
 
 function render() {
-  const study = state.arms[state.arm];
+  const study = state.study;
   const agg = study.aggregate || {};
   renderHero(agg, study);
   renderReliefVerdict(agg);
@@ -244,30 +236,33 @@ function renderAnchors(study) {
 function renderArms() {
   const host = $('#arm-table');
   if (!host) return;
-  const rows = ARMS.filter(a => state.arms[a.id]).map(a => {
-    const agg = state.arms[a.id].aggregate || {};
-    const trueH = mean(agg.true_mean_height_m), predH = mean(agg.pred_mean_height_m);
-    return `<tr class="${a.id === state.arm ? 'sel' : ''}">
-      <td><button class="linkish" data-arm="${a.id}">${a.backbone}</button></td>
-      <td>${a.calib}</td>
+  const rows = [];
+  const line = (label, calib, agg, lead) => {
+    const t = agg.true_mean_height_m, q = agg.pred_mean_height_m;
+    rows.push(`<tr class="${lead ? 'sel' : ''}">
+      <td>${label}</td><td>${calib}</td>
       <td>${pm(agg.mae_m)}</td>
       <td>${fmt(mean(agg.edge_f1), 3)}</td>
       <td>${fmt(mean(agg.ndsm_metrics_mae_m))}</td>
-      <td>${trueH ? fmt(100 * predH / trueH, 1) + '%' : '–'}</td>
-    </tr>`;
-  }).join('');
+      <td>${(t && q) ? fmt(100 * q.mean / t.mean, 1) + '%' : '–'}</td>
+    </tr>`);
+  };
+  const cfg = state.study.config || {};
+  line(cfg.backbone || 'primary', 'dual branch + fitted scale',
+       state.study.aggregate || {}, true);
+  Object.values(state.arms).forEach((a) => {
+    const [bb, ...rest] = (a.label || '').split(', ');
+    line(bb, rest.join(', ') || '—', a.aggregate || {}, false);
+  });
   host.innerHTML = `<table class="data">
     <thead><tr><th>backbone</th><th>calibration</th><th>MAE (m)</th>
       <th>edge F1</th><th>nDSM MAE (m)</th><th>relief</th></tr></thead>
-    <tbody>${rows}</tbody></table>
-    <p class="fineprint">Click a row to render the rest of this page from that run.
-      Without a fitted structural scale every arm recovers under 1.3% of the true
-      relief &mdash; two backbones and two calibrations agree. Supplying one fitted
-      constant is what moves it.</p>`;
-  $$('button[data-arm]', host).forEach(b => b.addEventListener('click', () => {
-    state.arm = b.dataset.arm; render();
-    document.getElementById('results').scrollIntoView({ behavior: 'smooth' });
-  }));
+    <tbody>${rows.join('')}</tbody></table>
+    <p class="fineprint">The first row is the delivered study; the rest are
+      controls read from <code>results/arms.json</code>. Without a fitted
+      structural scale every arm recovers under 1.3% of the true relief &mdash;
+      two backbones and two calibrations agree. Supplying one fitted constant is
+      what moves it.</p>`;
 }
 
 // ── scene explorer ───────────────────────────────────────────────────────────
@@ -284,7 +279,7 @@ function renderExplorer(study) {
 
   const update = () => {
     const name = sceneSel.value;
-    const base = `results/cpu/${IMAGE_ARM}/${name}/`;
+    const base = `results/${name}/`;
     $('#img-left').src = base + left.value;
     $('#img-right').src = base + right.value;
     $('#lbl-left').textContent = (LAYERS.find(l => l.id === left.value) || {}).name || '';
@@ -350,7 +345,7 @@ function renderFooter(study) {
   if (!host) return;
   const cfg = study.config || {};
   host.textContent =
-    `Rendered from results/cpu/${state.arm}/dataset.json · ` +
+    `Rendered from results/dataset.json · ` +
     `${study.n_ok}/${study.n_found} scenes · backbone ${cfg.backbone} · ` +
     `imagery and elevation truth © swisstopo, used under Swiss OGD terms.`;
 }
@@ -441,9 +436,9 @@ function showMissingResults(err) {
   const host = $('#hero-metrics');
   if (host) {
     host.innerHTML = `<div class="loading">
-      Could not load <code>results/cpu/&lt;arm&gt;/dataset.json</code> (${err.message}).<br>
+      Could not load <code>results/dataset.json</code> (${err.message}).<br>
       Run <code>python scripts/fetch_swisstopo.py --out data/real/zurich</code> then
-      <code>python -m ayama.cli dataset data/real --layout generic --out results/cpu/real_vitl_h1</code>.
+      <code>python -m ayama.cli dataset data/real --layout generic --deliver --out results</code>.
     </div>`;
   }
 }

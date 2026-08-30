@@ -91,7 +91,8 @@ def write_obj(
 
         _write_block(fh, "v", np.stack([X.ravel(), Y.ravel(), z.ravel()], 1))
         if texture_name:
-            _write_block(fh, "vt", np.stack([u.ravel(), v.ravel()], 1))
+            # A fiftieth of a texel on a 512 px tile; more is invisible.
+            _write_block(fh, "vt", np.stack([u.ravel(), v.ravel()], 1), decimals=5)
         fh.write(f"usemtl {name}_mat\n")
 
         # OBJ indices are 1-based.
@@ -121,10 +122,29 @@ def write_obj(
     }
 
 
-def _write_block(fh, tag: str, rows: np.ndarray) -> None:
-    """Write many `v`/`vt` lines without building one huge Python string."""
-    fmt = tag + (" %.4f" * rows.shape[1]) + "\n"
-    fh.writelines(fmt % tuple(r) for r in rows)
+def _fmt(v: float) -> str:
+    """Millimetres, with no trailing zeros. `0.0000` and `510.0000` cost bytes."""
+    t = f"{v:.3f}".rstrip("0").rstrip(".")
+    return t if t and t != "-0" else "0"
+
+
+def _write_block(fh, tag: str, rows: np.ndarray, decimals: int = 3) -> None:
+    """Write many `v`/`vt` lines without building one huge Python string.
+
+    Precision is deliberate, not incidental. Vertices are written to the
+    millimetre and texture coordinates to five decimals - about a fiftieth of a
+    texel on a 512 px tile. The previous fixed `%.4f` spent five bytes writing
+    `0.0000` for grid coordinates that are exact multiples of the step, and
+    tenths of a millimetre on a surface whose own error is metres (README §3.2).
+    Trimming that is a third off the file for nothing lost, which is the
+    difference between a mesh that can live in the repository and one that
+    cannot.
+    """
+    if decimals == 3:
+        fh.writelines(tag + " " + " ".join(map(_fmt, r)) + "\n" for r in rows)
+    else:
+        fmt = tag + ((" %%.%df" % decimals) * rows.shape[1]) + "\n"
+        fh.writelines(fmt % tuple(r) for r in rows)
 
 
 def _write_faces(fh, tris: np.ndarray, with_uv: bool) -> None:

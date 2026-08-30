@@ -229,3 +229,61 @@ def test_the_scale_model_can_be_switched_off_and_overridden():
                        meta=SceneMeta(gsd_m=0.5), backbone="test-fixture")
     assert _fitted_scale(Config(extras={"scale_model": "off"}), depth, None) is None
     assert _fitted_scale(Config(extras={"scale_model": 42.0}), depth, None) == 42.0
+
+
+# ------------------------------------------------- image-conditioned refinement
+def test_the_refinement_cannot_move_the_calibrated_datum():
+    """The one guarantee that makes refining a calibrated surface safe.
+
+    A refinement is allowed to move height WITHIN a neighbourhood - sharpening a
+    roof edge - and forbidden from moving the neighbourhood itself. If it can
+    shift the local mean it has rewritten the calibration, which is the one
+    thing the anchors were for.
+    """
+    from ayama.mesh.refine import refine_heights
+
+    rng = np.random.default_rng(11)
+    z = np.zeros((256, 256), np.float32)
+    z[80:170, 80:170] = 20.0                        # a building
+    z += rng.normal(0, 0.2, z.shape).astype(np.float32)
+    rgb = np.stack([np.clip(z * 8, 0, 255)] * 3, -1).astype(np.uint8)
+
+    out, dz = refine_heights(z, rgb, gsd_m=0.5, preserve_scale_m=30.0)
+    assert out.shape == z.shape
+
+    # The mean over the preserved scale must survive. Compare block means well
+    # inside the field, where the box filter is not fighting the border.
+    b = 60
+    for r in range(b, 256 - b, 60):
+        for c in range(b, 256 - b, 60):
+            before = float(z[r:r + 60, c:c + 60].mean())
+            after = float(out[r:r + 60, c:c + 60].mean())
+            assert abs(after - before) < 0.5, (
+                f"block ({r},{c}) mean moved {after - before:+.2f} m; "
+                "the refinement rewrote the datum")
+
+
+def test_the_refinement_is_bounded_and_keeps_ground_at_ground():
+    from ayama.mesh.refine import refine_heights
+
+    rng = np.random.default_rng(12)
+    z = np.abs(rng.normal(0, 3, (128, 128))).astype(np.float32)
+    rgb = rng.integers(0, 255, (128, 128, 3), dtype=np.uint8)
+    out, dz = refine_heights(z, rgb, gsd_m=0.5, clamp_m=1.0)
+    assert np.abs(dz).max() <= 1.0 + 1e-4, "the residual clamp was not applied"
+    assert (out >= 0).all(), "height above ground went negative"
+
+
+def test_the_guided_filter_keeps_an_edge_the_guide_has():
+    """If it cannot preserve a step in the guide it is just a blur."""
+    from ayama.mesh.refine import guided_filter
+
+    step = np.zeros((64, 64), np.float32)
+    step[:, 32:] = 1.0
+    noisy = step + np.random.default_rng(13).normal(0, 0.05, step.shape).astype(np.float32)
+    out = guided_filter(noisy, step, radius=4, eps=1e-6)
+
+    # noise down inside the flat halves...
+    assert out[:, :28].std() < noisy[:, :28].std()
+    # ...and the step still a step
+    assert out[:, 33:].mean() - out[:, :31].mean() > 0.9

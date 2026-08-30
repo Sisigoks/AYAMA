@@ -372,6 +372,107 @@ def cmd_build(args) -> int:
     return 0
 
 
+def cmd_refine(args) -> int:
+    """Image-conditioned refinement of a delivered surface, and its verdict.
+
+    Refining a rough mesh against the image it came from is standard practice,
+    and it rests on a premise: that the coarse geometry is right and only the
+    detail is missing. This command applies the refinement AND tests that
+    premise, because on this pipeline the premise is false and a refinement
+    shipped without the test would be a feature that does nothing.
+
+    It reports two things:
+
+      the delta      what the refinement did to nDSM MAE and edge F1
+      the shape      how much of the error is magnitude, not placement
+
+    If the error is mostly magnitude, refinement and rescaling can help. If it
+    is mostly placement - structure predicted where there is none - then no
+    edge-aware operator will fix it, because it moves height by a pixel and the
+    error is tens of metres away. See README section 5.6.
+    """
+    import numpy as np
+
+    from .eval.metrics import evaluate
+    from .mesh.build import load_run
+    from .mesh.refine import refine_run
+
+    run = load_run(args.run)
+    gsd = float(run["meta"]["gsd_m"])
+    out = refine_run(run, gsd, radius_m=args.radius, eps=args.eps)
+    if not out:
+        print("error: the run has no nDSM, DSM and texture to refine",
+              file=sys.stderr)
+        return 2
+
+    st = out["stats"]
+    print(f"AYAMA refine   {args.run}")
+    print(f"  residual     rms {st['rms_residual_m']:.3f} m, "
+          f"max {st['max_abs_residual_m']:.2f} m, "
+          f"{100 * st['moved_fraction']:.1f}% of pixels moved > 5 cm")
+
+    truth = _reference_ndsm(args.ref, args.dtm, run)
+    if truth is None:
+        print("  no reference: pass --ref <dsm> --dtm <dtm> to score the refinement")
+    else:
+        rough, fine = run["ndsm"], out["ndsm"]
+        a = evaluate(rough, truth, gsd=gsd, height_pred=rough, height_ref=truth)
+        b = evaluate(fine, truth, gsd=gsd, height_pred=fine, height_ref=truth)
+        print(f"\n  {'':<10}{'nDSM MAE':>10}{'edge F1':>10}")
+        print(f"  {'rough':<10}{a['mae_m']:>10.3f}{a['edge_f1']:>10.3f}")
+        print(f"  {'refined':<10}{b['mae_m']:>10.3f}{b['edge_f1']:>10.3f}")
+        print(f"  {'delta':<10}{b['mae_m'] - a['mae_m']:>+10.3f}"
+              f"{b['edge_f1'] - a['edge_f1']:>+10.3f}")
+
+        # Is the error detail-shaped at all? One global rescale is the cheapest
+        # possible magnitude fix; whatever it cannot remove is placement.
+        obj = truth > 2.0
+        if obj.any():
+            r = np.asarray(rough, np.float64)
+            k = float((r[obj] * truth[obj]).sum() / max((r[obj] ** 2).sum(), 1e-9))
+            base = float(np.abs(r[obj] - truth[obj]).mean())
+            scaled = float(np.abs(k * r[obj] - truth[obj]).mean())
+            share = 100.0 * (1.0 - scaled / max(base, 1e-9))
+            print(f"\n  object error {base:.2f} m; one global rescale (k = {k:.2f}) "
+                  f"leaves {scaled:.2f} m")
+            print(f"  -> {share:.0f}% of it is magnitude, {100 - share:.0f}% is placement")
+            if share < 20:
+                print("  -> the error is where structure IS, not how tall it is. "
+                      "Edge-aware\n     refinement moves height by a pixel and "
+                      "cannot address that.")
+
+    if args.write:
+        from .dsm.cog import write_cog
+
+        from .core.types import SceneMeta
+
+        m = run["meta"]
+        meta = SceneMeta(crs=m.get("crs"), transform=tuple(m["transform"]),
+                         gsd_m=gsd)
+        write_cog(os.path.join(args.run, "ndsm_refined.tif"), out["ndsm"], meta,
+                  description="height above ground, image-refined (m)")
+        write_cog(os.path.join(args.run, "dsm_refined.tif"), out["dsm"], meta,
+                  description="elevation, image-refined (m)")
+        print(f"\nwrote     {args.run}/[ndsm|dsm]_refined.tif")
+    else:
+        print("\n  nothing written; pass --write to keep the refined rasters")
+    return 0
+
+
+def _reference_ndsm(ref: Optional[str], dtm: Optional[str], run: dict):
+    """Truth height above ground from a DSM and a bare-earth DTM, or None."""
+    if not ref or not dtm:
+        return None
+    import numpy as np
+    import rasterio
+
+    with rasterio.open(ref) as a, rasterio.open(dtm) as b:
+        z = a.read(1).astype(np.float32) - b.read(1).astype(np.float32)
+    if z.shape != run["ndsm"].shape:
+        return None
+    return np.maximum(z, 0.0)
+
+
 def cmd_run(args) -> int:
     from .api.pipeline import run
     from .core.types import Config
@@ -1103,6 +1204,19 @@ def build_parser() -> argparse.ArgumentParser:
     pb.add_argument("--progress", default="auto", choices=["auto", "rich", "plain", "none"])
     pb.set_defaults(func=cmd_build)
 
+    prf = sub.add_parser("refine",
+                         help="image-conditioned surface refinement, and whether it helps")
+    prf.add_argument("run", help="a directory written by `ayama run` or `ayama build`")
+    prf.add_argument("--ref", default=None, help="reference DSM, to score the refinement")
+    prf.add_argument("--dtm", default=None, help="bare-earth DTM, for height above ground")
+    prf.add_argument("--radius", type=float, default=2.0, help="guide window, metres")
+    prf.add_argument("--eps", type=float, default=1e-4,
+                     help="guided-filter regularisation; smaller follows the image harder")
+    prf.add_argument("--write", action="store_true",
+                     help="keep the refined rasters (off by default: on the scenes "
+                          "measured here the refinement changes nothing)")
+    prf.set_defaults(func=cmd_refine)
+
     pr = sub.add_parser("run", help="full pipeline: depth -> anchors -> metric DSM (Phase 2)")
     pr.add_argument("image")
     pr.add_argument("--out", default="out/run", help="artifact directory")
@@ -1187,7 +1301,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     pdel = sub.add_parser("delivery",
                           help="Phase 3/4 CPU benchmark: build cost, payload, viewer CPU")
-    pdel.add_argument("run", nargs="?", default="results/cpu/real_vitl_learned/zurich",
+    pdel.add_argument("run", nargs="?", default="results/zurich",
                       help="a directory written by `ayama run` or `ayama build`")
     pdel.add_argument("--out", default=None,
                       help="where delivery.json lands (default: inside the run "

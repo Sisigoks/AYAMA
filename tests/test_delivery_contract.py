@@ -125,11 +125,11 @@ def test_fewer_bits_always_costs_more_error(mini):
         assert errs == sorted(errs), f"{layer}: fewer bits produced a smaller error"
 
 
-REAL_RUN = Path(__file__).resolve().parents[1] / "results" / "cpu" / "real_vitl_h1" / "zurich"
+REAL_RUN = Path(__file__).resolve().parents[1] / "results" / "zurich"
 
 
 @pytest.mark.skipif(not (REAL_RUN / "dsm.tif").exists(),
-                    reason="results/cpu/real_vitl_h1/zurich not present")
+                    reason="results/zurich not present")
 def test_fewer_bits_is_never_bigger_on_a_real_run():
     """Monotonicity in bytes, asserted where the claim is actually made.
 

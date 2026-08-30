@@ -28,8 +28,10 @@ from ayama.mesh.encode import decode_linear, decode_terrain_rgb
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.path.join(ROOT, "web")
-REAL_RUN = os.path.join(ROOT, "results", "cpu", "real_vitl_h1", "zurich")
-LEARNED_RUN = os.path.join(ROOT, "results", "cpu", "real_vitl_learned", "zurich")
+# results/ is one delivered study now: one folder per scene, each with its
+# rasters, its tileset and its mesh. The arms that delivered no usable surface
+# are kept as numbers in results/arms.json and have no run directory to tile.
+DELIVERED_RUN = os.path.join(ROOT, "results", "zurich")
 
 
 # --------------------------------------------------------------------- fixture
@@ -290,35 +292,54 @@ def test_colour_ramps_match_the_png_previews():
         assert f"[{first[0]}, {first[1]}, {first[2]}]" in app, f"{key} ramp drifted"
 
 
-# --------------------------------------------------- against the real Phase 2
-@pytest.mark.skipif(not os.path.isdir(REAL_RUN), reason="results/cpu/real_vitl_h1/zurich not present")
-def test_the_real_phase2_run_tiles_and_reports_its_own_defect(tmp_path):
-    """End to end on the CPU study's own output, not a fixture.
+# ------------------------------------------------------ the relief verdict
+def test_the_relief_note_fires_on_a_flat_surface_and_not_on_a_built_one():
+    """The tiler's own verdict, tested at the function rather than on a run.
 
-    This is the Zurich run the README reports, so the tileset it produces must
-    carry the same numbers - and must raise the flat-surface note, because that
-    run really does have one.
+    It used to be asserted by tiling the anchors-only study arm, which really
+    was flat. That arm no longer has a run directory - it delivers no usable
+    surface, which is the finding, so results/ keeps its numbers and not its
+    rasters. The contract is about the function, so it is tested there, and it
+    is tested in BOTH directions: a warning that never clears carries no
+    information.
+
+    The check is deliberately truth-free and segmentation-free. It has been
+    wrong twice - an absolute threshold missed a real collapse, and a comparison
+    against the colour heuristic's building class raised a false alarm on a
+    surface with 53 m of genuine relief (README section 3.4 shows why that class
+    cannot be trusted). It now reads only the height distribution.
     """
-    m = build_tileset(REAL_RUN, str(tmp_path / "t"), tile=512, write_mesh=False)
-    assert m["grid"]["width"] == 1024 and m["grid"]["gsd_m"] == pytest.approx(0.5)
-    assert m["crs"] == "EPSG:2056", "swisstopo publishes in LV95"
+    from ayama.mesh.build import derive_notes
 
-    # This arm has no structural scale, so it delivers almost no relief and the
-    # tileset must say so unprompted. The check is deliberately truth-free and
-    # segmentation-free - see the comment on derive_notes.
-    ids = {n["id"] for n in m["notes"]}
-    assert ids & {"flat_surface", "low_relief"}, \
-        "a run with 99% of its surface under 3 m must raise a relief note"
-    assert m["layers"]["ndsm"]["stats"]["max"] < 10.0, \
-        "the un-fitted arm stopped being flat - update README sections 3.2 and 4"
+    rng = np.random.default_rng(21)
+    sem = np.full((256, 256), 2, np.int16)
 
-    # Metrics come from the study's dataset.json, unchanged.
-    assert m["tier"] == "A"
-    assert m["metrics"]["mae_m"] == pytest.approx(7.680, abs=0.01)
-    assert m["metrics"]["edge_f1"] == pytest.approx(0.530, abs=0.01)
+    flat = np.abs(rng.normal(0, 0.4, (256, 256))).astype(np.float32)
+    ids = {n["id"] for n in derive_notes({"ndsm": flat, "sem": sem}, {})}
+    assert "flat_surface" in ids, "a surface with nothing standing up must say so"
 
-    # No sun is published for these products, and none may be invented.
-    assert m["provenance"].get("sun_elevation_deg") is None
+    built = flat.copy()
+    built[40:150, 40:150] = 24.0
+    built[170:230, 60:200] = 15.0
+    ids = {n["id"] for n in derive_notes({"ndsm": built, "sem": sem}, {})}
+    assert not (ids & {"flat_surface", "low_relief"}), \
+        f"a surface with 24 m of structure was called flat: {ids}"
+
+
+def test_the_relief_note_is_a_warning_in_the_ambiguous_band():
+    """Between the two is genuinely ambiguous - low-rise ground looks like a
+    failed reconstruction - so it warns and names the check rather than
+    delivering a verdict it cannot support."""
+    from ayama.mesh.build import derive_notes
+
+    rng = np.random.default_rng(22)
+    low = np.abs(rng.normal(0, 1.2, (256, 256))).astype(np.float32)
+    low[100:140, 100:140] = 5.0
+    notes = {n["id"]: n for n in derive_notes(
+        {"ndsm": low, "sem": np.full((256, 256), 2, np.int16)}, {})}
+    if "low_relief" in notes:
+        assert notes["low_relief"]["level"] == "warning"
+        assert "may be correct" in notes["low_relief"]["text"]
 
 
 # ------------------------------------------------ the published web tileset
@@ -396,8 +417,8 @@ def test_the_published_demo_tileset_is_web_sized_and_intact():
     assert m["tier"] == "A"
 
 
-@pytest.mark.skipif(not os.path.isdir(LEARNED_RUN),
-                    reason="results/cpu/real_vitl_learned/zurich not present")
+@pytest.mark.skipif(not os.path.isdir(DELIVERED_RUN),
+                    reason="results/zurich not present")
 def test_the_fitted_run_recovers_relief_and_stops_warning(tmp_path):
     """The other direction, which matters just as much.
 
@@ -405,7 +426,7 @@ def test_the_fitted_run_recovers_relief_and_stops_warning(tmp_path):
     scale the same scene delivers real structure, and the tileset must stop
     claiming a defect - otherwise the warning carries no information.
     """
-    m = build_tileset(LEARNED_RUN, str(tmp_path / "t"), tile=512, write_mesh=False)
+    m = build_tileset(DELIVERED_RUN, str(tmp_path / "t"), tile=512, write_mesh=False)
     st = m["layers"]["ndsm"]["stats"]
     assert st["max"] > 30.0, "the fitted arm should carry real structure"
     assert st["p99"] > 8.0

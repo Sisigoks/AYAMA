@@ -5,7 +5,7 @@
 
 The Pages workflow assembles `web/` plus the JSON and previews from `results/`
 into one directory. This does the same into a temporary folder and serves it, so
-what you see locally is what deploys — including the `results/cpu/*/dataset.json` fetches,
+what you see locally is what deploys — including the `results/dataset.json` fetch,
 which fails from a file:// URL and would otherwise only break once published.
 """
 from __future__ import annotations

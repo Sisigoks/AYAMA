@@ -14,10 +14,8 @@ const ROOT = path.resolve(__dirname, '..');
 
 const html = fs.readFileSync(path.join(ROOT, 'web/results.html'), 'utf8');
 const app  = fs.readFileSync(path.join(ROOT, 'web/results.js'), 'utf8');
-const ARMS = ['real_vitl_learned', 'real_vits_learned', 'real_vitl_h1',
-              'real_vitl_h2', 'real_vits_h1', 'real_vits_h2'];
-const studies = Object.fromEntries(ARMS.map(a =>
-  [a, fs.readFileSync(path.join(ROOT, `results/cpu/${a}/dataset.json`), 'utf8')]));
+const STUDY = fs.readFileSync(path.join(ROOT, 'results/dataset.json'), 'utf8');
+const ARMSJSON = fs.readFileSync(path.join(ROOT, 'results/arms.json'), 'utf8');
 
 const errors = [];
 const vc = new VirtualConsole();
@@ -30,10 +28,11 @@ const dom = new JSDOM(html, {
 });
 const w = dom.window;
 w.fetch = (url) => {
-  const arm = ARMS.find(a => url.includes(`/${a}/`));
+  const body = url.includes('arms.json') ? ARMSJSON
+             : url.includes('dataset.json') ? STUDY : null;
   return Promise.resolve({
-    ok: Boolean(arm), status: arm ? 200 : 404,
-    json: () => Promise.resolve(JSON.parse(studies[arm])),
+    ok: Boolean(body), status: body ? 200 : 404,
+    json: () => Promise.resolve(JSON.parse(body)),
   });
 };
 w.navigator.clipboard = { writeText: () => Promise.resolve() };
