@@ -27,7 +27,7 @@ import numpy as np
 from ..core.jsonio import save_json
 from .encode import (encode_linear, encode_linear_bits, encode_terrain_rgb,
                      linear_range_for_bits, linear_step, normal_map)
-from .obj import write_obj, write_obj_adaptive
+from .obj import write_obj, write_obj_adaptive, write_obj_structural
 from .tiles import cut, grid_size, interior, tile_specs
 
 TILESET_VERSION = 1
@@ -333,6 +333,44 @@ def _sun_from_source(prov: dict) -> dict:
     }
 
 
+def _structural_mesh(run: dict, mdir: str, out_dir: str, dsm, gsd: float,
+                     tex_name: Optional[str]) -> Optional[dict]:
+    """Rebuild the mesh with buildings as separate solids, if we can.
+
+    Needs the instance segmentation and an nDSM: the instances say where the
+    footprints are, and only the height above ground can say which of them are
+    buildings. A run made before the segmentation stage existed simply does not
+    get one, which is why this returns None rather than raising.
+    """
+    ndsm = run.get("ndsm")
+    seg_dir = os.path.join(run.get("dir", ""), "segmentation")
+    if ndsm is None or not os.path.isdir(seg_dir):
+        return None
+
+    from ..semantics import instances as inst_mod
+    from . import structural as struct
+    from .quality import report as mesh_report
+
+    field = inst_mod.load(seg_dir)
+    if field is None or field.count == 0:
+        return None
+
+    sem = run.get("sem")
+    buildings = struct.select(field, dsm, ndsm,
+                              None if sem is None else sem.astype(np.uint8))
+    if not buildings:
+        return None
+    mesh = struct.build(dsm, ndsm, buildings, gsd)
+    info = write_obj_structural(
+        os.path.join(mdir, "structural.obj"), mesh, dsm.shape, gsd,
+        texture_name=tex_name, name="traksha_structural")
+    info = {k: (os.path.relpath(v, out_dir).replace("\\", "/")
+                if k in ("obj", "mtl") else v) for k, v in info.items()}
+    info["quality"] = mesh_report(mesh)
+    info["buildings_detail"] = mesh.get("buildings", [])
+    return info
+
+
 def build_tileset(
     run_dir: str,
     out_dir: str,
@@ -343,6 +381,7 @@ def build_tileset(
     obj_tol_m: float = 2.0,
     obj_max_tris: int = 0,
     write_mesh: bool = True,
+    write_structural: bool = True,
     quantise_bits: int = 24,
     mesh_dir: Optional[str] = None,
     on_progress=None,
@@ -494,6 +533,16 @@ def build_tileset(
         if tex_name:
             mesh_info["texture"] = os.path.relpath(
                 os.path.join(mdir, tex_name), out_dir).replace("\\", "/")
+
+        # The structural rebuild, when the run carries a segmentation. It is a
+        # second artifact rather than a replacement: `surface.obj` is the height
+        # field this project has always delivered, and keeping both is what
+        # makes the comparison in README section 6 reproducible rather than a
+        # claim. Both are render-space; neither touches the calibrated rasters.
+        if write_structural:
+            structural = _structural_mesh(run, mdir, out_dir, dsm, gsd, tex_name)
+            if structural:
+                mesh_info["structural"] = structural
 
     manifest = {
         "traksha_tileset_version": TILESET_VERSION,

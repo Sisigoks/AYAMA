@@ -629,7 +629,9 @@ def cmd_mesh(args) -> int:
         manifest = build_tileset(
             args.run, out, tile=args.tile, pad=args.pad, lods=args.lods or None,
             obj_stride=args.obj_stride, obj_tol_m=args.obj_tol,
-            write_mesh=not args.no_mesh, quantise_bits=args.bits,
+            write_mesh=not args.no_mesh,
+            write_structural=not getattr(args, "no_structural", False),
+            quantise_bits=args.bits,
             on_progress=lambda d, n: t.set(d, n, f"lod {d - 1}"),
         )
 
@@ -1352,6 +1354,11 @@ def build_parser() -> argparse.ArgumentParser:
                     help="adaptive mesh tolerance, metres; 0 uses --obj-stride")
     pm.add_argument("--obj-stride", type=int, default=2,
                     help="decimation for the OBJ export; 1 is full resolution")
+    pm.add_argument("--no-structural", action="store_true",
+
+                     help="skip the structural rebuild; deliver only the "
+
+                          "height-field surface.obj")
     pm.add_argument("--no-mesh", action="store_true", help="skip the OBJ export")
     pm.add_argument("--bits", type=int, default=24,
                     help="bits kept per linear layer; 12 saves ~76%% of tile bytes "

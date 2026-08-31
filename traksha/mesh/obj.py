@@ -226,3 +226,68 @@ def write_obj_adaptive(
                      "fine_blocks": int(lay["n_fine"]),
                      "blocks": int(lay["n_blocks"])},
     }
+
+def write_obj_structural(
+    path: str,
+    mesh: dict,
+    grid_shape: tuple,
+    gsd_m: float,
+    texture_name: Optional[str] = None,
+    name: str = "traksha_structural",
+) -> dict:
+    """Write the structurally rebuilt mesh: terrain plus one group per building.
+
+    Groups are not decoration. Each building is its own connected component with
+    its own vertices, so `g building_7` selects a whole object in any tool that
+    reads OBJ - which is the difference between a scene of buildings and a sheet
+    that happens to be bumpy.
+
+    UVs come from world position rather than from the grid, because this mesh
+    has vertices the grid does not: a facade's top and bottom sit at the same
+    easting and northing, so both sample the orthophoto at the footprint edge
+    and the texture runs down the wall. That is the honest thing a nadir image
+    can offer - it photographed the roof, not the facade.
+    """
+    from .quality import validate
+
+    _ensure_parent(path)
+    V = np.asarray(mesh["vertices"], np.float64)
+    F = np.asarray(mesh["triangles"], np.int64)
+    h, w = grid_shape
+    span_x = max((w - 1) * float(gsd_m), 1e-9)
+    span_y = max((h - 1) * float(gsd_m), 1e-9)
+    UV = np.stack([V[:, 0] / span_x, V[:, 1] / span_y], axis=1)
+
+    mtl_path = os.path.splitext(path)[0] + ".mtl"
+    groups = mesh.get("groups") or [("surface", 0, len(F))]
+    stats = validate(V, F)
+
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(f"# TRAKSHA {name}\n")
+        fh.write(f"# {len(groups)} groups, {stats['components']} connected components\n")
+        fh.write("# render-space product: rebuilt from the calibrated DSM and the\n")
+        fh.write("#   instance segmentation. The calibrated rasters are unchanged.\n")
+        fh.write("# axes: +X east, +Y north, +Z up (metres from the SW corner)\n")
+        fh.write(f"mtllib {os.path.basename(mtl_path)}\n")
+        fh.write(f"o {name}\n")
+        _write_block(fh, "v", V)
+        if texture_name:
+            _write_block(fh, "vt", UV, decimals=5)
+        for gname, first, count in groups:
+            if count <= 0:
+                continue
+            fh.write(f"g {gname}\n")
+            fh.write(f"usemtl {name}_mat\n")
+            # OBJ indices are 1-based; the builder works 0-based throughout.
+            _write_faces(fh, F[first:first + count] + 1, bool(texture_name))
+
+    _write_mtl(mtl_path, name, texture_name)
+    return {
+        "obj": path, "mtl": mtl_path,
+        "vertices": int(len(V)), "triangles": int(len(F)),
+        "groups": int(len(groups)),
+        "buildings": int(len(mesh.get("buildings", []))),
+        "components": int(stats["components"]),
+        "degenerate_faces": int(stats["degenerate_faces"]),
+        "non_manifold_edges": int(stats["non_manifold_edges"]),
+    }

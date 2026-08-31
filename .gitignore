@@ -39,4 +39,11 @@ web/dist/
 results/**/*.tif
 results/**/*.tiff
 results/**/tiles3d/tiles/
+# The structural rebuild is full resolution - one vertex per pixel, about
+# 135 MB a scene - because it is the detailed download, not a web asset. It is
+# derived from committed inputs and rebuilds in seconds with `traksha mesh`,
+# so the numbers that describe it live in the manifest and the mesh does not
+# live in git. `surface.obj`, which is budgeted, still does.
+results/**/mesh/structural.obj
+results/**/mesh/structural.mtl
 results/_delivery_work/

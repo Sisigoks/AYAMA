@@ -100,6 +100,44 @@ class InstanceField:
         return art
 
 
+def load(out_dir: str) -> Optional[InstanceField]:
+    """Read back an artifact this module wrote, or None if it is not there.
+
+    The geometry stage runs separately from the pipeline - `traksha mesh` on an
+    existing run directory - so it reads the instances from disk rather than
+    from memory, and has to cope with a run made before this stage existed.
+    """
+    meta_path = os.path.join(out_dir, "metadata.json")
+    if not os.path.exists(meta_path):
+        return None
+    with open(meta_path, encoding="utf-8") as fh:
+        meta = json.load(fh)
+
+    tif = os.path.join(out_dir, "instances.tif")
+    npy = os.path.join(out_dir, "instances.npy")
+    if os.path.exists(tif):
+        import rasterio
+
+        with rasterio.open(tif) as ds:
+            inst = ds.read(1).astype(np.int32)
+    elif os.path.exists(npy):
+        inst = np.load(npy).astype(np.int32)
+    else:
+        return None
+
+    conf = np.zeros(inst.shape, np.float32)
+    conf_path = os.path.join(out_dir, "confidence.tif")
+    if os.path.exists(conf_path):
+        import rasterio
+
+        with rasterio.open(conf_path) as ds:
+            conf = ds.read(1).astype(np.float32)
+
+    return InstanceField(instance_map=inst, boundary=_boundaries(inst),
+                         confidence=conf, records=meta.get("records", []),
+                         provenance=meta.get("provenance", {}))
+
+
 def _boundaries(instance_map: np.ndarray) -> np.ndarray:
     """Pixels where the instance id changes. The structural edges, exactly."""
     b = np.zeros(instance_map.shape, bool)

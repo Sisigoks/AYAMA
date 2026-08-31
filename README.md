@@ -929,6 +929,69 @@ produced a small one. `--obj-tol` still exists, but the delivery path sets
 Lausanne, both at ~499k triangles. Below a few triangles per block the scheme
 has a floor, and the search says so rather than pretending.
 
+### From a sheet to separate solids
+
+The adaptive mesh above is a **height field**: one vertex per retained grid
+node, the whole grid triangulated as a single manifold. That is the right
+representation for terrain and the wrong one for a city. A twenty-metre facade
+becomes one triangle spanning one ground sample horizontally and twenty metres
+vertically, welded to the roof at one end and the pavement at the other. Two
+buildings either side of a four-metre alley are joined by a continuous strip
+that dips in and back out. No edge in the mesh corresponds to a building,
+because no stage before it had ever separated one.
+
+That is a topology defect and no depth model fixes it — the heights are already
+correct, and the triangulation discards the structure. So `traksha mesh` now
+writes a second artifact, `mesh/structural.obj`, rebuilt from the *same*
+calibrated heights and the instance segmentation of §1.2:
+
+* **terrain** every cell no footprint covers, reading the ground beneath a
+  footprint rather than the roof above it — without that, terrain climbs to
+  roof height at the shared boundary and the ramp reappears one cell out;
+* **roofs** one cap per building, taken from the trusted interior of the
+  footprint and carried outward. A monocular depth model blurs across a depth
+  discontinuity, so the two-pixel ring inside a roof edge is a blend of roof and
+  background; at face value it makes roofs sag at their own boundary and wall
+  tops come out serrated;
+* **walls** genuine vertical quads from the roof edge to the local ground.
+
+Each building is emitted as its own connected component, sharing no vertex with
+the terrain or with its neighbours, so `g building_7` selects a whole object and
+separation becomes countable rather than arguable. Measured on the delivered
+Bern scene, 1024 px, 104 buildings from 163 instances:
+
+| | height-field sheet | structural rebuild |
+|---|---|---|
+| connected components | **1** | 207 |
+| buildings as their own component | – | **100 %** |
+| vertices shared between objects | – | **0** |
+| vertical facade area | 8 253 m² (0.5 %) | **273 342 m² (15.3 %)** |
+| steepest triangle | 89.15° | **90.0°** |
+| degenerate faces | 0 | 0 |
+| non-manifold edges | 0 | 0 |
+| winding consistency | 1.00 | 1.00 |
+| build time | 1.9 s | 8.3 s |
+
+Three constraints held throughout. **No height is invented**: every vertex sits
+on the calibrated DSM, on the DTM under it, or on a plane fitted to calibrated
+values, and a test asserts the mesh's z range equals the raster's. **The
+calibrated rasters are untouched** — this is a render-space product written
+beside them, exactly as §8 requires. **Roofs are not forced flat**: a plane is
+fitted per roof and used only where the roof really is planar (14 of 104 here),
+because flattening a pitched roof would be a plausible-looking fabrication.
+
+Getting there needed two geometric fixes that only measurement exposed. Instance
+footprints are split into 4-connected pieces **in cell space, not pixel space**
+— a one-pixel neck survives in pixel space and vanishes once cells are taken as
+all-four-corners-inside, which left 35 % of buildings as more than one component.
+And diagonal pinches, where two cells meet at a single vertex, are removed: that
+vertex otherwise carries four boundary edges instead of two, which is exactly
+where the remaining 18 non-manifold edges were.
+
+`structural.obj` is full resolution — about 135 MB a scene — because it is the
+detailed download rather than a web asset, and it is not committed; it rebuilds
+in seconds from what is. `--no-structural` skips it.
+
 ### Committed
 
 It was gitignored at first, which made this a study you had to run before you
