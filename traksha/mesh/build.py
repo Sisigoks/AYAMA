@@ -374,7 +374,10 @@ def _structural_mesh(run: dict, mdir: str, out_dir: str, dsm, gsd: float,
     # a height field cannot represent a wall.
     from . import webmesh
 
-    web = webmesh.build_web_mesh(dsm, ndsm, field, run.get("sem"), gsd)
+    # `mesh` is the full-resolution build that surface's OBJ came from, so the
+    # web copy is decimated from it rather than built a second time.
+    web = webmesh.build_web_mesh(dsm, ndsm, field, run.get("sem"), gsd,
+                                 source=mesh)
     info["web"] = webmesh.write(os.path.join(out_dir, "structural.bin"), web,
                                 web["grid"], web["gsd_m"])
     return info

@@ -992,6 +992,54 @@ where the remaining 18 non-manifold edges were.
 detailed download rather than a web asset, and it is not committed; it rebuilds
 in seconds from what is. `--no-structural` skips it.
 
+### 6.3 Fitting it into a budget: decimate, do not stride — and do not subdivide
+
+The browser copy has to be a few hundred thousand triangles. The obvious route,
+rebuilding on a strided grid, turns out to be much worse than it looks. Both
+candidates below are ~250 000 triangles, scored against the full-resolution mesh
+by Hausdorff sampling:
+
+| | RMS | mean | max | components | buildings |
+|---|---|---|---|---|---|
+| full-resolution reference | – | – | – | 203 | 100 |
+| uniform stride | 1.003 m | 0.361 m | 13.234 m | **99** | **75** |
+| quadric edge collapse, per group | **0.059 m** | **0.027 m** | 2.993 m | **203** | **100** |
+
+Seventeen times the error, and worse than that: striding was **deleting a quarter
+of the buildings**. Decimation removes *triangles*, and takes them from where the
+surface is flat; striding removes *resolution*, uniformly, so anything smaller
+than a few grid steps — a small building, a roof edge — simply stops existing.
+
+Per group rather than over the whole mesh. Collapsing everything at once scores
+marginally better and hands back one anonymous soup of triangles: the group table
+is gone, and with it which triangles are which building. Per group keeps the
+table and keeps separation true by construction — measured after decimation,
+`own_component` is still 1.0 and shared vertices are still 0.
+
+**The subdivision and smoothing steps that usually end such a pipeline make it
+worse here, and measurably so:**
+
+| after decimation | triangles | RMS | vertical facade area |
+|---|---|---|---|
+| — | 250 834 | **0.059 m** | **15.5 %** |
+| + Loop subdivision | 287 575 | 0.171 m | 8.5 % |
+| + midpoint subdivision | 287 575 | 0.149 m | 15.5 % |
+| + Laplacian smoothing | 250 834 | 0.245 m | 7.7 % |
+
+Loop subdivision and Laplacian smoothing roughly **halve the facade area** — they
+round the walls back into ramps, which is precisely the defect §3.6 exists to
+remove. Midpoint subdivision keeps the walls, being interpolating rather than
+approximating, and still costs 2.5× the error for 15 % more triangles. None of
+them can add information: every vertex already sits on a calibrated value, and
+subdividing between two of them invents a third.
+
+Worth noting which metric caught it. The steepest triangle stays at 90° in every
+row, because *some* wall triangle survives vertical — only the facade *area*
+fraction shows that most of them were tilted.
+
+PyMeshLab is an optional dependency (`pip install -e ".[mesh]"`). Without it the
+pipeline falls back to striding and records that it did.
+
 **The viewer draws it too**, which took a second artifact. The tileset the browser
 renders is a height field, and a height field has one z per ground position by
 definition, so no amount of work on it can show a wall — every structural

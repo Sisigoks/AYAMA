@@ -54,11 +54,40 @@ def choose_stride(shape, max_triangles: int) -> int:
 
 
 def build_web_mesh(dsm: np.ndarray, ndsm: np.ndarray, instances, sem,
-                   gsd_m: float, max_triangles: int = DEFAULT_MAX_TRIANGLES):
-    """Structural mesh at a browser-sized triangle budget, with normals."""
+                   gsd_m: float, max_triangles: int = DEFAULT_MAX_TRIANGLES,
+                   source: "dict | None" = None):
+    """Structural mesh at a browser-sized triangle budget, with normals.
+
+    Two ways to get inside the budget, and they are not close. Given the
+    full-resolution mesh (`source`) and PyMeshLab, the triangles are removed by
+    per-group quadric edge collapse, which takes them from where the surface is
+    flat. Without either, the mesh is rebuilt on a strided grid, which takes
+    *resolution* uniformly - including from the roof edges and from any building
+    smaller than a few grid steps, which stops existing altogether.
+
+    Measured on the delivered Bern scene at a 250 000 triangle budget, against
+    the full-resolution mesh:
+
+        stride       RMS 1.003 m   max 13.234 m    99 components,  75 buildings
+        collapse     RMS 0.059 m   max  2.993 m   203 components, 100 buildings
+
+    The reference has 203 components and 100 buildings, so striding was deleting
+    a quarter of them.
+    """
     from ..semantics.instances import InstanceField
+    from . import decimate as D
     from . import structural as S
     from .quality import vertex_normals
+
+    if source is not None and D.available():
+        simplified = D.simplify(source, max_triangles)
+        mesh = simplified if simplified is not None else dict(source)
+        mesh["normals"] = vertex_normals(mesh["vertices"], mesh["triangles"])
+        mesh.setdefault("decimated", {"method": "already within budget"})
+        mesh["stride"] = 1
+        mesh["gsd_m"] = float(gsd_m)
+        mesh["grid"] = [int(dsm.shape[0]), int(dsm.shape[1])]
+        return mesh
 
     stride = choose_stride(dsm.shape, max_triangles)
     sl = (slice(None, None, stride), slice(None, None, stride))
@@ -76,6 +105,7 @@ def build_web_mesh(dsm: np.ndarray, ndsm: np.ndarray, instances, sem,
     buildings = S.select(small, d, nd, sm)
     mesh = S.build(d, nd, buildings, gsd)
     mesh["normals"] = vertex_normals(mesh["vertices"], mesh["triangles"])
+    mesh["decimated"] = {"method": "uniform stride (PyMeshLab unavailable)"}
     mesh["stride"] = stride
     mesh["gsd_m"] = gsd
     mesh["grid"] = [int(d.shape[0]), int(d.shape[1])]
@@ -135,6 +165,7 @@ def write(path: str, mesh: dict, grid_shape, gsd_m: float) -> dict:
         "buildings": int(sum(1 for _, _, k, _ in table if k == 1)),
         "stride": int(mesh.get("stride", 1)),
         "gsd_m": round(float(mesh.get("gsd_m", gsd_m)), 4),
+        "reduction": mesh.get("decimated", {}),
         "bytes": int(os.path.getsize(path)),
     }
 

@@ -23,6 +23,10 @@ dependencies = [
 [project.optional-dependencies]
 torch = ["torch>=2.2", "torchvision>=0.17", "transformers>=4.40"]
 api = ["fastapi>=0.110", "uvicorn[standard]>=0.29", "python-multipart>=0.0.9", "sse-starlette>=2.0"]
+# Quadric edge collapse for the browser copy of the structural mesh.
+# Optional: without it the mesh is built on a strided grid instead,
+# which is measurably worse (README section 6.3) but still works.
+mesh = ["pymeshlab>=2023.12"]
 dev = ["pytest>=8.0"]
 
 [project.scripts]
