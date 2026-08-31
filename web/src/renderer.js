@@ -468,6 +468,11 @@ function draw() {
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, m.bufIdx);
     gl.drawElements(gl.TRIANGLES, m.nIdx, gl.UNSIGNED_INT, 0);
     tris += m.nIdx / 3;
+    if (state.wire && m.bufWire) {
+      gl.uniform1f(uWire, 0.85);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, m.bufWire);
+      gl.drawElements(gl.LINES, m.nWire, gl.UNSIGNED_INT, 0);
+    }
     if (aN >= 0) gl.disableVertexAttribArray(aN);
     state.tris = Math.round(tris);
     // The tile path reports at the end of draw(); this path returns before it,
@@ -694,6 +699,55 @@ function disposeTiles() {
 }
 
 /** Swap what is draped on the surface. Colours come from the decoded values. */
+/* The selected layer as a single scene-wide texture.
+ *
+ * Tiles carry one texture each, which is fine for a grid of tiles and no use to
+ * a mesh whose UVs span the whole scene in one piece: the structural mesh needs
+ * one image. So the tiles' own colourisation is composited into one canvas at
+ * the LOD's resolution, which reuses the ramps and ranges exactly rather than
+ * computing a second, subtly different version of the same picture.
+ *
+ * Without this the structural mesh showed the orthophoto whatever layer was
+ * selected - the buttons moved and the model did not.
+ */
+function compositeLayer(key) {
+  var m = state.manifest;
+  if (!m || !state.tiles.length) return null;
+  var lod = m.lods[state.lodIndex];
+  var cv = document.createElement('canvas');
+  cv.width = lod.width; cv.height = lod.height;
+  var ctx = cv.getContext('2d');
+  if (!ctx) return null;
+
+  var spec = m.layers[key];
+  var style = spec ? layerStyle(key, spec) : null;
+  var drew = 0;
+  state.tiles.forEach(function (t) {
+    var x0 = t.spec.x0, y0 = t.spec.y0;
+    if (key === 'texture') {
+      if (t.images.texture) { ctx.drawImage(t.images.texture, x0, y0, t.w, t.h); drew++; }
+      return;
+    }
+    var vals = key === 'dsm' ? t.heights : t.values[key];
+    if (!vals || !style) {
+      if (t.images.texture) { ctx.drawImage(t.images.texture, x0, y0, t.w, t.h); drew++; }
+      return;
+    }
+    ctx.putImageData(colourize(vals, t.w, t.h, style.ramp, style.lo, style.hi), x0, y0);
+    drew++;
+  });
+  return drew ? cv : null;
+}
+
+function refreshStructuralTexture() {
+  var gl = state.gl, m = state.structural;
+  if (!gl || !m) return;
+  var cv = compositeLayer(state.layer || 'texture');
+  if (!cv) return;
+  if (m.tex) gl.deleteTexture(m.tex);
+  m.tex = texture(gl, cv);
+}
+
 function applyLayer(key) {
   var gl = state.gl, m = state.manifest;
   if (!gl || !state.tiles.length) return;
@@ -714,6 +768,9 @@ function applyLayer(key) {
     }
     t.texColour = texture(gl, colourize(vals, t.w, t.h, style.ramp, style.lo, style.hi));
   });
+  // The structural mesh is one piece of geometry with one texture, so it needs
+  // the whole scene composited rather than a tile's worth.
+  refreshStructuralTexture();
   // The legend is a component now; it reads the same layer spec from the
   // manifest, so there is nothing for the renderer to push.
   state.needsDraw = true;
@@ -909,7 +966,7 @@ function parseTKM1(buf) {
 function disposeStructural() {
   var gl = state.gl, m = state.structural;
   if (!gl || !m) return;
-  [m.bufPos, m.bufH, m.bufUV, m.bufN, m.bufIdx].forEach(function (b) {
+  [m.bufPos, m.bufH, m.bufUV, m.bufN, m.bufIdx, m.bufWire].forEach(function (b) {
     if (b) gl.deleteBuffer(b);
   });
   if (m.tex) gl.deleteTexture(m.tex);
@@ -957,14 +1014,24 @@ async function loadStructural(base, manifest) {
     triangles: m.indices.length / 3, tex: null,
   };
 
-  // One texture for the whole mesh: the scene orthophoto the OBJ already uses.
-  var texPath = manifest.mesh && manifest.mesh.texture;
-  if (texPath) {
-    try {
-      out.tex = texture(gl, await loadImage(base + texPath));
-    } catch (e) { out.tex = null; }
+  // Wireframe needs its own index buffer: the tiles build one from their grid,
+  // and this mesh has no grid. Three edges per triangle, drawn as lines -
+  // duplicates along shared edges cost a second line over the same pixels and
+  // save building a unique-edge set for a quarter of a million faces.
+  var wire = new Uint32Array(m.indices.length * 2);
+  for (var t = 0, o = 0; t < m.indices.length; t += 3) {
+    var a0 = m.indices[t], b0 = m.indices[t + 1], c0 = m.indices[t + 2];
+    wire[o++] = a0; wire[o++] = b0;
+    wire[o++] = b0; wire[o++] = c0;
+    wire[o++] = c0; wire[o++] = a0;
   }
+  out.bufWire = buf(wire, gl.ELEMENT_ARRAY_BUFFER);
+  out.nWire = wire.length;
+
   state.structural = out;
+  // One texture for the whole mesh, composited from the tiles so that the
+  // layer buttons apply here exactly as they do to the height field.
+  refreshStructuralTexture();
   return out;
 }
 

@@ -127,7 +127,14 @@ def write(path: str, mesh: dict, grid_shape, gsd_m: float) -> dict:
     # not have to agree with it about where the middle is.
     pos = np.ascontiguousarray(V[:, :2])
     height = np.ascontiguousarray(V[:, 2])
-    uv = np.ascontiguousarray(np.stack([V[:, 0] / span_x, V[:, 1] / span_y], 1))
+    # v is flipped against the world frame, and it has to be. Textures upload
+    # with UNPACK_FLIP_Y_WEBGL false, so v = 0 is the first raster row, which is
+    # the *north* edge - while +Y in the mesh points north. Mapping v straight
+    # from y mirrors the scene about its east-west axis, which is subtle enough
+    # in an aerial texture to survive a casual look and be obviously wrong once
+    # you find a river.
+    uv = np.ascontiguousarray(np.stack(
+        [V[:, 0] / span_x, 1.0 - V[:, 1] / span_y], 1))
 
     groups = mesh.get("groups") or [("surface", 0, len(F))]
     table = []

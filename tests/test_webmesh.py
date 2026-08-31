@@ -94,6 +94,31 @@ def test_groups_name_the_terrain_and_the_buildings(tmp_path):
     assert 1 in kinds, "no building group was recorded"
 
 
+def test_uvs_agree_with_the_tile_path_about_which_way_is_north(tmp_path):
+    """The bug this pins: the mesh was textured upside down.
+
+    Textures upload with UNPACK_FLIP_Y_WEBGL false, so v = 0 is the first raster
+    row - the *north* edge - while +Y in the mesh points north. Mapping v
+    straight from y mirrors the scene about its east-west axis, which survives a
+    casual look at an aerial photograph and is unmistakable once you find a
+    river. The tile path uses v = row / (h - 1); this has to agree with it, or
+    the two halves of the viewer disagree about the same scene.
+    """
+    dsm, ndsm, field = scene_with_a_block()
+    mesh = W.build_web_mesh(dsm, ndsm, field, None, 1.0, max_triangles=100_000)
+    path = str(tmp_path / "m.bin")
+    W.write(path, mesh, mesh["grid"], mesh["gsd_m"])
+    back = W.read(path)
+    pos, uv = back["positions"], back["uv"]
+
+    north, south = pos[:, 1].argmax(), pos[:, 1].argmin()
+    west, east = pos[:, 0].argmin(), pos[:, 0].argmax()
+    assert uv[north, 1] == pytest.approx(0.0, abs=1e-3), "north must be v = 0"
+    assert uv[south, 1] == pytest.approx(1.0, abs=1e-3), "south must be v = 1"
+    assert uv[west, 0] == pytest.approx(0.0, abs=1e-3)
+    assert uv[east, 0] == pytest.approx(1.0, abs=1e-3)
+
+
 def test_a_file_that_is_not_ours_is_refused(tmp_path):
     bad = tmp_path / "bad.bin"
     bad.write_bytes(b"GLTF" + b"\x00" * 64)
