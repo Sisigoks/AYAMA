@@ -28,8 +28,10 @@ edge here.
 # resolve against the enclosing scope and are real classes.
 
 import asyncio
+import importlib.util
 import json
 import os
+import sys
 from typing import Optional
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -72,15 +74,25 @@ SSE_EVENTS = ("progress", "end")
 def create_app(jobs_root: str = "out/jobs", web_dir: Optional[str] = None,
                max_concurrent: int = 1):
     """Build the FastAPI app. Imported lazily so the core install stays thin."""
-    try:
-        from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-        from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-    except ImportError as exc:  # pragma: no cover - environment dependent
+    # Checked together, and by import name, because a partial api extra fails
+    # much later and much less clearly. `python-multipart` in particular is
+    # imported by nothing here: FastAPI needs it to parse an upload and raises
+    # from inside its own route decorator when it is absent, so the error
+    # arrives naming neither the package to install nor the interpreter that is
+    # missing it - which is exactly how a `npm run dev` that picked the wrong
+    # python presents itself.
+    missing = [name for name in
+               ("fastapi", "uvicorn", "python_multipart", "sse_starlette")
+               if importlib.util.find_spec(name) is None]
+    if missing:  # pragma: no cover - environment dependent
         raise RuntimeError(
-            "the web service needs the api extra:\n"
-            "  pip install 'fastapi>=0.110' 'uvicorn[standard]>=0.29' "
-            "'python-multipart>=0.0.9'"
-        ) from exc
+            f"the web service is missing: {', '.join(missing)}\n"
+            f"  interpreter: {sys.executable}\n"
+            "  install the api extra into it:\n"
+            "      pip install -e \".[api]\"\n")
+
+    from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+    from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
     from .jobs import JobStore, UploadRejected
 
