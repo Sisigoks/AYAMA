@@ -665,10 +665,14 @@ def cmd_viewer(args) -> int:
 
     from .mesh.build import build_tileset
 
-    root = os.path.dirname(os.path.abspath(__file__))
-    web = os.path.join(os.path.dirname(root), "web")
-    if not os.path.isdir(web):
-        print(f"error: web/ not found at {web}", file=sys.stderr)
+    # The front end is a Vite build, so this serves web/dist. Serving the
+    # sources would hand the browser a JSX entry point and produce a blank page
+    # with nothing in the console to explain it.
+    from .api.server import MISSING_BUILD, web_root
+
+    web = web_root()
+    if not web:
+        print("error: " + MISSING_BUILD, file=sys.stderr)
         return 2
 
     tiles = args.tiles or os.path.join(args.run, "tiles3d")

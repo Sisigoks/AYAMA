@@ -48,14 +48,25 @@ jobs:
       # Phase 3 and 4. The tileset is built from the run above rather than from a
       # fixture, so CI exercises the same path a user does, and the viewer is then
       # executed headlessly against that manifest - the only check that catches
-      # web/app.js and traksha/mesh/encode.py drifting apart on the encoding.
+      # web/src/renderer.js and traksha/mesh/encode.py drifting apart on the encoding.
       - name: Phase 3 tileset
         run: |
           python -m traksha.cli mesh /tmp/run --out /tmp/tiles3d --progress plain
           test -f /tmp/tiles3d/tileset.json
           test -f /tmp/tiles3d/mesh/surface.obj
 
-      - name: Phase 4 viewer, headless
+      # Two checks, because they answer different questions. The first is pure
+      # arithmetic and needs nothing installed. The second needs a real browser:
+      # the React conversion was landed against a jsdom harness that reported
+      # every page as fine while the deployed site was blank, so the front end
+      # is now checked in the only thing that can actually tell.
+      - name: Phase 4 encoding parity
+        run: node scripts/check_app.mjs /tmp/tiles3d
+
+      - name: Phase 4 site, in a browser
         run: |
-          npm install --no-save --no-audit --no-fund jsdom
-          node scripts/check_app.js /tmp/tiles3d
+          npm --prefix web install --no-audit --no-fund
+          npm --prefix web run build
+          npm install --no-save --no-audit --no-fund playwright
+          npx playwright install --with-deps chromium
+          node scripts/check_site.mjs

@@ -23,22 +23,26 @@ KEEP = (".json", ".md", ".png", ".jpg", ".jpeg", ".svg", ".pdf", ".tex")
 
 
 def assemble(dest: str) -> str:
-    site = os.path.join(ROOT, "web")
+    # The front end is a Vite build, so what deploys is web/dist. Copying the
+    # sources instead would publish a JSX entry point the browser cannot run.
+    site = os.path.join(ROOT, "web", "dist")
     if not os.path.isdir(site):
-        raise SystemExit("web/ not found")
+        raise SystemExit(
+            "web/dist not found - build the front end first:\n"
+            "\n"
+            "  cd web && npm install && npm run build\n")
     shutil.copytree(site, dest, dirs_exist_ok=True)
 
-    # The Phase 4 viewer ships as a sub-page. web/ is self-contained - its own
-    # tileset lives in web/data - so copying the directory is the whole job, and
-    # what is served locally is exactly what deploys.
-    web = os.path.join(ROOT, "web")
-    if os.path.isdir(web):
-        shutil.copytree(web, os.path.join(dest, "viewer"), dirs_exist_ok=True,
-                        ignore=shutil.ignore_patterns("node_modules", "dist"))
-        tiles = os.path.join(dest, "viewer", "data", "tileset.json")
-        print(f"  viewer:  /viewer/  ({'with' if os.path.exists(tiles) else 'NO'} tileset)")
-    else:
-        print("  web/: not found - the 3D section will not load")
+    # the demo tileset the standalone viewer falls back to
+    demo = os.path.join(ROOT, "web", "data")
+    if os.path.isdir(demo):
+        shutil.copytree(demo, os.path.join(dest, "data"), dirs_exist_ok=True)
+
+    # index.html IS the viewer now - one React app, two entry points - so there
+    # is no separate sub-page to copy. The old /viewer/ route duplicated the
+    # whole directory to serve the same bundle twice.
+    tiles = os.path.join(dest, "data", "tileset.json")
+    print(f"  viewer:  /  ({'with' if os.path.exists(tiles) else 'NO'} demo tileset)")
 
     results = os.path.join(ROOT, "results")
     if os.path.isdir(results):
@@ -89,18 +93,19 @@ def main() -> int:
     with socketserver.TCPServer(("", args.port), Handler) as httpd:
         url = f"http://localhost:{args.port}/"
         print(f"serving {url}   (ctrl-c to stop)")
-    if _hosted():
-        print()
-        print("  ! On Colab this address is inside the VM and your browser")
-        print("    cannot open it. Run this from a PYTHON cell instead:")
-        print()
-        print("      import subprocess, time")
-        print("      from google.colab.output import eval_js")
-        print("      subprocess.Popen(['python', 'scripts/serve.py',")
-        print(f"                        '--port', '{args.port}', '--no-open'])")
-        print("      time.sleep(4)")
-        print(f"      print(eval_js('google.colab.kernel.proxyPort({args.port})'))")
-        print()
+        if _hosted():
+            print()
+            print("  ! On Colab this address is inside the VM and your browser")
+            print("    cannot open it. Run this from a PYTHON cell instead:")
+            print()
+            print("      import subprocess, time")
+            print("      from google.colab.output import eval_js")
+            print("      subprocess.Popen(['python', 'scripts/serve.py',")
+            print(f"                        '--port', '{args.port}', '--no-open'])")
+            print("      time.sleep(4)")
+            print(f"      print(eval_js('google.colab.kernel.proxyPort({args.port})'))")
+            print()
+
         if not args.no_open:
             webbrowser.open(url)
         try:

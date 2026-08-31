@@ -1,9 +1,9 @@
 // CPU benchmark for the Phase 4 viewer. Emits JSON on stdout.
 //
-//   node scripts/bench_viewer.js [tileset-dir]
+//   node scripts/bench_viewer.mjs [tileset-dir]
 //
-// This measures the real web/app.js, not a reimplementation, because the point
-// is the code a browser actually runs. Everything here is the CPU work that
+// This measures the real web/src/renderer.js, not a reimplementation, because
+// the point is the code a browser actually runs. Everything here is the CPU work that
 // happens BEFORE the GPU is involved: turning PNG bytes back into metres,
 // building vertex buffers, applying colour ramps.
 //
@@ -13,14 +13,15 @@
 //
 // Timings are best-of-N. The floor is the honest number; a slow repeat measures
 // whatever else the machine was doing.
-const fs = require('fs');
-const path = require('path');
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const ROOT = path.resolve(__dirname, '..');
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tilesetDir = process.argv[2] || path.join(ROOT, 'web/data');
 
-// app.js calls `new ImageData(...)` inside colourize. Node has no DOM, so a
-// minimal stand-in keeps the measurement on the LUT loop where it belongs.
+// colourize calls `new ImageData(...)`. Node has no DOM, so a minimal stand-in
+// keeps the measurement on the LUT loop where it belongs.
 if (typeof globalThis.ImageData === 'undefined') {
   globalThis.ImageData = class ImageData {
     constructor(data, width, height) {
@@ -29,7 +30,10 @@ if (typeof globalThis.ImageData === 'undefined') {
   };
 }
 
-const TRAKSHA = require(path.join(ROOT, 'web/app.js'));
+// pathToFileURL, not a bare path: on Windows an absolute path starts with a
+// drive letter, which the ESM loader reads as an unknown URL scheme.
+const TRAKSHA = await import(
+  pathToFileURL(path.join(ROOT, 'web/src/renderer.js')).href);
 
 function best(label, fn, repeats, units) {
   let t = Infinity;
@@ -102,7 +106,7 @@ if (TRAKSHA.colourize) {
            () => TRAKSHA.colourize(tileHeights, tw, th, 'viridis', 0, 1), R));
 } else {
   report.ops.push({ op: 'colourize, one tile', ms: null,
-                    note: 'not exported from web/app.js' });
+                    note: 'not exported from web/src/renderer.js' });
 }
 add(best('build a 256-entry LUT', () => TRAKSHA.lut('magma'), R));
 
@@ -126,21 +130,5 @@ report.throughput_mpix_per_s = {
   decode_linear: +(mpix / (ms('decode linear, whole scene') / 1000)).toFixed(1),
 };
 
-// ── panels: the DOM half, if jsdom is available ─────────────────────────────
-try {
-  const { JSDOM, VirtualConsole } = require('jsdom');
-  const html = fs.readFileSync(path.join(ROOT, 'web/index.html'), 'utf8');
-  const vc = new VirtualConsole();
-  const dom = new JSDOM(html, { runScripts: 'outside-only', virtualConsole: vc });
-  const w = dom.window;
-  w.UNNAT_NO_AUTOBOOT = true; w.TRAKSHA_NO_AUTOBOOT = true;
-  w.HTMLCanvasElement.prototype.getContext = function () { return null; };
-  w.eval(fs.readFileSync(path.join(ROOT, 'web/app.js'), 'utf8'));
-  const U = w.TRAKSHA;
-  add(best('renderPanels (jsdom)', () => U.renderPanels(manifest), 3));
-} catch (e) {
-  report.ops.push({ op: 'renderPanels (jsdom)', ms: null,
-                    note: 'jsdom not installed' });
-}
 
 console.log(JSON.stringify(report, null, 2));

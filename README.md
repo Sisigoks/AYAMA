@@ -1422,9 +1422,26 @@ Upload an image, watch it reconstruct, look at it in 3D and download the mesh.
 This is the interactive front end; `viewer` serves one prebuilt scene and runs
 no pipeline.
 
+The front end is a Vite + React app, so it is built before it is served:
+
 ```bash
-python -m traksha.cli serve           # http://127.0.0.1:8000
+cd web && npm install && npm run build   # once, and after any change under web/
+python -m traksha.cli serve              # http://127.0.0.1:8000
 ```
+
+`serve` serves `web/dist`, and says so rather than serving a blank page if the
+build is missing. While working on the front end, run the two halves side by
+side instead — the reconstruction is Python and cannot move into the browser:
+
+```bash
+python -m traksha.cli serve       # :8000, the pipeline
+cd web && npm run dev             # :5173, the UI  <- open this one
+```
+
+Vite proxies `/api` and `/data` to the service and serves `results/` from the
+repository root, so both pages work under `npm run dev` with hot reload, and
+every fetch in the app stays a relative path that does not care which server
+answered.
 
 A 384 px upload takes about 20 s on the reference CPU and returns a tileset the
 viewer loads plus `surface.obj` + `.mtl` + `.jpg` to download. It runs the same
@@ -1602,10 +1619,14 @@ traksha/
   eval/        metrics, ablation, bench, delivery, shadow_truth, simulate
   api/         pipeline.py — the whole method in one function
                server.py, jobs.py — the upload/reconstruct service
-web/           the whole front end, one root, no build step
+web/           the front end: React sources in src/, built to dist/
                index.html   - the app: upload -> reconstruct -> 3D
                results.html - the study dashboard, renders results/dataset.json
-               data/        - the committed demo tileset + mesh the 3D loads
+               src/         - App.jsx, ResultsPage.jsx, components.jsx, styles.css
+                              renderer.js - the WebGL half, the one module that
+                              touches a canvas and never touches the DOM
+               data/        - the committed demo tileset + mesh the 3D loads,
+                              and what the published site draws with no service
 results/       ONE delivered study. Each scene is ONE folder:
                bern|geneva|lausanne|zurich/
                    rasters + summary.json + tiles3d/ + mesh/surface.{obj,mtl,jpg}

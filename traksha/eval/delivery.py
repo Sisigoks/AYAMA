@@ -14,7 +14,7 @@ What is measured here, all on CPU:
   quantisation  what the 24-bit linear encoding costs in bytes, and what
                 quantising each layer to its own uncertainty would save
   round trip    decoded tile against source raster, per layer, at every LOD
-  viewer        the JavaScript half, run through node against the real web/app.js
+  viewer        the JavaScript half, run through node against the real renderer
 
 What is NOT measured, and cannot be from here: GPU rasterisation. Everything in
 the `viewer` block is CPU work the browser does before the GPU is involved -
@@ -407,18 +407,18 @@ def payload_report(tileset_dir: str, manifest: dict) -> dict:
 
 
 # --------------------------------------------------------------------------
-# 6. the viewer's own CPU work, measured in node against web/app.js
+# 6. the viewer's own CPU work, measured in node against web/src/renderer.js
 # --------------------------------------------------------------------------
 def viewer_bench(tileset_dir: str, repo_root: str, log: Log = None) -> dict:
-    """Run scripts/bench_viewer.js and return its JSON.
+    """Run scripts/bench_viewer.mjs and return its JSON.
 
-    Measures the real `web/app.js`, not a reimplementation - the point is the
+    Measures the real `web/src/renderer.js`, not a reimplementation - the point is the
     code the browser runs. Returns a skip record rather than failing when node
     is absent, the same way the GPU tests skip with a reason.
     """
-    script = os.path.join(repo_root, "scripts", "bench_viewer.js")
+    script = os.path.join(repo_root, "scripts", "bench_viewer.mjs")
     if not os.path.exists(script):
-        return {"skipped": "scripts/bench_viewer.js not found"}
+        return {"skipped": "scripts/bench_viewer.mjs not found"}
     node = shutil.which("node")
     if not node:
         return {"skipped": "node is not on PATH"}
@@ -775,7 +775,7 @@ def write_report(rep: dict, path: str) -> str:
     if v.get("skipped"):
         A(f"Skipped: {v['skipped']}")
     else:
-        A("Measured against the real `web/app.js` under node, best of five with a")
+        A("Measured against the real `web/src/renderer.js` under node, best of five with a")
         A("warm-up. This is the work the browser does before the GPU is involved.")
         A("")
         A("| operation | ms |")

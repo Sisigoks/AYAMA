@@ -9,8 +9,9 @@ raster it came from, at every LOD, with every pixel accounted for.
 Python writer to a JavaScript reader, and nothing else in the suite would notice
 if the two drifted apart - the page would simply render a wrong surface without
 complaining. The checks here are structural (every element the script reaches
-for exists; every manifest key it reads is written); `scripts/check_app.js`
-executes the page for the rest.
+for exists; every manifest key it reads is written). `scripts/check_app.mjs`
+runs the decoders themselves, and `scripts/check_site.mjs` runs the built page in
+a real browser, which is where the rest of the contract is answered.
 """
 from __future__ import annotations
 
@@ -224,31 +225,72 @@ def _read(name):
 
 
 def test_web_assets_exist():
-    for f in ("index.html", "app.js", "style.css"):
+    for f in ("index.html", "results.html", "package.json", "vite.config.js",
+              "src/main.jsx", "src/results-main.jsx", "src/App.jsx",
+              "src/ResultsPage.jsx", "src/components.jsx", "src/renderer.js",
+              "src/styles.css"):
         assert os.path.exists(os.path.join(WEB, f)), f
 
 
-def test_every_element_the_script_reaches_for_exists_in_the_html():
-    """Both scripts: app.js draws the tileset, upload.js drives the job."""
-    app, html = _read("app.js"), _read("index.html")
-    app += _read("upload.js")
-    ids = set(re.findall(r"getElementById\('([\w-]+)'\)", app))
-    ids |= set(re.findall(r"\$\('([\w-]+)'\)", _read("upload.js")))
-    ids |= set(re.findall(r"\$\('#([\w-]+)'\)", app))
-    ids |= set(re.findall(r"querySelector\('#([\w-]+)'\)", app))
-    assert ids, "found no element lookups - the extraction regex is stale"
-    present = set(re.findall(r'id="([\w-]+)"', html))
-    assert ids <= present, f"app.js reaches for missing ids: {sorted(ids - present)}"
+def test_react_is_bundled_rather_than_fetched_from_a_cdn():
+    """The bundle has to be self-contained: Pages serves it with no backend.
+
+    A CDN script tag would make the page need the network to render at all, and
+    an offline checkout would show a blank screen. React is a declared
+    dependency instead, so Vite inlines it into the bundle it emits.
+    """
+    pkg = json.loads(_read("package.json"))
+    for dep in ("react", "react-dom"):
+        assert dep in pkg["dependencies"], dep
+    for f in ("index.html", "results.html"):
+        html = _read(f)
+        for bad in ("unpkg", "cdnjs", "esm.sh", "jsdelivr"):
+            assert bad not in html, f"{f} reaches outside for {bad}"
+
+
+def test_the_app_mounts_where_the_page_provides_a_root():
+    """React builds its own tree, so the only id that has to line up is the mount.
+
+    This replaces an older test that scraped `getElementById` out of a
+    single-file script. That check was right for the code it was written for and
+    means nothing now - the components create their elements - so what is
+    asserted instead is the one coupling that survived.
+    """
+    for page, entry in (("index.html", "src/main.jsx"),
+                        ("results.html", "src/results-main.jsx")):
+        html, main = _read(page), _read(entry)
+        mount = re.search(r"getElementById\('([\w-]+)'\)", main)
+        assert mount, f"{entry} no longer mounts by id - update this test"
+        assert f'id="{mount.group(1)}"' in html, (
+            f"{entry} mounts into #{mount.group(1)}, which {page} does not provide")
+        # and the page must actually load that entry
+        assert entry in html, f"{page} does not load {entry}"
+
+    # nothing else in the front end should be reaching into the document
+    for f in ("src/components.jsx", "src/App.jsx", "src/ResultsPage.jsx"):
+        assert "getElementById" not in _read(f), (
+            f"{f} reaches into the document directly; React owns that tree")
 
 
 def test_the_page_reads_only_manifest_keys_the_builder_writes(built):
     """Both halves of the contract, checked against a manifest that really exists."""
     m, _, _ = built
-    app = _read("app.js")
+    app = (_read("src/components.jsx") + _read("src/App.jsx")
+           + _read("src/renderer.js"))
     for key in ("lods", "layers", "notes", "grid", "default_layer", "provenance",
                 "metrics", "mesh", "transform", "source_run", "generated_utc"):
         assert key in m, f"builder stopped writing {key}"
-        assert key in app, f"app.js stopped reading {key}"
+    # Two keys are written for the file rather than for the screen, so they are
+    # required of the builder and not of the page: `generated_utc` is
+    # provenance, and `transform` is the affine the page has no readout for -
+    # it reports elevation, height above ground and sigma under the cursor, not
+    # map coordinates. Everything else the page must actually consume, which is
+    # what caught the viewer hardcoding its opening layer instead of reading
+    # `default_layer` and so opening a textureless tileset on a layer it does
+    # not carry.
+    for key in ("lods", "layers", "notes", "grid", "default_layer", "provenance",
+                "metrics", "mesh", "source_run"):
+        assert key in app, f"the front end stopped reading {key}"
     lod = m["lods"][0]
     for key in ("tiles", "width", "height", "gsd_m", "lod"):
         assert key in lod
@@ -260,7 +302,7 @@ def test_the_page_and_the_encoder_share_the_terrain_rgb_constants():
     """Two implementations of one packing. Drift here is silent and total."""
     from traksha.mesh.encode import MAX_CODE, TERRAIN_BASE_M, TERRAIN_STEP_M
 
-    app = _read("app.js")
+    app = _read("src/renderer.js")
     assert f"TERRAIN_BASE = {TERRAIN_BASE_M}" in app
     assert f"TERRAIN_STEP = {TERRAIN_STEP_M}" in app
     assert "256 * 256 * 256 - 1" in app and MAX_CODE == 256 ** 3 - 1
@@ -273,20 +315,20 @@ def test_the_page_declares_no_external_resources():
     contains an `xmlns` of http://www.w3.org/2000/svg, which is a namespace name
     and is never dereferenced - a blanket search for "http" would flag it.
     """
-    html = _read("index.html")
-    external = re.findall(r'(?:src|href)\s*=\s*"(https?://[^"]*)"', html)
-    assert not external, f"index.html loads from outside: {external}"
-    for bad in ("cdn.", "unpkg", "jsdelivr", "googleapis"):
-        assert bad not in html, f"index.html reaches outside for {bad}"
-    assert '<script src="app.js">' in html
-    assert '@import' not in _read("style.css")
+    for f in ("index.html", "results.html"):
+        html = _read(f)
+        external = re.findall(r'(?:src|href)\s*=\s*"(https?://[^"]*)"', html)
+        assert not external, f"{f} loads from outside: {external}"
+        for bad in ("cdn.", "unpkg", "jsdelivr", "googleapis"):
+            assert bad not in html, f"{f} reaches outside for {bad}"
+    assert '@import' not in _read("src/styles.css")
 
 
 def test_colour_ramps_match_the_png_previews():
     """The page and cog.py must not disagree about what a height looks like."""
     from traksha.dsm.cog import _fallback_lut
 
-    app = _read("app.js")
+    app = _read("src/renderer.js")
     for name, key in (("viridis", "viridis"), ("magma", "magma"), ("terrain", "terrain")):
         first = _fallback_lut(name)[0][:3]
         assert f"[{first[0]}, {first[1]}, {first[2]}]" in app, f"{key} ramp drifted"

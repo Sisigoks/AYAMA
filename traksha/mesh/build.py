@@ -5,7 +5,7 @@ calibration, nothing re-derived. Phase 3 is a *delivery* phase: if a number
 appears in the viewer it came out of the rasters Phase 2 produced, and the
 manifest records which run produced them.
 
-The manifest is the contract between this module and `web/app.js`. It is
+The manifest is the contract between this module and `web/src/renderer.js`. It is
 deliberately explicit about encodings and ranges rather than letting the
 JavaScript assume defaults, because the failure mode of an implied convention
 is a viewer that renders a wrong surface confidently.

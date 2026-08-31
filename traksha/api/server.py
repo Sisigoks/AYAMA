@@ -8,7 +8,7 @@ Three surfaces, and the split matters:
     /api/...              JSON + SSE, so the front end has no privileged access
     /api/jobs/{id}/tiles  the tileset, served exactly as the viewer expects
 
-The viewer is the same `web/app.js` the local `traksha viewer` command serves. It
+The viewer is the same React front end the local `traksha viewer` command serves. It
 takes its tileset base from a query parameter, so one implementation covers a
 prebuilt local tileset and a freshly reconstructed job. Nothing about the
 rendering path is web-service specific.
@@ -32,8 +32,36 @@ import json
 import os
 from typing import Optional
 
-WEB_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "web")
+_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+WEB_SRC = os.path.join(_ROOT, "web")
+WEB_DIR = os.path.join(WEB_SRC, "dist")
+
+
+def web_root(explicit: str = "") -> str:
+    """Where the built front end lives, or a clear failure.
+
+    The UI is a Vite + React app, so what gets served is `web/dist` - the build
+    output - and not the sources beside it. Serving `web/` would hand the
+    browser a `<script type="module" src="/src/main.jsx">` it cannot execute,
+    and the page would come up blank with no error anywhere. Better to say so.
+    """
+    if explicit:
+        return os.path.abspath(explicit)
+    if os.path.exists(os.path.join(WEB_DIR, "index.html")):
+        return WEB_DIR
+    return ""
+
+
+MISSING_BUILD = (
+    "the front end has not been built.\n"
+    "\n"
+    "  cd web && npm install && npm run build\n"
+    "\n"
+    "or, while developing, run the two servers side by side:\n"
+    "\n"
+    "  python -m traksha.cli serve      # this, on :8000\n"
+    "  cd web && npm run dev            # the UI on :5173  <- open this one\n"
+)
 
 
 def create_app(jobs_root: str = "out/jobs", web_dir: Optional[str] = None,
@@ -51,7 +79,9 @@ def create_app(jobs_root: str = "out/jobs", web_dir: Optional[str] = None,
 
     from .jobs import JobStore, UploadRejected
 
-    web = os.path.abspath(web_dir or WEB_DIR)
+    web = web_root(web_dir)
+    if not web:
+        raise RuntimeError(MISSING_BUILD)
     store = JobStore(jobs_root, max_concurrent=max_concurrent)
     app = FastAPI(title="TRAKSHA", docs_url="/api/docs", openapi_url="/api/openapi.json")
     app.state.store = store
@@ -138,7 +168,9 @@ def create_app(jobs_root: str = "out/jobs", web_dir: Optional[str] = None,
         from ..eval.bench import device_report
 
         rep = device_report()
-        return {"ok": True,
+        from ..depth.backbones import BACKBONES
+
+        return {"ok": True, "backbones": list(BACKBONES),
                 "cpu_count": rep.get("cpu_count"),
                 "torch": rep.get("torch"), "jobs": len(store.list())}
 

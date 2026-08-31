@@ -173,8 +173,28 @@ def test_http_rejections_are_readable(client):
 
 
 def test_static_files_are_served_and_cannot_escape(client):
-    for path in ("/", "/app.js", "/upload.js", "/style.css"):
-        assert client.get(path).status_code == 200, path
+    """The service serves the Vite build, and only the Vite build.
+
+    Asset names are content-hashed, so they cannot be listed here. They are read
+    out of the index the build emitted instead - which also asserts the two
+    halves agree: an index referencing a bundle the service will not serve is a
+    blank page, and that is exactly how the React conversion first shipped.
+    """
+    import re
+
+    index = client.get("/")
+    assert index.status_code == 200
+    assert "<div id=\"root\"" in index.text
+
+    refs = re.findall(r'(?:src|href)="([^"]+)"', index.text)
+    assets = [r for r in refs if r.endswith((".js", ".css"))]
+    assert assets, "the built index references no bundle"
+    for ref in assets:
+        got = client.get("/" + ref.lstrip("./"))
+        assert got.status_code == 200, ref
+
+    assert client.get("/results.html").status_code == 200
+
     for path in ("/../pyproject.toml", "/../../etc/passwd", "/nope.js"):
         assert client.get(path).status_code == 404, path
 

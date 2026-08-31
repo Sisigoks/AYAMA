@@ -1,7 +1,13 @@
-# Publish the results site to GitHub Pages.
+# Publish the site to GitHub Pages.
 #
-# The site is static and needs no build step: it is a renderer for
-# results/dataset.json, so republishing after a new run is just a commit.
+# The front end is a Vite + React app, so there IS a build step: what deploys is
+# web/dist, not web/. Copying the sources would publish a `<script type="module"
+# src="/src/main.jsx">` no browser can execute, and the page would come up blank
+# with nothing in the log to say why.
+#
+# Pages has no backend, so /api/health 404s there. That is the signal the app
+# uses to fall back to the tileset committed at web/data: the published site
+# cannot reconstruct an upload, but its 3D is real.
 name: pages
 
 on:
@@ -9,6 +15,7 @@ on:
     branches: [main]
     paths:
       - 'results/**'
+      - 'web/**'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -27,15 +34,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build the front end
+        working-directory: web
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+
       - name: Assemble the site
         run: |
           mkdir -p _site
-          cp -r web/. _site/
           # One web root: index.html is the app (upload -> reconstruct -> 3D)
-          # and results.html is the study dashboard. web/ is self-contained -
-          # its committed tileset lives in web/data - so the 3D loads with no
-          # build step and no external request.
-          rm -rf _site/node_modules _site/dist
+          # and results.html is the study dashboard, both emitted by the build.
+          cp -r web/dist/. _site/
+          # The demo tileset is committed, not built, so it is copied in beside
+          # the bundle. It is what the published site draws when no service
+          # answers, which on Pages is always.
+          cp -r web/data _site/data
           test -f _site/results.html
           test -f _site/data/tileset.json
           if [ -d results ]; then
