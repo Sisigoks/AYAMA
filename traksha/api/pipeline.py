@@ -23,13 +23,15 @@ from ..core.types import (Config, ElevationSurface, GCP, Scene, StageEvent,
 from ..dsm.assemble import assemble
 from ..dsm.cog import write_cog, write_png_preview, write_rgb
 from ..measure.derive import slope_deg
+from ..semantics import instances as inst_mod
 from ..semantics.segment import class_fractions, segment
 from ..semantics.shadow import detect_shadow, quality_from_sun_elevation
 
 EventFn = Optional[Callable[[StageEvent], None]]
 
-STAGES = ("ingest", "depth", "segmentation", "shadow", "anchors", "calibration",
-          "uncertainty", "assemble", "artifacts", "validation")
+from ..api.phases import PIPELINE_PHASES
+
+STAGES = PIPELINE_PHASES
 
 
 @dataclass
@@ -258,6 +260,55 @@ def _fitted_scale(cfg, depth, dem_m):
     return float(value) if np.isfinite(value) and value > 0 else None
 
 
+def _segment_instances(cfg, scene, st):
+    """Structural instances, before depth. Returns (InstanceField, provenance).
+
+    This is the architectural change the rest of the work rests on: until now
+    nothing in the pipeline could tell one object from the next, so the mesh
+    welded every building to the ground and to its neighbours. SAM 2 runs first
+    because it needs only the image, and everything after it - depth
+    refinement, anchor harvesting, geometry - can be told where one structure
+    stops and another starts.
+
+    A failure here degrades the run rather than ending it. The reason is
+    recorded in the artifact and reported as a skipped stage, because a missing
+    segmentation is a documented degradation, not a corrupted result: every
+    consumer already has to handle an image with no instances in it.
+    """
+    setting = cfg.extras.get("instances", "auto")
+    if setting in (False, "off", "none", "no"):
+        return inst_mod.empty(scene.shape, "disabled by configuration"), "off"
+
+    from ..semantics.sam2 import DEFAULT_VARIANT, Sam2Segmenter, Sam2Unavailable
+
+    variant = DEFAULT_VARIANT if setting in (True, "auto", "on") else str(setting)
+    seg = Sam2Segmenter(
+        variant=variant,
+        points_per_side=int(cfg.extras.get("instance_points", 16)),
+        points_per_batch=int(cfg.extras.get("instance_batch", 16)),
+        pred_iou_thresh=float(cfg.extras.get("instance_iou", 0.55)),
+        stability_score_thresh=float(cfg.extras.get("instance_stability", 0.75)),
+        min_area_px=int(cfg.extras.get("instance_min_area", 64)),
+    )
+    try:
+        masks = seg.generate(scene.rgb, on_progress=lambda d, t: st.progress(d, t))
+    except Sam2Unavailable as exc:
+        return inst_mod.empty(scene.shape, str(exc)), f"unavailable: {exc}"
+    finally:
+        # The same discipline the depth backbone follows: release the weights
+        # the moment the output exists, or a four-scene study holds two models
+        # alive through every stage and dies on an allocation.
+        seg.unload()
+
+    field = inst_mod.from_masks(
+        masks, scene.shape,
+        provenance={"model": variant, "checkpoint": seg.checkpoint,
+                    "points_per_side": seg.points_per_side,
+                    "pred_iou_thresh": seg.pred_iou_thresh,
+                    "stability_score_thresh": seg.stability_score_thresh})
+    return field, f"sam2:{variant}"
+
+
 def run(
     image_path: str,
     cfg: Optional[Config] = None,
@@ -278,6 +329,13 @@ def run(
     with clock.stage("ingest") as st:
         scene = ingest(image_path)
         st.done(f"{scene.shape[1]} x {scene.shape[0]}  {scene.meta.describe()}")
+
+    # ---- structural instances (before depth, on purpose) -----------------
+    with clock.stage("instances", total=int(cfg.extras.get("instance_points", 16)) ** 2,
+                     unit="point") as st:
+        inst, inst_provenance = _segment_instances(cfg, scene, st)
+        st.done(f"{inst.count} instances, {inst.coverage * 100:.0f}% of the scene"
+                if inst.count else f"none ({inst.provenance.get('skipped', 'no masks')})")
 
     # ---- relative depth --------------------------------------------------
     total = n_chips(scene.shape, cfg.chip, cfg.overlap)
@@ -370,6 +428,8 @@ def run(
         "image": os.path.abspath(image_path),
         "backbone": depth.backbone,
         "segmentation": sem_provenance,
+        "instances": inst_provenance,
+        "instance_count": inst.count,
         "dem": dem_provenance,
         "tier": decision.tier.value,
         "chip": cfg.chip,
@@ -382,7 +442,7 @@ def run(
     if write_artifacts and out_dir:
         with clock.stage("artifacts") as st:
             res.artifacts = write_outputs(res.surface, scene, sem, shadow, depth.relative, out_dir,
-                                          provenance=res.provenance)
+                                          provenance=res.provenance, instances=inst)
             st.done(f"{len(res.artifacts)} files in {out_dir}")
 
     # ---- validation ------------------------------------------------------
@@ -401,7 +461,7 @@ def run(
 
 
 def write_outputs(surface, scene, sem, shadow, relative, out_dir: str,
-                  provenance: Optional[dict] = None) -> dict:
+                  provenance: Optional[dict] = None, instances=None) -> dict:
     os.makedirs(out_dir, exist_ok=True)
     meta = surface.meta
     tags = {f"TRAKSHA_{k.upper()}": str(v) for k, v in (provenance or {}).items()}
@@ -425,6 +485,13 @@ def write_outputs(surface, scene, sem, shadow, relative, out_dir: str,
                                          cmap="magma")
     art["ndsm_png"] = write_png_preview(os.path.join(out_dir, "ndsm.png"), surface.ndsm_m,
                                         cmap="viridis", vmin=0.0)
+    if instances is not None:
+        # Its own directory, because it is an artifact in its own right: the
+        # instance ids, the boundaries the geometry stage cuts along, the
+        # confidence, and the record of what produced each one.
+        art.update({f"instances_{k}": v for k, v in
+                    instances.save(os.path.join(out_dir, "segmentation"),
+                                   meta=meta).items()})
     if provenance:
         from ..core.jsonio import save_json
 

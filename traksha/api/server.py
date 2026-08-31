@@ -101,12 +101,15 @@ def create_app(jobs_root: str = "out/jobs", web_dir: Optional[str] = None,
         sun_azimuth: Optional[float] = Form(None),
         sun_elevation: Optional[float] = Form(None),
         mesh: bool = Form(False),
+        instances: str = Form("auto"),
+        instance_points: int = Form(16),
     ):
         data = await image.read()
         try:
             job = store.create(data, image.filename or "upload", {
                 "backbone": backbone, "chip": chip, "bootstrap": bootstrap,
                 "mesh": mesh,
+                "instances": instances, "instance_points": instance_points,
                 "sun_azimuth": sun_azimuth, "sun_elevation": sun_elevation,
             })
         except UploadRejected as exc:

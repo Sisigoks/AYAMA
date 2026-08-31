@@ -347,6 +347,8 @@ def cmd_build(args) -> int:
         extras={"batch_size": args.batch, "workers": args.workers,
                 "segmentation": "raster" if args.sem else "heuristic",
                 "segmentation_path": args.sem,
+                "instances": args.instances,
+                "instance_points": args.instance_points,
                 "scale_model": args.scale_model,
                 "dual_branch": args.scale_model not in ("off", "none", "no")},
     )
@@ -493,6 +495,8 @@ def cmd_run(args) -> int:
                 "workers": args.workers,
                 "segmentation": "raster" if args.sem else "heuristic",
                 "segmentation_path": args.sem,
+                "instances": args.instances,
+                "instance_points": args.instance_points,
                 "scale_model": args.scale_model,
                 "dual_branch": args.scale_model not in ("off", "none", "no")},
     )
@@ -880,6 +884,8 @@ def cmd_dataset(args) -> int:
                 backbone=args.backbone, chip=args.chip, n_bootstrap=args.bootstrap,
                 extras={"batch_size": args.batch,
                         "workers": args.workers,
+                        "instances": args.instances,
+                        "instance_points": args.instance_points,
                         "dual_branch": bool(args.dual_branch) or
                         args.scale_model not in ("off", "none", "no"),
                         "scale_model": args.scale_model},
@@ -1246,6 +1252,10 @@ def build_parser() -> argparse.ArgumentParser:
     pb.add_argument("--bootstrap", type=int, default=12)
     pb.add_argument("--stride", type=int, default=32)
     pb.add_argument("--lam", type=float, default=1.0)
+    pb.add_argument("--instances", default="auto",
+                    help="structural segmentation before depth: auto, off, or a SAM 2 variant (sam2-tiny|small|base|large)")
+    pb.add_argument("--instance-points", type=int, default=16,
+                    help="SAM 2 prompt grid per side; cost is quadratic in this")
     pb.add_argument("--scale-model", default="auto",
                     help="fitted structural scale: auto, off, a number, or a path")
     pb.add_argument("--tile", type=int, default=512)
@@ -1293,6 +1303,10 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--stride", type=int, default=32, help="AGMC lattice stride in pixels")
     pr.add_argument("--lam", type=float, default=1.0,
                     help="AGMC smoothness weight; results are flat over roughly 0.25-4")
+    pr.add_argument("--instances", default="auto",
+                   help="structural segmentation before depth: auto, off, or a SAM 2 variant (sam2-tiny|small|base|large)")
+    pr.add_argument("--instance-points", type=int, default=16,
+                   help="SAM 2 prompt grid per side; cost is quadratic in this")
     pr.add_argument("--scale-model", default="auto",
                     help="fitted structural scale: auto, off, a number, or a path")
     pr.add_argument("--json", default=None, help="write the run summary here")
@@ -1390,6 +1404,10 @@ def build_parser() -> argparse.ArgumentParser:
     pds.add_argument("--bootstrap", type=int, default=12)
     pds.add_argument("--batch", type=int, default=0)
     pds.add_argument("--workers", type=int, default=0)
+    pds.add_argument("--instances", default="auto",
+                    help="structural segmentation before depth: auto, off, or a SAM 2 variant (sam2-tiny|small|base|large)")
+    pds.add_argument("--instance-points", type=int, default=16,
+                    help="SAM 2 prompt grid per side; cost is quadratic in this")
     pds.add_argument("--scale-model", default="auto",
                      help="fitted structural scale: auto, off, a number, or a path")
     pds.add_argument("--resume", action="store_true",

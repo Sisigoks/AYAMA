@@ -101,14 +101,19 @@ def client(tmp_path_factory):
 
 
 def _run(client, scene, **form):
-    data = {"backbone": "dav2-vits", "chip": "256", "bootstrap": "3"}
+    # `instances: off` by default. These tests are about the service - the HTTP
+    # plumbing, the job lifecycle, the paths - and running a 73 M-parameter
+    # segmenter to check that a tileset is served costs a minute per test and
+    # tests nothing this file is responsible for. One test below turns it on.
+    data = {"backbone": "dav2-vits", "chip": "256", "bootstrap": "3",
+            "instances": "off"}
     data.update(form)
     with open(scene, "rb") as fh:
         r = client.post("/api/jobs", files={"image": ("s.tif", fh, "image/tiff")},
                         data=data)
     assert r.status_code == 202, r.text
     jid = r.json()["id"]
-    for _ in range(300):
+    for _ in range(600):
         job = client.get(f"/api/jobs/{jid}").json()
         if job["status"] in ("done", "failed"):
             return job
@@ -372,3 +377,25 @@ def test_a_job_left_running_by_a_crash_comes_back_failed(tmp_path):
     assert revived.status == "failed"
     assert "restart" in (revived.error or "")
     assert revived.public()["phase_status"] == "failed"
+
+
+@pytest.mark.slow
+def test_an_upload_can_run_structural_segmentation_and_serves_the_artifact(client, scene):
+    """The service path for SAM 2, end to end. Marked slow: it loads weights.
+
+    The rest of this file runs with `instances: off` because it is testing
+    HTTP, but the setting has to be reachable from an upload and the artifact
+    has to arrive on disk where the next stage will look for it.
+    """
+    job = _run(client, scene, instances="sam2-tiny", instance_points="4")
+    assert job["status"] == "done", job.get("error")
+    assert "instances" in [p["name"] for p in job["phases"]]
+
+    prov = job["summary"]["provenance"]
+    if str(prov.get("instances", "")).startswith("unavailable"):
+        pytest.skip(f"SAM 2 unavailable: {prov['instances']}")
+    assert prov["instances"] == "sam2:sam2-tiny"
+    assert prov["instance_count"] >= 1, "the stage ran but found nothing"
+
+    phase = next(p for p in job["phases"] if p["name"] == "instances")
+    assert phase["status"] == "done" and phase["duration_s"] > 0

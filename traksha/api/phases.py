@@ -36,6 +36,7 @@ from typing import Optional, Sequence
 # so the numbers stay legible as what they are.
 MEASURED_SECONDS = {
     "ingest": 0.26,
+    "instances": 48.6,
     "depth": 151.55,
     "segmentation": 0.57,
     "shadow": 0.21,
@@ -48,12 +49,14 @@ MEASURED_SECONDS = {
     "tiles": 20.83,
 }
 
-# The order a run executes in. `segmentation` follows `depth` today; when the
-# structural segmentation stage lands it moves ahead of it, and this tuple is
-# the one place that changes.
-PIPELINE_PHASES = ("ingest", "depth", "segmentation", "shadow", "anchors",
-                   "calibration", "uncertainty", "assemble", "artifacts",
-                   "validation")
+# The order a run executes in. `instances` is the structural segmentation and
+# runs before depth, which is the architectural change: everything after it can
+# be told where one object stops and the next begins. `segmentation` is the
+# older five-class colour raster, which the DEM anchor gate still reads and
+# which depends on nothing, so it stays where it was.
+PIPELINE_PHASES = ("ingest", "instances", "depth", "segmentation", "shadow",
+                   "anchors", "calibration", "uncertainty", "assemble",
+                   "artifacts", "validation")
 JOB_PHASES = PIPELINE_PHASES + ("tiles",)
 
 PENDING, RUNNING, DONE, FAILED, SKIPPED = (
@@ -63,6 +66,7 @@ TERMINAL = (DONE, FAILED, SKIPPED)
 # What each phase is doing, in words a reader who did not write it can use.
 DESCRIPTIONS = {
     "ingest": "Reading the image and its georeferencing",
+    "instances": "Finding structural instances with SAM 2",
     "depth": "Running the depth backbone over the image",
     "segmentation": "Classifying ground, road, building, vegetation, water",
     "shadow": "Detecting cast shadow",

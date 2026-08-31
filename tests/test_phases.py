@@ -43,7 +43,14 @@ def test_every_declared_phase_has_a_measured_weight():
 
 
 def test_overall_is_weighted_by_measured_duration_not_by_count():
-    """Depth is 80% of a run. Equal weights would make the bar a lie."""
+    """Depth dominates a run. Equal weights would make the bar a lie.
+
+    The expected figures are derived from the weight table rather than written
+    down, so adding a phase changes what this asserts instead of breaking it -
+    and the property under test, that the bar tracks time and not phase count,
+    is the thing that survives.
+    """
+    total = sum(MEASURED_SECONDS[n] for n in JOB_PHASES)
     p = JobProgress()
     p.begin("ingest")
     p.complete("ingest")
@@ -52,14 +59,16 @@ def test_overall_is_weighted_by_measured_duration_not_by_count():
     p.complete("depth")
     after_depth = p.overall()
 
+    assert after_ingest == pytest.approx(MEASURED_SECONDS["ingest"] / total, abs=1e-6)
     assert after_ingest < 0.01, f"ingest alone should be a sliver, got {after_ingest}"
-    assert after_depth > 0.75, f"depth should dominate, got {after_depth}"
-    # and one phase of eleven is nothing like one eleventh
-    assert abs(after_depth - 2 / len(JOB_PHASES)) > 0.5
+    assert after_depth > 0.5, f"depth should dominate, got {after_depth}"
+    # and the count-based figure is nowhere near it
+    assert abs(after_depth - 2 / len(JOB_PHASES)) > 0.3
 
 
 def test_progress_within_a_phase_moves_the_overall_figure():
     """Depth runs for minutes; without sub-progress the bar would stall there."""
+    total = sum(MEASURED_SECONDS[n] for n in JOB_PHASES)
     p = JobProgress()
     p.begin("ingest")
     p.complete("ingest")
@@ -67,7 +76,8 @@ def test_progress_within_a_phase_moves_the_overall_figure():
     at_zero = p.overall()
     p.advance("depth", 0.5)
     at_half = p.overall()
-    assert at_half - at_zero > 0.35
+    assert at_half - at_zero == pytest.approx(
+        0.5 * MEASURED_SECONDS["depth"] / total, abs=1e-6)
 
 
 def test_a_skipped_phase_leaves_the_denominator():

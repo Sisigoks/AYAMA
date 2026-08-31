@@ -316,6 +316,10 @@ class JobStore:
                             # with 33 m of it - which is the failure README
                             # section 3.2 describes, served to a user as if it
                             # were the product.
+                            # Structural segmentation, the same setting the
+                            # CLI exposes. `off` restores the pre-SAM 2 path.
+                            "instances": p.get("instances", "auto"),
+                            "instance_points": int(p.get("instance_points", 16)),
                             "scale_model": p.get("scale_model", "auto"),
                             "dual_branch": p.get("scale_model", "auto")
                             not in ("off", "none", "no")},

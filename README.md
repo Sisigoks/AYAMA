@@ -181,7 +181,52 @@ $$ H(p) = a(p) D(p) + b(p) $$
 
 The global-affine baseline is the special case $a(p) = a$, $b(p) = b$.
 
-## 1.2 Relative depth
+## 1.2 Structural segmentation
+
+SAM 2 [13] runs **before** depth, over the image alone, and produces the one
+thing the pipeline never had: instances. Until this stage existed the only
+structural knowledge in the system was a colour and texture heuristic with no
+instance ids and no confidence (§3.4), so nothing downstream could tell one
+building from the next — and the delivered mesh welded every building to the
+ground and to its neighbours because no edge in it corresponded to a structure.
+
+The model is loaded through `transformers`, which ships the official SAM 2
+architecture, so it uses the same Hugging Face path as the depth backbones.
+Automatic mask generation is **not** provided there and is implemented in
+`traksha/semantics/sam2.py`: a regular grid of point prompts, three candidate
+masks per point, filtering on the model's own predicted IoU and on a stability
+score, then NMS. The image is encoded once and every prompt batch reuses the
+embedding; re-encoding per batch would spend the stage's whole budget on the
+part of the model that does not depend on the prompt.
+
+**The thresholds favour recall, on purpose.** SAM 2 is class-agnostic — it
+segments roads, courtyards and shadows as readily as roofs — so this stage
+cannot and does not decide what a building is. That decision needs height, and
+height does not exist until Chhaya has run. The precision filter is therefore
+downstream, which means a false instance here is cheap and a missed one is not.
+
+**Model selection was measured, not assumed** (`scripts/bench_segmentation.py`).
+Scoring against the lidar nDSM — of the pixels carrying more than 2.5 m of real
+structure, how many does some mask cover — over three swisstopo city scenes:
+
+| variant | params | generate | built recall | precision |
+|---|---|---|---|---|
+| `sam2-tiny` | 31.4 M | 59 s | 50.9 % | 52.8 % |
+| **`sam2-base`** | **73.3 M** | **58 s** | **73.0 %** | **57.0 %** |
+
+Base wins on every scene, by 22 points on average, for no measurable extra
+generation time — the point grid, not the encoder, is what this stage spends its
+time on. Taking the smallest model would have cost a fifth of the structure the
+rest of the pipeline exists to reconstruct. It is the default; `--instances off`
+restores the previous behaviour, and the artifact records which was used.
+
+The stage costs 48.6 s at 1024 px with a 16×16 grid on the reference CPU, of
+which 15.7 s is loading weights. Its output is written as an artifact in its own
+right — `segmentation/instances.tif`, `boundary.tif`, `confidence.tif` and
+`metadata.json` — because every stage after it reads the instance ids, and the
+boundary map is what the geometry stage will cut along.
+
+## 1.3 Relative depth
 
 Depth Anything V2 [1] is run tiled — one of six selectable backbones, all frozen and pretrained (§2.1). Three steps make the mosaic usable:
 per-chip **rank normalisation** (the backbone's per-image scale is arbitrary, so
@@ -194,7 +239,7 @@ Sign convention, stated once: the backbone returns higher values for surfaces
 closer to the sensor; from nadir, closer means higher, so $D$ maps monotonically
 to height. There is no flip anywhere in the pipeline.
 
-## 1.3 Anchors: absolute and relative
+## 1.4 Anchors: absolute and relative
 
 An anchor is a statement about the world in metres, with a confidence weight.
 
@@ -232,7 +277,7 @@ where $p_k$ is the roof and $q_k$ a reference pixel at the building's foot.
 Collapsing this into an absolute constraint is how a good height anchor silently
 becomes a bad datum anchor.
 
-## 1.4 AGMC: the optimisation problem
+## 1.5 AGMC: the optimisation problem
 
 The fields are discretised on a lattice of stride 32 px, with each anchor spread
 bilinearly over its four surrounding nodes ($\sum_j \beta_j = 1$). With $m$
@@ -281,7 +326,7 @@ where the failure in §4 occurs.
 **Hyperparameters as run.** $\lambda_a = \lambda_b = 1.0$, $\lambda_p = 0.05$,
 $\delta = 2.0$ m, 3 IRLS iterations, lattice stride 32 px, $a_{\min} = 0.05$.
 
-## 1.5 Uncertainty
+## 1.6 Uncertainty
 
 Three independent terms in quadrature:
 
@@ -296,7 +341,7 @@ $\sigma_{\text{model}}$ is the spread between backbones ($\tfrac{1}{2}|s_1-s_2|$
 for two). $\sigma_{\text{ref}}$ is the auxiliary DEM's datasheet 1σ as a constant
 field (3.0 m for Copernicus GLO-30 [4]).
 
-## 1.6 Frequency-separated calibration, and the one fitted number
+## 1.7 Frequency-separated calibration, and the one fitted number
 
 Derived from §4 and evaluated end to end in §5. Decompose depth with a Gaussian
 of radius ≈ 60 m and scale only the high band:
@@ -1008,7 +1053,7 @@ DEM with an uncertainty field that does not know it is wrong.
 
 H2 splits the depth field by spatial frequency so terrain and structure can be
 scaled separately: `D = D_lo + D_hi`, `H = b(p) + a(p)·D_hi(p)`, with terrain
-anchors constraining `b` and object anchors constraining `a` (§1.6). §4.2 is
+anchors constraining `b` and object anchors constraining `a` (§1.7). §4.2 is
 precisely the condition it was designed for.
 
 ## 5.1 H2 alone does not work, and the reason is not the split
@@ -1577,6 +1622,14 @@ finding.
     Fusion Contest: Large-Scale Semantic 3D Reconstruction* (DFC2019 / US3D).
     IEEE GRSM, 2019. — the satellite benchmark this project supports but has
     not run.
+
+[13] N. Ravi, V. Gabeur, Y.-T. Hu, R. Hu, C. Ryali, T. Ma, H. Khedr, R. Rädle,
+    C. Rolland, L. Gustafson, E. Mintun, J. Pan, K. V. Alwala, N. Carion,
+    C.-Y. Wu, R. Girshick, P. Dollár, C. Feichtenhofer. *SAM 2: Segment
+    Anything in Images and Videos*. Meta AI, 2024.
+    https://github.com/facebookresearch/sam2 — used through the `transformers`
+    port of the official architecture; the automatic mask generator is
+    reimplemented here because that port does not ship one.
 
 ---
 
