@@ -237,9 +237,34 @@ export function Progress({ job, onCancel }) {
 }
 
 
+/* Shown when nothing answered on /api/health.
+ *
+ * The viewer falls back to the tileset committed at web/data, which is correct
+ * on GitHub Pages where there is no backend and correct in development where
+ * the service simply has not been started. What is not correct is looking
+ * identical in both cases: a reader who wants to upload an image needs to know
+ * that the scene on screen is a bundled demo and that reconstruction needs a
+ * process nobody started.
+ */
+function OfflineNote() {
+  return (
+    <div className="note warn">
+      <b>Demo scene — no pipeline service</b>
+      <span>
+        Nothing answered on <code>/api/health</code>, so this is the tileset
+        committed at <code>web/data</code>, not a reconstruction. Uploading an
+        image needs the Python service: run <code>npm run dev</code>, which
+        starts both halves, or{' '}
+        <code>python -m traksha.cli serve --port 8000</code> beside the UI.
+      </span>
+    </div>
+  );
+}
+
 export function SidePanel(p) {
   const { manifest: m, base, layer, setLayer, lod, setLod, exagg, setExagg,
-          shade, setShade, fog, setFog, wire, setWire, flying, onFly, readout } = p;
+          shade, setShade, fog, setFog, wire, setWire, flying, onFly, readout,
+          offline } = p;
   const g = m.grid || {};
   const layers = LAYERS.filter((l) => m.layers && m.layers[l.id]);
   const active = LAYERS.find((l) => l.id === layer);
@@ -250,6 +275,7 @@ export function SidePanel(p) {
 
   return (
     <aside className="side">
+      {offline ? <OfflineNote /> : null}
       <Notes notes={m.notes} />
 
       <Panel title="Layer" note={active ? active.note : null}>

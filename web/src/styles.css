@@ -107,6 +107,9 @@ button.wide.on, button.on { background: var(--accent); border-color: var(--accen
 .note b { font-size: .78rem; letter-spacing: .04em; text-transform: uppercase; }
 .note.critical { border-left-color: var(--bad); }
 .note.critical b { color: var(--bad); }
+.note.warn { border-left-color: var(--warn); }
+.note.warn b { color: var(--warn); }
+.note code { font: .78rem var(--mono); color: var(--ink-2); }
 .note.warning { border-left-color: var(--warn); }
 .note.warning b { color: var(--warn); }
 .note.info { border-left-color: var(--ink-3); }

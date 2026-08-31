@@ -130,14 +130,17 @@ export default function App() {
   const [stats, setStats] = useState({ triangles: 0, lod: null });
   const [readout, setReadout] = useState(null);
   const [backbones, setBackbones] = useState(null);
+  // null while unknown, then true/false. Drives the one thing a viewer with no
+  // service behind it must not do: look identical to one that has a service.
+  const [service, setService] = useState(null);
 
   const job = useJob(manifest ? '' : jobId);
 
   useEffect(() => {
     fetch('api/health')
-      .then((r) => r.json())
-      .then((d) => d.backbones && setBackbones(d.backbones))
-      .catch(() => {});
+      .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
+      .then((d) => { setService(true); if (d.backbones) setBackbones(d.backbones); })
+      .catch(() => setService(false));
   }, []);
 
   /* Where a tileset comes from depends on how the page is being served, and
@@ -217,6 +220,7 @@ export default function App() {
             onFlying={setFlying}
           />
           <SidePanel
+            offline={service === false && !jobId}
             manifest={manifest} base={base}
             layer={layer} setLayer={setLayer} lod={lod} setLod={setLod}
             exagg={exagg} setExagg={setExagg} shade={shade} setShade={setShade}

@@ -5,7 +5,8 @@
   "type": "module",
   "description": "TRAKSHA front end: upload a nadir image, watch it reconstruct, inspect the metric surface in 3D.",
   "scripts": {
-    "dev": "vite",
+    "dev": "node dev.mjs",
+    "dev:ui": "vite",
     "build": "vite build",
     "preview": "vite preview",
     "check": "node ../scripts/check_app.mjs"

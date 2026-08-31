@@ -1475,18 +1475,30 @@ python -m traksha.cli serve              # http://127.0.0.1:8000
 ```
 
 `serve` serves `web/dist`, and says so rather than serving a blank page if the
-build is missing. While working on the front end, run the two halves side by
-side instead — the reconstruction is Python and cannot move into the browser:
+build is missing.
+
+While working on the front end, one command starts both halves — the
+reconstruction is Python and cannot move into the browser, so development needs
+two processes:
 
 ```bash
-python -m traksha.cli serve       # :8000, the pipeline
-cd web && npm run dev             # :5173, the UI  <- open this one
+npm install --prefix web     # once
+npm run dev                  # :5173, and the pipeline on :8000  <- open this one
 ```
 
-Vite proxies `/api` and `/data` to the service and serves `results/` from the
-repository root, so both pages work under `npm run dev` with hot reload, and
-every fetch in the app stays a relative path that does not care which server
-answered.
+`npm run dev` starts `python -m traksha.cli serve` alongside Vite, adopting a
+service already listening on :8000 rather than duplicating it. Starting only
+Vite (`npm run dev:ui`) is the obvious mistake and it used to fail in the least
+helpful way available: the page loaded, and the terminal filled with a Node
+stack trace per health poll saying `ECONNREFUSED 127.0.0.1:8000` — what happened
+but not what to do. That is now one line naming the command, the proxy answers
+503 instead of hanging, and the viewer falls back to the tileset committed at
+`web/data` with a note saying so, which is the same thing the published site
+does and for the same reason.
+
+Vite proxies `/api` to the service and serves `results/` from the repository
+root; `web/data` is a static file it already serves. Every fetch in the app is a
+relative path, so nothing in the front end needs to know which server answered.
 
 A 384 px upload takes about 20 s on the reference CPU and returns a tileset the
 viewer loads plus `surface.obj` + `.mtl` + `.jpg` to download. It runs the same

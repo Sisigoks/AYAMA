@@ -1,0 +1,11 @@
+{
+  "name": "traksha",
+  "private": true,
+  "description": "Convenience scripts so `npm run dev` works from the repository root as well as from web/.",
+  "scripts": {
+    "dev": "npm --prefix web run dev",
+    "build": "npm --prefix web run build",
+    "install:web": "npm --prefix web install",
+    "check": "node scripts/check_app.mjs && node scripts/check_site.mjs"
+  }
+}
