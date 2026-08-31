@@ -333,7 +333,13 @@ export function SidePanel(p) {
       <Panel title="Provenance">
         <div className="kv">
           <Row k="backbone" v={prov.backbone || '–'} />
-          <Row k="segmentation" v={prov.segmentation || '–'} />
+          <Row k="semantics" v={prov.segmentation || '–'} />
+          {/* The structural segmentation, which is a different thing from the
+              five-class semantics above: SAM 2 supplies instances, not classes. */}
+          <Row k="instances" v={
+            !prov.instances || prov.instances === 'off'
+              ? 'off'
+              : `${prov.instances.replace('sam2:', '')} · ${prov.instance_count ?? '–'}`} />
           <Row k="DEM" v={prov.dem || 'none'} />
           <Row k="tier" v={prov.tier || '–'} />
         </div>
