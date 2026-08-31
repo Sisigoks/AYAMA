@@ -159,33 +159,83 @@ export function Upload({ onStarted, backbones }) {
   );
 }
 
+/* The reconstruction screen.
+ *
+ * Everything drawn here is read from the job record the backend sends; nothing
+ * is interpolated, estimated or animated forward on a timer. The overall figure
+ * is weighted by measured stage duration (traksha/api/phases.py), which matters
+ * because depth is 80% of a run: with equal weights the bar would reach 10% and
+ * then stand still for two and a half minutes, and a bar that stands still is
+ * indistinguishable from one that has died.
+ */
+const PHASE_ICON = { done: '✓', failed: '×', skipped: '–' };
+
+function Bar({ value, tone }) {
+  const pct = Math.max(0, Math.min(1, value || 0)) * 100;
+  return (
+    <div className={`bar${tone ? ' ' + tone : ''}`}>
+      <span style={{ width: `${pct}%` }} />
+    </div>
+  );
+}
+
 export function Progress({ job, onCancel }) {
-  const stages = job.stages || [];
-  const done = new Set((job.done_stages || []).map(String));
+  const phases = job.phases || [];
+  const failed = job.status === 'failed';
+  const overall = failed ? job.progress || 0 : (job.status === 'done' ? 1 : job.progress || 0);
+
   return (
     <div className="progress">
       <h2>Reconstructing</h2>
       <p className="note-sm">
         The pipeline runs server-side, one scene at a time. A 1024 px image is a
-        couple of minutes on CPU.
+        couple of minutes on CPU, nearly all of it depth.
       </p>
+
+      <div className="overall">
+        <div className="pct">{Math.round(overall * 100)}%</div>
+        <Bar value={overall} tone={failed ? 'bad' : null} />
+      </div>
+
+      {job.phase && !failed ? (
+        <div className="current">
+          <div className="hd">
+            <span className="nm">{job.phase}</span>
+            <span className="dt">{Math.round((job.phase_progress || 0) * 100)}%</span>
+          </div>
+          <Bar value={job.phase_progress} />
+          {job.message ? <p className="msg">{job.message}</p> : null}
+        </div>
+      ) : null}
+
       <ol className="stages">
-        {stages.map((s) => {
-          const state = done.has(s) ? 'done' : job.stage === s ? 'active' : 'todo';
-          return (
-            <li key={s} className={state}>
-              <span className="dot" />
-              <span className="nm">{s}</span>
-              {job.stage === s && job.detail ? <span className="dt">{job.detail}</span> : null}
-            </li>
-          );
-        })}
+        {phases.map((p) => (
+          <li key={p.name} className={p.status}>
+            <span className="dot" />
+            <span className="nm">{p.name}</span>
+            {p.status === 'running' && p.message ? (
+              <span className="dt">{p.message}</span>
+            ) : (
+              <span className="dt">
+                {PHASE_ICON[p.status] || ''}
+                {p.duration_s != null && p.status === 'done' ? ` ${p.duration_s}s` : ''}
+              </span>
+            )}
+          </li>
+        ))}
       </ol>
-      {job.error ? <div className="note critical"><b>Failed</b><span>{job.error}</span></div> : null}
+
+      {job.error ? (
+        <div className="note critical">
+          <b>Failed{job.phase ? ` during ${job.phase}` : ''}</b>
+          <span>{job.error}</span>
+        </div>
+      ) : null}
       <button className="ghost" onClick={onCancel}>Start over</button>
     </div>
   );
 }
+
 
 export function SidePanel(p) {
   const { manifest: m, base, layer, setLayer, lod, setLod, exagg, setExagg,

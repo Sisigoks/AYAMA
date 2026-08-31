@@ -157,9 +157,11 @@ def test_progress_events_stream_and_terminate(client, scene):
     with client.stream("GET", f"/api/jobs/{job['id']}/events") as r:
         assert r.status_code == 200
         body = "".join(r.iter_text())
-    assert "event: stage" in body
+    assert "event: progress" in body
     assert "event: end" in body
-    assert '"stage": "depth"' in body
+    # The frame carries the phase record, which is what the screen draws.
+    assert '"name": "depth"' in body
+    assert '"progress": 1.0' in body
 
 
 def test_http_rejections_are_readable(client):
@@ -250,3 +252,123 @@ def test_an_upload_comes_back_with_relief_not_a_flat_sheet(client):
     assert mesh and mesh["triangles"] > 1000
     for key in ("obj", "mtl", "texture"):
         assert client.get(f"/api/jobs/{jid}/tiles/{mesh[key]}").status_code == 200
+
+
+# --------------------------------------------------------------- progress
+# The progress screen reported nothing at all: the server framed every message
+# as a named SSE event that the client's `onmessage` could not receive, and the
+# poll fallback returned a job record with no current phase in it. Both halves
+# are pinned here. See docs/ARCHITECTURE.md section 2.1.
+def test_the_poll_endpoint_carries_the_phase_while_the_job_runs(tmp_path):
+    """The defect: `GET /api/jobs/{id}` used to answer `stage: null` throughout."""
+    from fastapi.testclient import TestClient
+
+    from traksha.api.server import create_app
+
+    c = TestClient(create_app(jobs_root=str(tmp_path)))
+    r = c.post("/api/jobs", files={"image": ("a.png", PNG, "image/png")},
+               data={"backbone": "dav2-vits"})
+    body = c.get(f"/api/jobs/{r.json()['id']}").json()
+
+    for key in ("phase", "phase_status", "phase_progress", "progress", "phases"):
+        assert key in body, f"the poll response has no '{key}'"
+    assert isinstance(body["phases"], list) and body["phases"]
+    assert {p["name"] for p in body["phases"]} >= {"ingest", "depth", "tiles"}
+    assert 0.0 <= body["progress"] <= 1.0
+
+
+def test_the_sse_frames_are_named_what_the_client_listens_for(tmp_path):
+    """A named frame never reaches `EventSource.onmessage`.
+
+    This is the whole bug, and it is a contract between two languages that
+    nothing else in the suite would notice breaking: the server can rename a
+    frame and every Python test still passes while the page goes blank.
+    """
+    import re
+
+    from fastapi.testclient import TestClient
+
+    from traksha.api.server import SSE_EVENTS, create_app
+
+    c = TestClient(create_app(jobs_root=str(tmp_path)))
+    r = c.post("/api/jobs", files={"image": ("a.png", PNG, "image/png")},
+               data={"backbone": "dav2-vits"})
+    job_id = r.json()["id"]
+
+    lines = []
+    with c.stream("GET", f"/api/jobs/{job_id}/events") as s:
+        for line in s.iter_lines():
+            lines.append(line)
+            if len(lines) > 60 or line.startswith("event: end"):
+                break
+
+    on_wire = {ln.split("event: ", 1)[1] for ln in lines if ln.startswith("event: ")}
+    assert on_wire, "the stream sent no named frames"
+    assert on_wire <= set(SSE_EVENTS), f"undeclared frame names: {on_wire - set(SSE_EVENTS)}"
+
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    app_jsx = open(os.path.join(root, "web", "src", "App.jsx"), encoding="utf-8").read()
+    listened = set(re.findall(r"addEventListener\('([\w-]+)'", app_jsx))
+    assert on_wire <= listened, (
+        f"the server sends {sorted(on_wire)} but the client listens for "
+        f"{sorted(listened)}; frames the client does not name are discarded")
+    assert "es.onmessage" not in app_jsx, (
+        "onmessage only fires for unnamed frames - this is the original bug")
+
+
+def test_a_frame_is_the_whole_state_so_a_late_client_is_correct(tmp_path):
+    import json
+
+    from fastapi.testclient import TestClient
+
+    from traksha.api.server import create_app
+
+    c = TestClient(create_app(jobs_root=str(tmp_path)))
+    r = c.post("/api/jobs", files={"image": ("a.png", PNG, "image/png")},
+               data={"backbone": "dav2-vits"})
+    with c.stream("GET", f"/api/jobs/{r.json()['id']}/events") as s:
+        payload = None
+        for line in s.iter_lines():
+            if line.startswith("data: "):
+                payload = json.loads(line[6:])
+                break
+    assert payload is not None, "the stream sent no data frame"
+    for key in ("id", "status", "phase", "progress", "phases"):
+        assert key in payload, f"a frame with no '{key}' cannot stand alone"
+
+
+# -------------------------------------------------------------- recovery
+def test_jobs_are_adopted_from_disk_when_the_store_restarts(tmp_path):
+    store = JobStore(str(tmp_path))
+    job = store.create(PNG, "a.png", {"backbone": "dav2-vits"})
+    job._done.wait(timeout=60)
+
+    fresh = JobStore(str(tmp_path))
+    assert fresh.get(job.id) is not None, "a restart lost a completed job"
+    assert fresh.get(job.id).public()["phases"], "the phase record did not survive"
+
+
+def test_a_job_left_running_by_a_crash_comes_back_failed(tmp_path):
+    """A job that reports `running` forever is indistinguishable from a hang."""
+    import json
+
+    store = JobStore(str(tmp_path))
+    job = store.create(PNG, "a.png", {"backbone": "dav2-vits"})
+    job._done.wait(timeout=60)
+
+    # Rewrite the record the way a killed process would leave it.
+    with open(job.state_path(), encoding="utf-8") as fh:
+        rec = json.load(fh)
+    rec["status"] = "running"
+    rec["finished"] = None
+    rec["error"] = None
+    rec["progress"]["current"] = "depth"
+    for p in rec["progress"]["phases"]:
+        p["status"] = "running" if p["name"] == "depth" else "pending"
+    with open(job.state_path(), "w", encoding="utf-8") as fh:
+        json.dump(rec, fh)
+
+    revived = JobStore(str(tmp_path)).get(job.id)
+    assert revived.status == "failed"
+    assert "restart" in (revived.error or "")
+    assert revived.public()["phase_status"] == "failed"

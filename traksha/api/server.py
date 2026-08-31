@@ -64,6 +64,11 @@ MISSING_BUILD = (
 )
 
 
+# The SSE frame names a client must listen for. Named frames never reach
+# `EventSource.onmessage`; see job_events below.
+SSE_EVENTS = ("progress", "end")
+
+
 def create_app(jobs_root: str = "out/jobs", web_dir: Optional[str] = None,
                max_concurrent: int = 1):
     """Build the FastAPI app. Imported lazily so the core install stays thin."""
@@ -121,28 +126,48 @@ def create_app(jobs_root: str = "out/jobs", web_dir: Optional[str] = None,
 
     @app.get("/api/jobs/{job_id}/events")
     async def job_events(job_id: str):
-        """Server-sent events: one message per StageEvent, then a final state.
+        """Server-sent events: the whole job state, whenever it changes.
 
-        Polling would work and would be simpler, but the pipeline's stages are
-        the interesting part of a two-minute wait - a progress bar that names
-        `anchors` and then `calibration` is the difference between a wait and a
-        black box.
+        Each frame is the complete public record - phase, phase progress,
+        weighted overall, every phase's status - and not a delta. Last frame
+        wins, so a client that connects late, reconnects or drops a frame is
+        immediately correct, and one renderer draws both a poll response and a
+        stream frame.
+
+        The frames are named `progress` and `end`, and `SSE_EVENTS` is the
+        contract: `EventSource.onmessage` fires only for *unnamed* frames, so a
+        client must `addEventListener` for exactly these names. Getting that
+        wrong is what made the old progress screen render nothing at all while
+        the server dutifully sent every event (docs/ARCHITECTURE.md 2.1), and a
+        test now holds the two halves together.
         """
         job = store.get(job_id)
         if job is None:
             raise HTTPException(404, "no such job")
 
         async def stream():
-            sent = 0
+            # An immediate frame, so a page that connects mid-run paints at
+            # once instead of waiting for the next transition.
+            last = job.public()
+            yield f"event: progress\ndata: {json.dumps(last)}\n\n"
+            idle = 0.0
             while True:
-                while sent < len(job.events):
-                    ev = job.events[sent]
-                    sent += 1
-                    yield f"event: stage\ndata: {json.dumps(ev)}\n\n"
-                if job.status in ("done", "failed") and sent >= len(job.events):
-                    yield f"event: end\ndata: {json.dumps(job.public())}\n\n"
+                state = job.public()
+                if state != last:
+                    last = state
+                    idle = 0.0
+                    yield f"event: progress\ndata: {json.dumps(state)}\n\n"
+                if job.status in ("done", "failed"):
+                    yield f"event: end\ndata: {json.dumps(state)}\n\n"
                     return
                 await asyncio.sleep(0.25)
+                idle += 0.25
+                # A comment frame keeps intermediaries from dropping an idle
+                # connection during depth, which is 80% of the run and can go a
+                # long time between chips.
+                if idle >= 15.0:
+                    idle = 0.0
+                    yield ": keepalive\n\n"
 
         return StreamingResponse(stream(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache",

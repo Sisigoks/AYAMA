@@ -21,31 +21,48 @@ function useJob(id) {
     if (!id) return undefined;
     let live = true;
     let es = null;
-    const done = new Set();
+
+    /* Every frame - streamed or polled - is the whole job record, so applying
+     * one is a replacement rather than a merge. The two guards are what keep a
+     * late poll response from undoing a fresher stream frame: a finished job
+     * never un-finishes, and the overall figure never goes backwards. A bar
+     * that retreats tells the reader the number is invented. */
+    const apply = (d) => {
+      if (!live || !d) return;
+      setJob((prev) => {
+        if (!prev) return d;
+        const over = (j) => (j.status === 'done' || j.status === 'failed');
+        if (over(prev) && !over(d)) return prev;
+        if (!over(d) && (d.progress || 0) < (prev.progress || 0)) return prev;
+        return d;
+      });
+    };
 
     const poll = async () => {
       try {
         const r = await fetch(`api/jobs/${id}`, { cache: 'no-store' });
-        if (!r.ok || !live) return;
-        const j = await r.json();
-        setJob((prev) => ({ ...j, done_stages: [...done], stage: (prev && prev.stage) || j.stage }));
+        if (r.ok) apply(await r.json());
       } catch { /* transient; the interval retries */ }
     };
 
+    /* addEventListener, not onmessage. The server names its frames, and
+     * `onmessage` fires only for unnamed ones - which is why this screen used
+     * to render nothing at all while the server sent every event. The names
+     * are SSE_EVENTS in traksha/api/server.py and a test pins them together. */
     try {
       es = new EventSource(`api/jobs/${id}/events`);
-      es.onmessage = (ev) => {
-        if (!live) return;
+      const onFrame = (ev) => {
         let d;
         try { d = JSON.parse(ev.data); } catch { return; }
-        if (d.stage) done.add(d.stage);
-        setJob((prev) => ({ ...(prev || {}), ...d, done_stages: [...done] }));
+        apply(d);
       };
-      es.onerror = () => { /* polling carries it */ };
+      es.addEventListener('progress', onFrame);
+      es.addEventListener('end', onFrame);
+      es.onerror = () => { /* the poll carries it */ };
     } catch { es = null; }
 
     poll();
-    const t = setInterval(poll, 1500);
+    const t = setInterval(poll, 4000);
     return () => { live = false; clearInterval(t); if (es) es.close(); };
   }, [id]);
   return job;
