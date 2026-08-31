@@ -368,6 +368,15 @@ def _structural_mesh(run: dict, mdir: str, out_dir: str, dsm, gsd: float,
                 if k in ("obj", "mtl") else v) for k, v in info.items()}
     info["quality"] = mesh_report(mesh)
     info["buildings_detail"] = mesh.get("buildings", [])
+
+    # And a browser-sized copy beside the tileset. Without it every structural
+    # improvement is invisible on the site: the viewer draws height tiles, and
+    # a height field cannot represent a wall.
+    from . import webmesh
+
+    web = webmesh.build_web_mesh(dsm, ndsm, field, run.get("sem"), gsd)
+    info["web"] = webmesh.write(os.path.join(out_dir, "structural.bin"), web,
+                                web["grid"], web["gsd_m"])
     return info
 
 

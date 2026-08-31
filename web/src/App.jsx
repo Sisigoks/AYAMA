@@ -69,7 +69,8 @@ function useJob(id) {
 }
 
 function Viewer({ manifest, base, layer, lod, exagg, shade, fog, wire,
-                  onStats, onReadout, onFlying, flyNonce }) {
+                  onStats, onReadout, onFlying, flyNonce,
+                  structural, onStructuralReady }) {
   const ref = useRef(null);
   const api = useRef(null);
   const [err, setErr] = useState('');
@@ -79,7 +80,9 @@ function Viewer({ manifest, base, layer, lod, exagg, shade, fog, wire,
     const v = createViewer(ref.current, { onPick: onReadout, onStats, onTour: onFlying });
     if (!v) { setErr('This browser reports no WebGL context.'); return undefined; }
     api.current = v;
-    v.load(manifest, base).catch((e) => setErr(String(e.message || e)));
+    v.load(manifest, base)
+      .then(() => onStructuralReady?.(v.hasStructural()))
+      .catch((e) => setErr(String(e.message || e)));
     return () => { v.dispose(); api.current = null; };
   }, [manifest, base]);
 
@@ -89,6 +92,13 @@ function Viewer({ manifest, base, layer, lod, exagg, shade, fog, wire,
   useEffect(() => { api.current?.setShade(shade); }, [shade]);
   useEffect(() => { api.current?.setFog(fog); }, [fog]);
   useEffect(() => { api.current?.setWire(wire); }, [wire]);
+  useEffect(() => {
+    // Several megabytes, fetched on first use. A failure here is reported
+    // rather than swallowed: silently showing the height field while the
+    // control says "structural" is the kind of lie this project avoids.
+    api.current?.setStructural(structural)
+      .catch((e) => setErr(String(e.message || e)));
+  }, [structural]);
   useEffect(() => {
     if (!flyNonce || !api.current) return;
     api.current.flying() ? api.current.stopFly() : api.current.fly();
@@ -125,6 +135,10 @@ export default function App() {
   const [shade, setShade] = useState(true);
   const [fog, setFog] = useState(true);
   const [wire, setWire] = useState(false);
+  // The height field or the structural rebuild. Two different meshes, not
+  // two styles: a height field has one z per (x, y) and cannot show a wall.
+  const [structural, setStructural] = useState(false);
+  const [hasStructural, setHasStructural] = useState(false);
   const [flying, setFlying] = useState(false);
   const [flyNonce, setFlyNonce] = useState(0);
   const [stats, setStats] = useState({ triangles: 0, lod: null });
@@ -215,6 +229,7 @@ export default function App() {
           <Viewer
             manifest={manifest} base={base} layer={layer} lod={lod} exagg={exagg}
             shade={shade} fog={fog} wire={wire} flyNonce={flyNonce}
+            structural={structural} onStructuralReady={setHasStructural}
             onStats={(tris, l) => setStats({ triangles: tris, lod: l })}
             onReadout={setReadout}
             onFlying={setFlying}
@@ -225,6 +240,8 @@ export default function App() {
             layer={layer} setLayer={setLayer} lod={lod} setLod={setLod}
             exagg={exagg} setExagg={setExagg} shade={shade} setShade={setShade}
             fog={fog} setFog={setFog} wire={wire} setWire={setWire}
+            structural={structural} setStructural={setStructural}
+            hasStructural={hasStructural}
             flying={flying} onFly={() => setFlyNonce((n) => n + 1)} readout={readout}
           />
         </div>

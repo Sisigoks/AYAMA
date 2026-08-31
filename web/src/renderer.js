@@ -194,6 +194,7 @@ var VERT = [
   'attribute vec2 aPos;',
   'attribute float aH;',
   'attribute vec2 aUV;',
+  'attribute vec3 aN;',
   'uniform mat4 uMVP;',
   'uniform float uExagg;',
   'uniform float uZBase;',
@@ -201,8 +202,13 @@ var VERT = [
   'varying vec2 vUV;',
   'varying float vDist;',
   'varying float vHeight;',
+  'varying vec3 vN;',
   'void main() {',
   '  vUV = aUV;',
+  '  // Scaling z by uExagg tilts every surface, so the normal transforms by',
+  '  // the inverse transpose - for diag(1,1,e) that is diag(1,1,1/e). A wall',
+  '  // has nz = 0 and therefore correctly stays vertical.',
+  '  vN = normalize(vec3(aN.x, aN.y, aN.z / max(uExagg, 1e-3)));',
   '  float z = (aH - uZBase) * uExagg;',
   '  vec3 world = vec3(aPos.x, aPos.y, z);',
   '  vDist = length(world - uEye);',
@@ -224,9 +230,15 @@ var FRAG = [
   'uniform float uFog;',
   'uniform float uTexel;',
   'uniform float uRelief;',
+  'uniform float uVertexNormal;',
+  'varying vec3 vN;',
   'void main() {',
   '  vec3 base = texture2D(uTex, vUV).rgb;',
-  '  vec3 n = normalize(texture2D(uNrm, vUV).rgb * 2.0 - 1.0);',
+  '  // A normal map is indexed by (u, v), and a wall shares its UV with the',
+  '  // pavement under it - so a facade would shade as though it were ground.',
+  '  // A mesh that carries per-vertex normals overrides the map.',
+  '  vec3 n = mix(normalize(texture2D(uNrm, vUV).rgb * 2.0 - 1.0),',
+  '               normalize(vN), uVertexNormal);',
   '',
   '  // direct sun',
   '  float lam = max(dot(n, normalize(uLight)), 0.0);',
@@ -242,7 +254,7 @@ var FRAG = [
   '  vec3 ny0 = texture2D(uNrm, vUV - vec2(0.0, uTexel)).rgb * 2.0 - 1.0;',
   '  vec3 ny1 = texture2D(uNrm, vUV + vec2(0.0, uTexel)).rgb * 2.0 - 1.0;',
   '  float curv = (dot(normalize(nx0 + nx1 + ny0 + ny1), n) - 1.0);',
-  '  float ao = clamp(1.0 + curv * 2.4, 0.35, 1.0);',
+  '  float ao = mix(clamp(1.0 + curv * 2.4, 0.35, 1.0), 1.0, uVertexNormal);',
   '',
   '  vec3 lit = base * (hemi * ao + vec3(0.85) * lam);',
   '  vec3 c = mix(base, lit, uShade);',
@@ -342,7 +354,8 @@ var state = {
   layer: 'texture', exagg: 1, shade: true, wire: false, fog: true,
   fly: null,
   cam: { az: -0.6, el: 0.85, dist: 900, target: [0, 0, 0] },
-  zBase: 0, centre: [0, 0], uintIndex: false, needsDraw: true, fps: 0
+  zBase: 0, centre: [0, 0], uintIndex: false, needsDraw: true, fps: 0,
+  structural: null, showStructural: false
 };
 
 function sliderToExagg(v) {           // 0..300 -> 1..200, log-ish and smooth
@@ -400,7 +413,8 @@ function viewProj(aspect) {
 
 function draw() {
   var gl = state.gl;
-  if (!gl || !state.tiles.length) return;
+  var structural = state.showStructural && state.structural;
+  if (!gl || (!state.tiles.length && !structural)) return;
   var canvas = gl.canvas;
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
   gl.useProgram(state.prog);
@@ -427,8 +441,43 @@ function draw() {
   var aPos = gl.getAttribLocation(P, 'aPos');
   var aH = gl.getAttribLocation(P, 'aH');
   var aUV = gl.getAttribLocation(P, 'aUV');
+  var aN = gl.getAttribLocation(P, 'aN');
   var uWire = gl.getUniformLocation(P, 'uWire');
+  var uVN = gl.getUniformLocation(P, 'uVertexNormal');
   var tris = 0;
+
+  if (structural) {
+    var m = state.structural;
+    gl.uniform1f(uVN, 1);
+    gl.bindBuffer(gl.ARRAY_BUFFER, m.bufPos);
+    gl.enableVertexAttribArray(aPos); gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, m.bufH);
+    gl.enableVertexAttribArray(aH); gl.vertexAttribPointer(aH, 1, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, m.bufUV);
+    gl.enableVertexAttribArray(aUV); gl.vertexAttribPointer(aUV, 2, gl.FLOAT, false, 0, 0);
+    if (aN >= 0) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, m.bufN);
+      gl.enableVertexAttribArray(aN); gl.vertexAttribPointer(aN, 3, gl.FLOAT, false, 0, 0);
+    }
+    if (m.tex) {
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, m.tex);
+      gl.uniform1i(gl.getUniformLocation(P, 'uTex'), 0);
+    }
+    gl.uniform1f(uWire, 0);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, m.bufIdx);
+    gl.drawElements(gl.TRIANGLES, m.nIdx, gl.UNSIGNED_INT, 0);
+    tris += m.nIdx / 3;
+    if (aN >= 0) gl.disableVertexAttribArray(aN);
+    state.tris = Math.round(tris);
+    // The tile path reports at the end of draw(); this path returns before it,
+    // so it has to report for itself or the triangle count stays stale and the
+    // reader is told the height field is still on screen.
+    if (state.onStats) state.onStats(state.tris, state.lodIndex);
+    state.needsDraw = false;
+    return;
+  }
+  gl.uniform1f(uVN, 0);
 
   state.tiles.forEach(function (t) {
     gl.bindBuffer(gl.ARRAY_BUFFER, t.bufPos);
@@ -822,6 +871,103 @@ function bindCanvas(canvas) {
  * has nothing to draw yet. That matters because React will mount the canvas
  * and set options in whatever order the user clicks, not in load order.
  */
+/* The structural mesh: terrain with footprint holes, and one solid per
+ * building with real vertical facades. The tiles above are a height field and
+ * cannot express a wall - one z per (x, y) is the definition - so this is a
+ * second, separate piece of geometry drawn in place of them.
+ *
+ * `TKM1` is written by traksha/mesh/webmesh.py: a small header then five typed
+ * arrays that go straight into GL buffers. No parsing loop, because a
+ * quarter-million triangles of JSON or OBJ text would cost more to read than
+ * to draw.
+ */
+function parseTKM1(buf) {
+  var dv = new DataView(buf);
+  var magic = String.fromCharCode(dv.getUint8(0), dv.getUint8(1),
+                                  dv.getUint8(2), dv.getUint8(3));
+  if (magic !== 'TKM1') throw new Error('not a TRAKSHA mesh: ' + magic);
+  var nv = dv.getUint32(8, true), ni = dv.getUint32(12, true);
+  var ng = dv.getUint32(16, true);
+  var o = 40;                                  // header is 4 + 4*4 + 5*4 bytes
+  var pos = new Float32Array(buf, o, nv * 2); o += nv * 8;
+  var hgt = new Float32Array(buf, o, nv); o += nv * 4;
+  var uv = new Float32Array(buf, o, nv * 2); o += nv * 8;
+  var nrm = new Float32Array(buf, o, nv * 3); o += nv * 12;
+  var idx = new Uint32Array(buf, o, ni); o += ni * 4;
+  var groups = [];
+  for (var i = 0; i < ng; i++) {
+    groups.push({ first: dv.getUint32(o + i * 16, true),
+                  count: dv.getUint32(o + i * 16 + 4, true),
+                  kind: dv.getUint32(o + i * 16 + 8, true),
+                  id: dv.getUint32(o + i * 16 + 12, true) });
+  }
+  return { pos: pos, heights: hgt, uv: uv, normals: nrm, indices: idx,
+           groups: groups, version: dv.getUint32(4, true),
+           zMin: dv.getFloat32(32, true), zMax: dv.getFloat32(36, true) };
+}
+
+function disposeStructural() {
+  var gl = state.gl, m = state.structural;
+  if (!gl || !m) return;
+  [m.bufPos, m.bufH, m.bufUV, m.bufN, m.bufIdx].forEach(function (b) {
+    if (b) gl.deleteBuffer(b);
+  });
+  if (m.tex) gl.deleteTexture(m.tex);
+  state.structural = null;
+}
+
+async function loadStructural(base, manifest) {
+  var gl = state.gl;
+  var spec = manifest && manifest.mesh && manifest.mesh.structural
+    && manifest.mesh.structural.web;
+  if (!gl || !spec) return null;
+  if (state.structural) return state.structural;
+
+  // The mesh has far more than 65 535 vertices, so 32-bit indices are not
+  // optional. WebGL 1 without OES_element_index_uint cannot draw it at all,
+  // and silently drawing a wrapped-around subset would be worse than saying so.
+  if (!state.uintIndex) {
+    throw new Error('this browser has no 32-bit mesh indices '
+      + '(OES_element_index_uint); the structural mesh cannot be drawn');
+  }
+
+  var r = await fetch(base + 'structural.bin', { cache: 'no-cache' });
+  if (!r.ok) throw new Error('structural.bin: HTTP ' + r.status);
+  var m = parseTKM1(await r.arrayBuffer());
+
+  // Positions arrive as absolute metres from the south-west corner; the scene
+  // is drawn about its own centre, so shift once here rather than per frame.
+  var xy = new Float32Array(m.pos.length);
+  for (var i = 0; i < m.pos.length; i += 2) {
+    xy[i] = m.pos[i] - state.centre[0];
+    xy[i + 1] = m.pos[i + 1] - state.centre[1];
+  }
+
+  var buf = function (data, target) {
+    var b = gl.createBuffer();
+    var t = target || gl.ARRAY_BUFFER;
+    gl.bindBuffer(t, b);
+    gl.bufferData(t, data, gl.STATIC_DRAW);
+    return b;
+  };
+  var out = {
+    bufPos: buf(xy), bufH: buf(m.heights), bufUV: buf(m.uv),
+    bufN: buf(m.normals), bufIdx: buf(m.indices, gl.ELEMENT_ARRAY_BUFFER),
+    nIdx: m.indices.length, groups: m.groups,
+    triangles: m.indices.length / 3, tex: null,
+  };
+
+  // One texture for the whole mesh: the scene orthophoto the OBJ already uses.
+  var texPath = manifest.mesh && manifest.mesh.texture;
+  if (texPath) {
+    try {
+      out.tex = texture(gl, await loadImage(base + texPath));
+    } catch (e) { out.tex = null; }
+  }
+  state.structural = out;
+  return out;
+}
+
 export function createViewer(canvas, opts) {
   opts = opts || {};
   if (!initGL(canvas)) return null;
@@ -843,6 +989,22 @@ export function createViewer(canvas, opts) {
       return { lods: manifest.lods.length, lod: state.lodIndex };
     },
     setLod(i) { return loadLod(i); },
+    /* Switch between the height field and the structural rebuild. The mesh is
+     * fetched the first time it is asked for - it is several megabytes, and a
+     * reader who never opens it should never pay for it. */
+    async setStructural(on) {
+      if (on && !state.structural) {
+        await loadStructural(state.base, state.manifest);
+      }
+      state.showStructural = !!on && !!state.structural;
+      state.needsDraw = true;
+      return state.showStructural;
+    },
+    hasStructural() {
+      var m = state.manifest;
+      return !!(m && m.mesh && m.mesh.structural && m.mesh.structural.web)
+        && !!state.uintIndex;
+    },
     setLayer(k) { state.layer = k; applyLayer(k); state.needsDraw = true; },
     setExagg(v) { state.exagg = v; state.needsDraw = true; },
     setShade(v) { state.shade = !!v; state.needsDraw = true; },
@@ -860,7 +1022,9 @@ export function createViewer(canvas, opts) {
                width: lod ? lod.width : 0, height: lod ? lod.height : 0,
                triangles: state.tris || 0, fps: state.fps || 0 };
     },
-    dispose() { state.disposed = true; unbind(); disposeTiles(); },
+    dispose() {
+      state.disposed = true; unbind(); disposeTiles(); disposeStructural();
+    },
   };
 }
 

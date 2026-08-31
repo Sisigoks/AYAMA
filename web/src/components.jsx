@@ -264,7 +264,7 @@ function OfflineNote() {
 export function SidePanel(p) {
   const { manifest: m, base, layer, setLayer, lod, setLod, exagg, setExagg,
           shade, setShade, fog, setFog, wire, setWire, flying, onFly, readout,
-          offline } = p;
+          offline, structural, setStructural, hasStructural } = p;
   const g = m.grid || {};
   const layers = LAYERS.filter((l) => m.layers && m.layers[l.id]);
   const active = LAYERS.find((l) => l.id === layer);
@@ -287,6 +287,24 @@ export function SidePanel(p) {
           ))}
         </div>
       </Panel>
+
+      {hasStructural ? (
+        <Panel
+          title="Geometry"
+          note={structural
+            ? 'Buildings are separate solids with real vertical facades, cut along the segmentation. Terrain is holed under each footprint.'
+            : 'A height field: one elevation per ground position. It cannot represent a wall, so a facade is a steep ramp welded to the ground.'}
+        >
+          <div className="layer-btns">
+            <button className={structural ? '' : 'on'} onClick={() => setStructural(false)}>
+              Height field
+            </button>
+            <button className={structural ? 'on' : ''} onClick={() => setStructural(true)}>
+              Structural mesh
+            </button>
+          </div>
+        </Panel>
+      ) : null}
 
       <Panel title="Vertical exaggeration" note="Scales elevation only. Horizontal distances stay true.">
         <div className="row">

@@ -992,6 +992,17 @@ where the remaining 18 non-manifold edges were.
 detailed download rather than a web asset, and it is not committed; it rebuilds
 in seconds from what is. `--no-structural` skips it.
 
+**The viewer draws it too**, which took a second artifact. The tileset the browser
+renders is a height field, and a height field has one z per ground position by
+definition, so no amount of work on it can show a wall — every structural
+improvement above was invisible on the site. So the same builder runs on a strided
+grid to a triangle budget and writes `structural.bin`: a small header and five
+typed arrays that go straight into GL buffers, 250 790 triangles in 7.3 MB for the
+Bern scene, fetched only when a reader asks for it. The viewer's Geometry panel
+switches between the two. Per-vertex normals travel with the mesh because the
+shader's normal *map* is indexed by (u, v), and a facade shares its UV with the
+pavement below it — lit from the map, a wall would shade as though it were ground.
+
 ### 6.2 Image-conditioned mesh refinement, again — and again it does not help
 
 The obvious next step is a mesh-in/mesh-out refiner: pass the coarse mesh and a
@@ -1046,6 +1057,33 @@ that edge is a roof ridge, a shadow line or the join to an adjoining roof of a
 different colour, rather than the roof-to-ground boundary the wall belongs on. In a
 dense roofscape the strongest gradient near a footprint is very often not the
 footprint.
+
+### What about Pixel2Mesh++, or a DISN hybrid?
+
+Worth answering directly, because it is the obvious suggestion. **Pixel2Mesh++ is
+a multi-view network** — the "++" *is* the Multi-View Deformation Network, which
+works by generating hypothesis positions around each vertex, projecting them into
+several cameras and scoring the cross-view feature agreement. This pipeline has
+exactly one view, and the one thing that mechanism needs is more than one. With a
+single view it degenerates to Pixel2Mesh, which is a shape *generator*, not a
+refiner.
+
+It also does not take an arbitrary mesh. The network deforms a **fixed-topology
+template** — an ellipsoid of a few thousand vertices with its unpooling baked into
+the graph — normalised into a unit cube and trained on ShapeNet objects at a fixed
+camera radius. What it is asked to refine here is 1.1 M vertices in 207 connected
+components spanning a georeferenced square kilometre with a metric vertical datum.
+"Preserving your original topology" is not something that architecture offers,
+because the topology is the network's, not the input's. A DISN front end would
+make this worse rather than better: it would voxelise a mesh whose sharp footprint
+boundaries are its entire value.
+
+The transferable half — *hypothesis, then score against the image* — is exactly
+what was implemented and measured above, in the one degree of freedom a nadir
+orthophoto constrains. It constrains **x and y**, not z: from directly overhead
+the image says where a roof edge is and says almost nothing about how high it is.
+That is why the boundary was the thing worth snapping, and why the result is the
+one in the table.
 
 This is the same shape of result as §5.6 and for a related reason: refinement
 assumes the coarse geometry is right and only the detail is missing. It is
