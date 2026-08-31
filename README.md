@@ -992,6 +992,74 @@ where the remaining 18 non-manifold edges were.
 detailed download rather than a web asset, and it is not committed; it rebuilds
 in seconds from what is. `--no-structural` skips it.
 
+### 6.2 Image-conditioned mesh refinement, again — and again it does not help
+
+The obvious next step is a mesh-in/mesh-out refiner: pass the coarse mesh and a
+reference image to something like **Unique3D**, **threefiner** or
+**Pixel2Mesh++**, and let it deform the vertices toward the image. Two reasons
+that is not what happened here, and one experiment that was run instead.
+
+**They cannot run on this machine.** All three assume CUDA. `threefiner`'s score
+distillation is built on `nvdiffrast`, which has no distribution on PyPI at all —
+it is a CUDA-only rasteriser built from source — and this environment is
+`torch 2.13.0+cpu`, four threads, no GPU.
+
+**They are also the wrong shape for this problem, which matters more.** Every one
+of them is *object-centric*: a single object normalised into a unit cube, multiple
+views around it, a sphere-topology template deformed into shape. This scene is a
+georeferenced square kilometre in EPSG:2056 with a calibrated vertical datum, 207
+connected components, and **exactly one view** — the nadir image. Unique3D's
+multi-view step would have to *generate* the missing views, which is to say invent
+the facades, and a facade invented by a diffusion prior has no defensible
+relationship to metres. This project refuses a placeholder depth backbone for the
+same reason (§2.1): plausible-looking output is how a fabricated number reaches a
+results table.
+
+What does transfer is the *principle* — deform the mesh toward evidence the image
+actually provides — and the place it applies is the footprint boundary. The
+structural mesh puts a wall wherever a footprint boundary is, and those boundaries
+come from SAM 2, which decodes masks at 256×256: right to a few metres, smooth
+where a roof edge is sharp. The orthophoto has that edge at full resolution. So
+the boundaries were snapped onto it by guided-filter matting — filter the mask
+indicator with the image as guide, re-threshold at 0.5 — confined to a narrow band
+either side of the original outline, so it can sharpen a boundary and cannot
+invent one.
+
+Scored against lidar by **boundary F-score**, not IoU: IoU rewards getting the bulk
+of a footprint right and barely notices an outline two pixels out, which is exactly
+the quantity a snap moves.
+
+| scene | GSD | boundary F1 @2px | after snap | delta |
+|---|---|---|---|---|
+| Bern | 1.0 m | 0.3191 | 0.3297 | **+0.0106** |
+| Geneva | 0.5 m | 0.2680 | 0.2692 | +0.0012 |
+| Lausanne | 0.5 m | 0.1991 | 0.1936 | **−0.0055** |
+| Zürich | 0.5 m | 0.2417 | 0.2347 | **−0.0070** |
+| **mean** | | | | **−0.0002** |
+
+**It does not help.** It helps on the one scene at 1.0 m and hurts on two of the
+three at 0.5 m, and the mean is indistinguishable from zero. Sweeping the band
+width over 1, 2, 3 and 5 px changes the delta by less than 0.0002 on every scene —
+so this is not a tuning problem. That flatness is the diagnosis: the filter
+converges on the same edge however much freedom it is given, and on half the scenes
+that edge is a roof ridge, a shadow line or the join to an adjoining roof of a
+different colour, rather than the roof-to-ground boundary the wall belongs on. In a
+dense roofscape the strongest gradient near a footprint is very often not the
+footprint.
+
+This is the same shape of result as §5.6 and for a related reason: refinement
+assumes the coarse geometry is right and only the detail is missing. It is
+therefore kept as a diagnostic rather than shipped as a stage —
+
+```bash
+python scripts/bench_footprint.py --scenes bern geneva lausanne zurich
+```
+
+— so the question "does this help on my data" is answered by measurement. It
+writes nothing. `traksha/mesh/footprint.py` keeps the operator and, more usefully,
+`boundary_f1`, which is what makes "the walls are better placed" a measurable
+claim rather than an impression.
+
 ### Committed
 
 It was gitignored at first, which made this a study you had to run before you
