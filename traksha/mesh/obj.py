@@ -284,6 +284,9 @@ def write_obj_structural(
     _write_mtl(mtl_path, name, texture_name)
     return {
         "obj": path, "mtl": mtl_path,
+        # Recorded because this file is two orders of magnitude larger than the
+        # tileset, and the download link says so before anyone clicks it.
+        "bytes": int(os.path.getsize(path)),
         "vertices": int(len(V)), "triangles": int(len(F)),
         "groups": int(len(groups)),
         "buildings": int(len(mesh.get("buildings", []))),

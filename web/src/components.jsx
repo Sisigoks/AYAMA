@@ -303,6 +303,19 @@ export function SidePanel(p) {
               Structural mesh
             </button>
           </div>
+          {structural && m.mesh && m.mesh.structural ? (
+            <div className="kv">
+              <Row k="buildings" v={m.mesh.structural.buildings ?? '–'} />
+              <Row k="separated" v={
+                m.mesh.structural.quality
+                  ? `${Math.round((m.mesh.structural.quality.separation_score || 0) * 100)}%`
+                  : '–'} />
+              <Row k="facade area" v={
+                m.mesh.structural.quality
+                  ? `${((m.mesh.structural.quality.wall_area_frac || 0) * 100).toFixed(1)}%`
+                  : '–'} />
+            </div>
+          ) : null}
         </Panel>
       ) : null}
 
@@ -401,6 +414,19 @@ export function SidePanel(p) {
               </li>
               {mesh.mtl ? <li><a href={base + mesh.mtl} download>surface.mtl</a></li> : null}
               {mesh.texture ? <li><a href={base + mesh.texture} download>surface.jpg</a></li> : null}
+              {/* The structural rebuild at full resolution. Named with its size
+                  because it is two orders of magnitude larger than the tileset
+                  and a reader should know that before clicking. */}
+              {mesh.structural ? (
+                <li>
+                  <a href={base + mesh.structural.obj} download>
+                    {`structural.obj — ${(mesh.structural.triangles || 0).toLocaleString()} triangles, `}
+                    {`${mesh.structural.buildings || 0} buildings`}
+                    {mesh.structural.bytes
+                      ? ` (${Math.round(mesh.structural.bytes / 1e6)} MB)` : ''}
+                  </a>
+                </li>
+              ) : null}
             </>
           ) : (
             <li className="note-sm">No OBJ was requested for this run.</li>
