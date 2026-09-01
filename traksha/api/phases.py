@@ -47,7 +47,16 @@ MEASURED_SECONDS = {
     "artifacts": 4.50,
     "validation": 5.76,
     "tiles": 20.83,
+    # An estimate, not a measurement, and the only one in this table. Facade
+    # refinement needs a CUDA GPU and there is none on the machine these numbers
+    # were taken on, so this is four buildings at the ~4 minutes each that
+    # threefiner reports - marked as an estimate rather than quietly mixed in
+    # with figures that were timed.
+    "facades": 960.0,
 }
+
+# Per building, for costing a run before it starts. Same caveat: estimated.
+FACADE_SECONDS_PER_BUILDING = 240.0
 
 # The order a run executes in. `instances` is the structural segmentation and
 # runs before depth, which is the architectural change: everything after it can
@@ -57,7 +66,10 @@ MEASURED_SECONDS = {
 PIPELINE_PHASES = ("ingest", "instances", "depth", "segmentation", "shadow",
                    "anchors", "calibration", "uncertainty", "assemble",
                    "artifacts", "validation")
-JOB_PHASES = PIPELINE_PHASES + ("tiles",)
+# `facades` is last because it needs the mesh the tileset build produces, and
+# because it is the one phase that can be absent: it needs a CUDA GPU, and a run
+# without one skips it with the reason recorded rather than failing.
+JOB_PHASES = PIPELINE_PHASES + ("tiles", "facades")
 
 PENDING, RUNNING, DONE, FAILED, SKIPPED = (
     "pending", "running", "done", "failed", "skipped")
@@ -77,6 +89,7 @@ DESCRIPTIONS = {
     "artifacts": "Writing the GeoTIFFs and previews",
     "validation": "Scoring against the reference DSM",
     "tiles": "Building the 3D tileset and mesh",
+    "facades": "Painting facades with threefiner",
 }
 
 

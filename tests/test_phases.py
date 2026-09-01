@@ -50,8 +50,12 @@ def test_overall_is_weighted_by_measured_duration_not_by_count():
     and the property under test, that the bar tracks time and not phase count,
     is the thing that survives.
     """
-    total = sum(MEASURED_SECONDS[n] for n in JOB_PHASES)
+    # Facade refinement is skipped here, which is what a run without a GPU
+    # does. With it, it is by far the largest phase and depth stops dominating -
+    # correctly, and the skipped-phase test covers that case.
     p = JobProgress()
+    p.skip("facades", "no GPU")
+    total = sum(MEASURED_SECONDS[n] for n in JOB_PHASES if n != "facades")
     p.begin("ingest")
     p.complete("ingest")
     after_ingest = p.overall()
@@ -68,8 +72,9 @@ def test_overall_is_weighted_by_measured_duration_not_by_count():
 
 def test_progress_within_a_phase_moves_the_overall_figure():
     """Depth runs for minutes; without sub-progress the bar would stall there."""
-    total = sum(MEASURED_SECONDS[n] for n in JOB_PHASES)
     p = JobProgress()
+    p.skip("facades", "no GPU")
+    total = sum(MEASURED_SECONDS[n] for n in JOB_PHASES if n != "facades")
     p.begin("ingest")
     p.complete("ingest")
     p.begin("depth")

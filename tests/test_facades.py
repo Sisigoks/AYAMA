@@ -245,3 +245,57 @@ def test_a_refined_result_with_the_wrong_vertex_count_is_skipped(tmp_path):
     info = FA.assemble(mesh, results, str(tmp_path / "refined.obj"), (64, 64), 1.0)
     assert info["buildings_refined"] == 0
     assert "skipped" in results[0]
+
+
+# ----------------------------------------------------- retiring what it replaces
+def test_the_refined_model_replaces_what_it_supersedes(tmp_path):
+    """`structural.obj` has identical geometry and worse texture; `surface.obj`
+    is the height field the structural mesh already replaced. Shipping either
+    beside the refined model offers the same surface twice."""
+    mesh_dir = tmp_path / "mesh"
+    mesh_dir.mkdir()
+    for n in ("surface.obj", "surface.mtl", "surface.jpg", "structural.obj",
+              "structural.mtl", "structural_refined.obj"):
+        (mesh_dir / n).write_text("x")
+
+    man = {"mesh": {"obj": "mesh/surface.obj", "mtl": "mesh/surface.mtl",
+                    "texture": "mesh/surface.jpg",
+                    "structural": {"obj": "mesh/structural.obj",
+                                   "mtl": "mesh/structural.mtl"}}}
+    retired = FA.retire_superseded(str(mesh_dir), man, "mesh/structural_refined.obj")
+
+    assert set(retired) == set(FA.SUPERSEDED)
+    for n in FA.SUPERSEDED:
+        assert not (mesh_dir / n).exists(), f"{n} was not removed"
+    # the orthophoto stays: it is the measured texture the refined mtl references
+    assert (mesh_dir / "surface.jpg").exists()
+    assert (mesh_dir / "structural_refined.obj").exists()
+
+
+def test_no_download_link_is_left_pointing_at_a_deleted_file(tmp_path):
+    """The manifest and the disk go out of step exactly when they are updated
+    in different places, so they are updated in the same call."""
+    mesh_dir = tmp_path / "mesh"
+    mesh_dir.mkdir()
+    for n in (*FA.SUPERSEDED, "structural_refined.obj"):
+        (mesh_dir / n).write_text("x")
+    man = {"mesh": {"obj": "mesh/surface.obj", "mtl": "mesh/surface.mtl",
+                    "structural": {"obj": "mesh/structural.obj",
+                                   "mtl": "mesh/structural.mtl"}}}
+    FA.retire_superseded(str(mesh_dir), man, "mesh/structural_refined.obj")
+
+    assert "obj" not in man["mesh"] and "mtl" not in man["mesh"]
+    assert "obj" not in man["mesh"]["structural"]
+    assert man["mesh"]["primary"] == "mesh/structural_refined.obj"
+    # nothing the manifest still names is missing from disk
+    for key, value in man["mesh"].items():
+        if isinstance(value, str) and value.startswith("mesh/"):
+            assert (tmp_path / value).exists(), f"{key} points at a deleted file"
+
+
+def test_retiring_is_safe_when_the_files_were_never_written(tmp_path):
+    mesh_dir = tmp_path / "mesh"
+    mesh_dir.mkdir()
+    man = {}
+    assert FA.retire_superseded(str(mesh_dir), man, "mesh/x.obj") == []
+    assert man["mesh"]["primary"] == "mesh/x.obj"

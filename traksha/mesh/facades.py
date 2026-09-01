@@ -405,3 +405,38 @@ def assemble(mesh: dict, results, out_path: str, grid_shape, gsd_m: float,
         "synthesised": bool(refined),
         "textures": sorted(materials.values()),
     }
+
+# The meshes the refined model supersedes. `structural.obj` has byte-identical
+# geometry and strictly worse texture; `surface.obj` is the height field the
+# structural mesh replaced. Keeping either alongside ships the same surface
+# twice and leaves a reader choosing between them.
+SUPERSEDED = ("surface.obj", "surface.mtl", "structural.obj", "structural.mtl")
+
+
+def retire_superseded(mesh_dir: str, manifest: dict, primary_rel: str) -> list:
+    """Delete what the refined model replaces, and unhook it from the manifest.
+
+    The manifest is updated in the same call as the deletion on purpose: a
+    download link pointing at a file that is no longer there is worse than one
+    fewer download, and the two going out of step is exactly what happens when
+    they are done in different places.
+
+    The orthophoto is kept. It is the measured texture, the refined .mtl
+    references it for every surface that was not painted, and it is the one
+    image in the set that a camera actually took.
+    """
+    retired = []
+    for name in SUPERSEDED:
+        path = os.path.join(mesh_dir, name)
+        if os.path.exists(path):
+            os.remove(path)
+            retired.append(name)
+
+    mesh = manifest.setdefault("mesh", {})
+    mesh.pop("obj", None)
+    mesh.pop("mtl", None)
+    mesh.setdefault("structural", {}).pop("obj", None)
+    mesh["structural"].pop("mtl", None)
+    mesh["retired"] = retired
+    mesh["primary"] = primary_rel
+    return retired

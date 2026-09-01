@@ -223,6 +223,18 @@ class JobStore:
         progress = JobProgress()
         if not params.get("reference"):
             progress.skip("validation", "no reference DSM was supplied")
+        # Facade refinement needs a CUDA GPU. Deciding here rather than at the
+        # end keeps it out of the denominator from the first frame, so a run
+        # that cannot do it does not sit at 4% while the bar waits for a phase
+        # that will never start.
+        if str(params.get("facades", "auto")) in ("off", "none", "no", "False"):
+            progress.skip("facades", "not requested")
+        else:
+            from ..mesh.facades import preflight
+
+            checks = preflight()
+            if not checks["ok"]:
+                progress.skip("facades", "; ".join(checks["missing"])[:200])
 
         job = Job(id=job_id, dir=d, progress=progress,
                   params=dict(params, original_name=filename))
@@ -331,12 +343,17 @@ class JobStore:
                 emit(StageEvent("tiles", "running", "building the 3D tileset", 0.0))
                 from ..mesh.build import build_tileset
 
-                man = build_tileset(out_dir, os.path.join(job.dir, "tiles"),
-                                    tile=512, write_mesh=bool(p.get("mesh", False)),
+                tiles_dir = os.path.join(job.dir, "tiles")
+                man = build_tileset(out_dir, tiles_dir, tile=512,
+                                    write_mesh=bool(p.get("mesh", False)),
                                     quantise_bits=12)
                 emit(StageEvent("tiles", "done",
                                 f"{len(man['lods'])} LODs", 1.0))
                 job.progress["tiles"].artifact = "tiles/tileset.json"
+
+                # ---- facades: paint the walls, if this box can ------------
+                if job.progress["facades"].status == "pending":
+                    man = self._refine_facades(job, out_dir, tiles_dir, man, emit)
 
                 job.notes = man.get("notes", [])
                 job.summary = {
@@ -359,6 +376,109 @@ class JobStore:
                 job.finished = time.time()
                 job.save()
                 job._done.set()
+
+    # -------------------------------------------------------------- facades
+    def _refine_facades(self, job, run_dir, tiles_dir, man, emit):
+        """Paint the walls, assemble the final model, and retire what it replaces.
+
+        The refined mesh has byte-identical geometry to `structural.obj` and
+        strictly better texture, so keeping both would ship the same surface
+        twice and leave a reader choosing between them. `surface.obj` is the
+        height field the structural mesh supersedes. Both are removed once the
+        refined model exists, and the manifest is updated to match - a download
+        link pointing at a file that is no longer there is worse than one fewer
+        download.
+        """
+        import shutil
+
+        import numpy as np
+
+        from ..mesh import facades as fa
+        from ..mesh import webmesh
+        from ..mesh.build import load_run
+        from ..mesh.structural import build as build_structural
+        from ..mesh.structural import select as select_buildings
+        from ..semantics import instances as inst_mod
+
+        p = job.params
+        limit = int(p.get("facade_limit", 4) or 4)
+        emit(StageEvent("facades", "running", "loading the structural mesh", 0.0))
+
+        field = inst_mod.load(os.path.join(run_dir, "segmentation"))
+        if field is None:
+            job.progress.skip("facades", "this run has no segmentation")
+            job.save()
+            return man
+
+        run = load_run(run_dir)
+        gsd = float(run["meta"].get("gsd_m") or 1.0)
+        sem = run.get("sem")
+        buildings = select_buildings(field, run["dsm"], run["ndsm"],
+                                     None if sem is None else sem.astype("uint8"))
+        mesh = build_structural(run["dsm"], run["ndsm"], buildings, gsd)
+        want = len(buildings) if limit <= 0 else min(len(buildings), limit)
+        if not want:
+            job.progress.skip("facades", "no buildings to refine")
+            job.save()
+            return man
+
+        rec = fa.refine(mesh, os.path.join(run_dir, "facades"),
+                        max_buildings=limit,
+                        prompt=p.get("facade_prompt") or fa.DEFAULT_PROMPT,
+                        preset=p.get("facade_preset") or fa.DEFAULT_PRESET)
+        emit(StageEvent("facades", "running", f"assembling {want} building(s)", 0.9))
+
+        mesh_dir = os.path.join(tiles_dir, "mesh")
+        base = os.path.join(mesh_dir, "surface.jpg")
+        info = fa.assemble(mesh, rec["buildings"],
+                           os.path.join(mesh_dir, "structural_refined.obj"),
+                           run["dsm"].shape, gsd,
+                           base_texture=base if os.path.exists(base) else None)
+
+        # The browser copy, repainted so the viewer shows what was just made.
+        textures, group_uv = {}, {}
+        web = webmesh.build_web_mesh(run["dsm"], run["ndsm"], field,
+                                     None if sem is None else sem.astype("uint8"),
+                                     gsd, source=mesh)
+        for name, png in info["materials"].items():
+            src = os.path.join(mesh_dir, png)
+            if not os.path.exists(src):
+                continue
+            shutil.copyfile(src, os.path.join(tiles_dir, png))
+            full = next((g for g in mesh["groups"] if g[0] == name), None)
+            small = next((g for g in web["groups"] if g[0] == name), None)
+            if full is None or small is None:
+                continue
+            sv = np.unique(mesh["triangles"][full[1]:full[1] + full[2]])
+            dv = np.unique(web["triangles"][small[1]:small[1] + small[2]])
+            moved = fa.transfer_uv(mesh["vertices"][sv], info["uv"][sv],
+                                   web["vertices"][dv])
+            if moved is not None:
+                textures[name] = png
+                group_uv[name] = moved
+        web_info = webmesh.write(os.path.join(tiles_dir, "structural.bin"), web,
+                                 web["grid"], web["gsd_m"],
+                                 textures=textures, group_uv=group_uv)
+
+        def rel(path):
+            return os.path.relpath(path, tiles_dir).replace(os.sep, "/")
+
+        entry = {k: v for k, v in info.items() if k not in ("uv", "materials")}
+        entry["obj"], entry["mtl"] = rel(info["obj"]), rel(info["mtl"])
+        entry["textures"] = sorted(info["materials"].values())
+        man.setdefault("mesh", {}).setdefault("structural", {})["refined"] = entry
+        man["mesh"]["structural"]["web"] = web_info
+
+        fa.retire_superseded(mesh_dir, man, entry["obj"])
+
+        with open(os.path.join(tiles_dir, "tileset.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump(man, fh, indent=1, default=float)
+
+        emit(StageEvent("facades", "done",
+                        f"{info['buildings_refined']}/{info['buildings_total']} "
+                        f"buildings painted", 1.0))
+        return man
 
     # ------------------------------------------------------------ retention
     def _evict(self) -> None:

@@ -1063,6 +1063,34 @@ solid, roof and walls, with every other surface keeping the orthophoto.
 `--limit 0` refines every building. It is minutes each, so a hundred-building
 scene is hours, and the command says so before starting rather than after.
 
+**It is a pipeline phase, not only a command.** An upload runs `facades` after
+`tiles`, and the progress screen lists it with the rest. Whether it *can* run is
+decided before the job starts rather than at the end, so a box without a GPU
+takes it out of the denominator immediately instead of sitting at 96% waiting
+for a phase that will never begin — the skipped phase carries the reason, in
+words, and the run still reaches 100%:
+
+```
+facades   skipped   a CUDA device (threefiner has no CPU path); threefiner
+                    (pip install threefiner); nvdiffrast (...)
+```
+
+**The refined model replaces what it supersedes.** Once the walls are painted,
+`surface.obj`, `surface.mtl`, `structural.obj` and `structural.mtl` are deleted
+and unhooked from the manifest in the same call — `structural.obj` has
+byte-identical geometry and strictly worse texture, and `surface.obj` is the
+height field the structural mesh already replaced, so keeping either ships the
+same surface twice. `surface.jpg` stays: it is the measured texture, the refined
+`.mtl` references it for every unpainted surface, and it is the one image a
+camera actually took. The manifest and the disk are updated together, because a
+download link pointing at a deleted file is worse than one fewer download.
+
+The viewer then offers exactly the refined set — `structural_refined.obj`, its
+`.mtl`, the orthophoto and one PNG per painted facade — and draws the painted
+walls. Verified through an upload on the running site with the GPU call stubbed:
+four buildings painted, four textures fetched by the browser, every download
+resolving, and the retired files returning 404.
+
 **Not verified on hardware.** This was written and tested on a CPU-only machine.
 The extraction, the frame conversion, the round trip, both guards, the assembly
 and the artifact are covered by tests, and the web service was exercised with the

@@ -115,6 +115,9 @@ def create_app(jobs_root: str = "out/jobs", web_dir: Optional[str] = None,
         mesh: bool = Form(False),
         instances: str = Form("auto"),
         instance_points: int = Form(16),
+        facades: str = Form("auto"),
+        facade_limit: int = Form(4),
+        facade_preset: str = Form("sd_fixgeo"),
     ):
         data = await image.read()
         try:
@@ -122,6 +125,8 @@ def create_app(jobs_root: str = "out/jobs", web_dir: Optional[str] = None,
                 "backbone": backbone, "chip": chip, "bootstrap": bootstrap,
                 "mesh": mesh,
                 "instances": instances, "instance_points": instance_points,
+                "facades": facades, "facade_limit": facade_limit,
+                "facade_preset": facade_preset,
                 "sun_azimuth": sun_azimuth, "sun_elevation": sun_elevation,
             })
         except UploadRejected as exc:
