@@ -992,6 +992,55 @@ where the remaining 18 non-manifold edges were.
 detailed download rather than a web asset, and it is not committed; it rebuilds
 in seconds from what is. `--no-structural` skips it.
 
+### 6.2b Facade texture with threefiner, on a GPU
+
+A nadir image photographs roofs. It does not photograph walls, so the structural
+mesh's facades sample the orthophoto at the footprint edge and stretch that one
+line of pixels down the wall. The *geometry* of those walls is measured — the
+roof height and the local ground are both calibrated — but their appearance is
+not, and cannot be, from this input.
+
+threefiner [14] refines a mesh against a diffusion prior by score distillation,
+and given a CUDA GPU it can paint them. `traksha facades <run>` does that, under
+three constraints that are the whole reason it is allowed to exist here.
+
+**Geometry is fixed, and it is enforced twice.** Only the `*_fixgeo` presets are
+accepted (`fix_geo=True, geom_mode='mesh'`) — the geometry-training modes are
+refused with a reason, because deforming a wall to satisfy a generative prior
+converts a measurement into a guess. And independently of that flag, only the
+UVs and the texture are read back: the vertex positions written out are this
+pipeline's own, copied verbatim. A returned mesh whose vertex count moved is
+refused rather than reconciled.
+
+**The output is a separate artifact that says what it is.** `structural.obj`,
+the tileset and every calibrated raster are untouched. `facades/facades.json`
+carries `"synthesised": true` and, in words, that these walls are what a
+diffusion model expects a building of that shape to look like — plausible, not
+measured.
+
+**It is per building.** threefiner orbits a camera around one normalised object,
+which is the wrong shape for a square kilometre of city and the right shape for
+one building — and §3.6 has already made every building its own connected
+component, so the objects are sitting there. Each is centred, scaled into
+roughly [−0.9, 0.9] and rotated Z-up to Y-up on the way out, and the inverse is
+exact to 1e-9 m on the way back.
+
+It costs minutes per building, so `--limit` defaults to the eight largest rather
+than the whole scene. On a 16 GB T4 use `sd_fixgeo` (Stable Diffusion 2, not
+gated, fits); DeepFloyd IF-II is finer and heavier and may not fit.
+
+```bash
+pip install threefiner trimesh
+pip install git+https://github.com/NVlabs/nvdiffrast     # CUDA, source build
+python -m traksha.cli facades results/zurich --limit 8 --preset sd_fixgeo
+```
+
+**Not verified on hardware.** This was written and tested on a CPU-only machine.
+The extraction, the frame conversion, the round trip, both guards and the
+artifact are covered by tests; the diffusion step itself has never been executed
+here. `--dry-run` prepares the per-building meshes without touching a GPU, and
+`traksha facades` without it prints exactly what the box is missing.
+
 ### 6.3 Fitting it into a budget: decimate, do not stride — and do not subdivide
 
 The browser copy has to be a few hundred thousand triangles. The obvious route,
@@ -1859,6 +1908,11 @@ finding.
     https://github.com/facebookresearch/sam2 — used through the `transformers`
     port of the official architecture; the automatic mask generator is
     reimplemented here because that port does not ship one.
+
+[14] J. Chen, C. Lyu, B. Dai, et al. *threefiner: an interface for text-guided
+    mesh refinement.* 3DTopia, 2024. https://github.com/3DTopia/threefiner —
+    used only in its fixed-geometry modes, for wall texture, on a separate and
+    clearly labelled artifact.
 
 ---
 

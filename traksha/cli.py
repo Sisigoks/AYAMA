@@ -822,6 +822,60 @@ def _completed_scene(ref, out_dir: str, want_delivery: bool):
     return rec
 
 
+def cmd_facades(args) -> int:
+    """Synthesise facade texture for a run's structural mesh, on a GPU."""
+    import json
+
+    from .mesh import facades as fa
+    from .mesh.build import load_run
+    from .mesh.structural import build as build_structural
+    from .mesh.structural import select as select_buildings
+    from .semantics import instances as inst_mod
+
+    checks = fa.preflight()
+    print("TRAKSHA facades   threefiner, fixed geometry, texture only")
+    for k in ("torch", "cuda", "device", "vram_gb"):
+        if k in checks:
+            print(f"  {k:12s} {checks[k]}")
+    for note in checks.get("notes", []):
+        print(f"  note         {note}")
+    if checks["missing"]:
+        print("  missing:")
+        for m in checks["missing"]:
+            print(f"    - {m}")
+        if not args.dry_run:
+            print("\nNothing to do without those. `--dry-run` prepares "
+                  "the per-building meshes anyway, so the handoff can "
+                  "be checked on a machine with no GPU.")
+            return 1
+
+    run = load_run(args.run)
+    field = inst_mod.load(os.path.join(args.run, "segmentation"))
+    if field is None:
+        print("error: this run has no segmentation/; re-run with instances enabled")
+        return 1
+    gsd = float(run["meta"].get("gsd_m") or 1.0)
+    sem = run.get("sem")
+    buildings = select_buildings(field, run["dsm"], run["ndsm"],
+                                 None if sem is None else sem.astype("uint8"))
+    mesh = build_structural(run["dsm"], run["ndsm"], buildings, gsd)
+    print(f"  buildings    {len(buildings)} in the mesh, refining "
+          f"{min(len(buildings), args.limit)}")
+
+    out = args.out or os.path.join(args.run, "facades")
+    rec = fa.refine(mesh, out, max_buildings=args.limit,
+                    prompt=args.prompt or fa.DEFAULT_PROMPT,
+                    preset=args.preset, iters=args.iters or None,
+                    dry_run=args.dry_run)
+    ok = sum(1 for b in rec["buildings"] if b.get("glb") or b.get("dry_run"))
+    print(f"  wrote        {ok}/{len(rec['buildings'])} to {out}/")
+    print(f"  labelled     synthesised={rec['synthesised']}")
+    if args.json:
+        with open(args.json, "w", encoding="utf-8") as fh:
+            json.dump(rec, fh, indent=1, default=float)
+    return 0
+
+
 def cmd_dataset(args) -> int:
     """Run the pipeline over a real dataset and aggregate the metrics.
 
@@ -1365,6 +1419,23 @@ def build_parser() -> argparse.ArgumentParser:
                          "at ~0.1%% of each layer's range (the decode is unchanged)")
     pm.add_argument("--progress", default="auto", choices=["auto", "rich", "plain", "none"])
     pm.set_defaults(func=cmd_mesh)
+
+    pf = sub.add_parser("facades", help=(
+        "synthesise facade texture with threefiner (needs a CUDA GPU). "
+        "Geometry is fixed and the output is a separate, labelled artifact."))
+    pf.add_argument("run", help="a run directory with segmentation/")
+    pf.add_argument("--out", default=None, help="default <run>/facades")
+    pf.add_argument("--limit", type=int, default=8,
+                    help="how many buildings, largest first; minutes each on a GPU")
+    pf.add_argument("--preset", default="sd_fixgeo",
+                    choices=["sd_fixgeo", "if_fixgeo", "if2_fixgeo"],
+                    help="only fixed-geometry presets; the others deform measured walls")
+    pf.add_argument("--prompt", default=None)
+    pf.add_argument("--iters", type=int, default=0, help="0 keeps the preset default")
+    pf.add_argument("--dry-run", action="store_true",
+                    help="prepare the per-building meshes without touching a GPU")
+    pf.add_argument("--json", default=None, help="write the record here")
+    pf.set_defaults(func=cmd_facades)
 
     pv = sub.add_parser("viewer", help="Phase 4: build if needed, then serve the 3D web app")
     pv.add_argument("run", help="a directory written by `traksha run`")

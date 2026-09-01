@@ -26,7 +26,10 @@ api = ["fastapi>=0.110", "uvicorn[standard]>=0.29", "python-multipart>=0.0.9", "
 # Quadric edge collapse for the browser copy of the structural mesh.
 # Optional: without it the mesh is built on a strided grid instead,
 # which is measurably worse (README section 6.3) but still works.
-mesh = ["pymeshlab>=2023.12"]
+mesh = ["pymeshlab>=2023.12", "trimesh>=4.0"]
+# Facade texture synthesis. Needs a CUDA GPU and nvdiffrast, which is a
+# source build and cannot be declared here. See README section 6.2b.
+facades = ["threefiner>=0.1.2", "trimesh>=4.0"]
 dev = ["pytest>=8.0"]
 
 [project.scripts]
