@@ -1035,10 +1035,27 @@ pip install git+https://github.com/NVlabs/nvdiffrast     # CUDA, source build
 python -m traksha.cli facades results/zurich --limit 8 --preset sd_fixgeo
 ```
 
+**It produces the final model, not an intermediate.** Per-building GLBs are a
+staging format; what the command assembles is one multi-material OBJ over the
+whole scene — `mesh/structural_refined.obj`. The terrain and every unrefined
+building sit under `measured_mat`, which is the orthophoto; each refined building
+gets a `synth_*` material pointing at its own painted texture. Opened in any
+tool, which walls are photographed and which are invented is visible in the
+material list rather than buried in a sidecar. The refined model is registered
+in `tileset.json` (written atomically, so a half-written manifest cannot take the
+site down) and offered as a download in the viewer, labelled with how many
+buildings actually carry synthesised walls.
+
+Geometry is byte-identical to the input, and a test asserts it: `max|Δv| = 0`
+over every vertex. A returned mesh whose vertex count moved is skipped for that
+building rather than reconciled.
+
 **Not verified on hardware.** This was written and tested on a CPU-only machine.
-The extraction, the frame conversion, the round trip, both guards and the
-artifact are covered by tests; the diffusion step itself has never been executed
-here. `--dry-run` prepares the per-building meshes without touching a GPU, and
+The extraction, the frame conversion, the round trip, both guards, the assembly
+and the artifact are covered by tests, and the web service was exercised with the
+refined model registered — every layer, the exaggeration and the downloads, with
+no errors. The diffusion step itself has never been executed here. `--dry-run`
+prepares the handover and assembles the model without touching a GPU, and
 `traksha facades` without it prints exactly what the box is missing.
 
 ### 6.3 Fitting it into a budget: decimate, do not stride — and do not subdivide

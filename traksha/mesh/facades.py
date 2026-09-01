@@ -48,6 +48,8 @@ from typing import Optional
 
 import numpy as np
 
+from .obj import _write_block, _write_faces
+
 # The presets that leave geometry alone. Anything else deforms vertices to
 # satisfy a generative prior, which on a metric reconstruction is fabrication.
 FIXED_GEOMETRY_PRESETS = ("sd_fixgeo", "if_fixgeo", "if2_fixgeo")
@@ -272,3 +274,107 @@ def refine(mesh: dict, out_dir: str, max_buildings: int = DEFAULT_MAX_BUILDINGS,
     with open(os.path.join(out_dir, "facades.json"), "w", encoding="utf-8") as fh:
         json.dump(record, fh, indent=1, default=float)
     return record
+
+
+# ------------------------------------------------------- the assembled model
+def _world_uv(V: np.ndarray, span_x: float, span_y: float) -> np.ndarray:
+    """The orthophoto UV, same convention as the tileset and the OBJ writer."""
+    return np.stack([V[:, 0] / span_x, 1.0 - V[:, 1] / span_y], axis=1)
+
+
+def assemble(mesh: dict, results, out_path: str, grid_shape, gsd_m: float,
+             base_texture: Optional[str] = None) -> dict:
+    """One model carrying threefiner's textures: the refined final .obj.
+
+    A multi-material OBJ, which is the honest shape for this. The terrain and
+    every unrefined building keep the orthophoto under `measured_mat`; each
+    refined building gets a `synth_*` material pointing at its own synthesised
+    texture. Opened in any tool, which surfaces are photographed and which are
+    invented is visible in the material list rather than buried in a sidecar.
+
+    **Vertices are this pipeline's, copied verbatim.** Nothing from the GLB
+    reaches the geometry - only its UVs, and only for the group it came from.
+    Groups share no vertices, which is what the structural rebuild guarantees,
+    so one UV per vertex is unambiguous.
+    """
+    V = np.asarray(mesh["vertices"], np.float64)
+    F = np.asarray(mesh["triangles"], np.int64)
+    h, w = grid_shape
+    span_x = max((w - 1) * float(gsd_m), 1e-9)
+    span_y = max((h - 1) * float(gsd_m), 1e-9)
+
+    uv = _world_uv(V, span_x, span_y)
+    out_dir = os.path.dirname(os.path.abspath(out_path))
+    os.makedirs(out_dir, exist_ok=True)
+
+    by_name = {r["name"]: r for r in (results or []) if r.get("glb")}
+    materials: dict = {}
+    refined: list = []
+    for name, first, count in mesh.get("groups", []):
+        rec = by_name.get(name)
+        if rec is None:
+            continue
+        verts = np.unique(F[first:first + count])
+        try:
+            tex = read_texture(rec["glb"], expect_vertices=len(verts))
+        except (FacadeUnavailable, OSError, ValueError) as exc:
+            rec["skipped"] = str(exc)[:200]
+            continue
+        if tex["image"] is None:
+            rec["skipped"] = "the refined mesh carried no texture image"
+            continue
+        png = name + ".png"
+        tex["image"].save(os.path.join(out_dir, png))
+        # The GLB's vertices are in the order they were handed over, which is
+        # `verts`, so its UVs land on the vertices they were computed for.
+        uv[verts] = tex["uv"]
+        materials[name] = png
+        refined.append(name)
+
+    mtl_path = os.path.splitext(out_path)[0] + ".mtl"
+    base_name = os.path.basename(base_texture) if base_texture else None
+    if base_texture and os.path.exists(base_texture):
+        target = os.path.join(out_dir, base_name)
+        if os.path.abspath(target) != os.path.abspath(base_texture):
+            shutil.copyfile(base_texture, target)
+
+    n_buildings = len(list(building_groups(mesh)))
+    with open(mtl_path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write("# TRAKSHA structural mesh, facades refined by threefiner\n")
+        fh.write("# measured_mat is the orthophoto. Every synth_* material is a\n")
+        fh.write("# SYNTHESISED facade: plausible, not photographed.\n")
+        fh.write("newmtl measured_mat\nKd 1 1 1\nKa 0 0 0\nKs 0 0 0\nd 1\nillum 1\n")
+        if base_name:
+            fh.write("map_Kd " + base_name + "\n")
+        for name, png in materials.items():
+            fh.write("\nnewmtl synth_" + name + "\nKd 1 1 1\nKa 0 0 0\n")
+            fh.write("Ks 0 0 0\nd 1\nillum 1\nmap_Kd " + png + "\n")
+
+    with open(out_path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write("# TRAKSHA structural mesh with refined facades\n")
+        fh.write(f"# {len(refined)} of {n_buildings} buildings carry SYNTHESISED\n")
+        fh.write("# wall texture (threefiner). Geometry is the calibrated\n")
+        fh.write("# reconstruction, unchanged.\n")
+        fh.write("# axes: +X east, +Y north, +Z up (metres from the SW corner)\n")
+        fh.write("mtllib " + os.path.basename(mtl_path) + "\n")
+        fh.write("o traksha_structural_refined\n")
+        _write_block(fh, "v", V)
+        _write_block(fh, "vt", uv, decimals=5)
+        for name, first, count in mesh.get("groups", []):
+            if count <= 0:
+                continue
+            fh.write("g " + name + "\n")
+            mat = "synth_" + name if name in materials else "measured_mat"
+            fh.write("usemtl " + mat + "\n")
+            _write_faces(fh, F[first:first + count] + 1, True)
+
+    return {
+        "obj": out_path, "mtl": mtl_path,
+        "bytes": int(os.path.getsize(out_path)),
+        "vertices": int(len(V)), "triangles": int(len(F)),
+        "buildings_refined": len(refined),
+        "buildings_total": n_buildings,
+        "refined": refined,
+        "synthesised": bool(refined),
+        "textures": sorted(materials.values()),
+    }

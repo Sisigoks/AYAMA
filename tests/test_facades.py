@@ -145,3 +145,103 @@ def test_preflight_names_what_is_missing():
         assert all(isinstance(m, str) and m for m in checks["missing"])
         assert any("CUDA" in m or "torch" in m or "threefiner" in m
                    for m in checks["missing"])
+
+
+# --------------------------------------------------------- the final model
+def fake_refined(mesh, out_dir, name, first, count):
+    """What threefiner returns, stood in for: same vertices, a texture, UVs.
+
+    The diffusion step cannot run on this machine, so the assembly is tested
+    against a mesh with the shape threefiner produces rather than against
+    nothing. Everything the assembler actually reads - vertex count, UVs, the
+    texture image - is real.
+    """
+    trimesh = pytest.importorskip("trimesh")
+    from PIL import Image
+
+    V, F = FA.extract(mesh, first, count)
+    local, _, _ = FA.to_object_frame(V)
+    uv = np.random.default_rng(0).random((len(V), 2)).astype(np.float32)
+    tm = trimesh.Trimesh(vertices=local, faces=F, process=False,
+                         visual=trimesh.visual.TextureVisuals(
+                             uv=uv, image=Image.new("RGB", (16, 16), (200, 100, 50))))
+    path = os.path.join(out_dir, name + ".glb")
+    tm.export(path)
+    return {"name": name, "glb": path}
+
+
+def read_obj(path):
+    verts, groups, mats = [], [], []
+    for line in open(path, encoding="utf-8"):
+        if line.startswith("v "):
+            verts.append([float(x) for x in line.split()[1:4]])
+        elif line.startswith("g "):
+            groups.append(line.split()[1])
+        elif line.startswith("usemtl "):
+            mats.append(line.split()[1])
+    return np.asarray(verts), groups, mats
+
+
+def test_the_assembled_model_keeps_the_geometry_verbatim(tmp_path):
+    """The guarantee the whole stage rests on: refinement touches texture only."""
+    pytest.importorskip("trimesh")
+    mesh = two_buildings()
+    name, first, count = FA.building_groups(mesh)[0]
+    results = [fake_refined(mesh, str(tmp_path), name, first, count)]
+
+    info = FA.assemble(mesh, results, str(tmp_path / "refined.obj"), (64, 64), 1.0)
+    V, _, _ = read_obj(info["obj"])
+    assert V.shape == np.asarray(mesh["vertices"]).shape
+    assert np.abs(V - np.asarray(mesh["vertices"])).max() == 0.0
+
+
+def test_refined_and_measured_surfaces_get_different_materials(tmp_path):
+    """Opened in any tool, which walls are invented is visible in the material."""
+    pytest.importorskip("trimesh")
+    mesh = two_buildings()
+    name, first, count = FA.building_groups(mesh)[0]
+    info = FA.assemble(mesh, [fake_refined(mesh, str(tmp_path), name, first, count)],
+                       str(tmp_path / "refined.obj"), (64, 64), 1.0)
+
+    _, groups, mats = read_obj(info["obj"])
+    assert "terrain" in groups and name in groups
+    assert mats[groups.index("terrain")] == "measured_mat"
+    assert mats[groups.index(name)] == "synth_" + name
+    # the other building was not refined and must not claim to be
+    other = [g for g in groups if g.startswith("building_") and g != name][0]
+    assert mats[groups.index(other)] == "measured_mat"
+
+    mtl = open(info["mtl"], encoding="utf-8").read()
+    assert "SYNTHESISED" in mtl
+    assert os.path.exists(tmp_path / (name + ".png"))
+
+
+def test_assembling_with_nothing_refined_is_honest_about_it(tmp_path):
+    """A CPU-only run still produces the model; it must not claim synthesis."""
+    mesh = two_buildings()
+    info = FA.assemble(mesh, [], str(tmp_path / "refined.obj"), (64, 64), 1.0)
+    assert info["buildings_refined"] == 0
+    assert info["synthesised"] is False
+    _, groups, mats = read_obj(info["obj"])
+    assert set(mats) == {"measured_mat"}
+
+
+def test_a_refined_result_with_the_wrong_vertex_count_is_skipped(tmp_path):
+    """Rather than pasting someone else's UVs onto our vertices."""
+    trimesh = pytest.importorskip("trimesh")
+    from PIL import Image
+
+    mesh = two_buildings()
+    name, first, count = FA.building_groups(mesh)[0]
+    bad = str(tmp_path / (name + ".glb"))
+    trimesh.Trimesh(vertices=np.random.rand(9, 3),
+                    faces=np.array([[0, 1, 2], [3, 4, 5], [6, 7, 8]]),
+                    process=False,
+                    visual=trimesh.visual.TextureVisuals(
+                        uv=np.zeros((9, 2), np.float32),
+                        image=Image.new("RGB", (8, 8)))).export(bad)
+
+    results = [{"name": name, "glb": bad}]
+    info = FA.assemble(mesh, results, str(tmp_path / "refined.obj"), (64, 64), 1.0)
+    assert info["buildings_refined"] == 0
+    assert "skipped" in results[0]

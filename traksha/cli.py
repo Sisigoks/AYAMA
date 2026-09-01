@@ -868,12 +868,55 @@ def cmd_facades(args) -> int:
                     preset=args.preset, iters=args.iters or None,
                     dry_run=args.dry_run)
     ok = sum(1 for b in rec["buildings"] if b.get("glb") or b.get("dry_run"))
-    print(f"  wrote        {ok}/{len(rec['buildings'])} to {out}/")
-    print(f"  labelled     synthesised={rec['synthesised']}")
+    print(f"  refined      {ok}/{len(rec['buildings'])} into {out}/")
+
+    # The assembled model: the whole scene, with threefiner's texture on the
+    # buildings it refined. This is the artifact the request is really about -
+    # per-building GLBs are an intermediate, not a deliverable.
+    tileset = args.tileset or _guess_tileset(args.run)
+    mesh_dir = os.path.join(os.path.dirname(tileset), "mesh") if tileset else out
+    base_tex = os.path.join(mesh_dir, "surface.jpg")
+    info = fa.assemble(mesh, rec["buildings"],
+                       os.path.join(mesh_dir, "structural_refined.obj"),
+                       run["dsm"].shape, gsd,
+                       base_texture=base_tex if os.path.exists(base_tex) else None)
+    print(f"  assembled    {os.path.relpath(info['obj'], os.getcwd())}")
+    print(f"               {info['triangles']:,} triangles, "
+          f"{info['buildings_refined']}/{info['buildings_total']} buildings with "
+          f"synthesised walls")
+
+    if tileset:
+        # Patch the manifest the viewer reads, atomically, so a half-written
+        # tileset.json cannot take the site down.
+        with open(tileset, encoding="utf-8") as fh:
+            man = json.load(fh)
+        entry = {k: v for k, v in info.items() if k != "obj"}
+        entry["obj"] = os.path.relpath(info["obj"],
+                                       os.path.dirname(tileset)).replace("\\", "/")
+        entry["mtl"] = os.path.relpath(info["mtl"],
+                                       os.path.dirname(tileset)).replace("\\", "/")
+        man.setdefault("mesh", {}).setdefault("structural", {})["refined"] = entry
+        tmp = tileset + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(man, fh, indent=1, default=float)
+        os.replace(tmp, tileset)
+        print(f"  manifest     {os.path.basename(tileset)} updated")
+
+    rec["assembled"] = info
     if args.json:
         with open(args.json, "w", encoding="utf-8") as fh:
             json.dump(rec, fh, indent=1, default=float)
     return 0
+
+
+def _guess_tileset(run_dir: str):
+    """Where the viewer's manifest lives for this run, if it is beside it."""
+    for candidate in (os.path.join(run_dir, "tiles3d", "tileset.json"),
+                      os.path.join(os.path.dirname(run_dir), "tiles", "tileset.json"),
+                      os.path.join(run_dir, "..", "tiles3d", "tileset.json")):
+        if os.path.exists(candidate):
+            return os.path.abspath(candidate)
+    return None
 
 
 def cmd_dataset(args) -> int:
@@ -1434,6 +1477,9 @@ def build_parser() -> argparse.ArgumentParser:
     pf.add_argument("--iters", type=int, default=0, help="0 keeps the preset default")
     pf.add_argument("--dry-run", action="store_true",
                     help="prepare the per-building meshes without touching a GPU")
+    pf.add_argument("--tileset", default=None,
+                    help="tileset.json to register the refined model with; "
+                         "found automatically when it sits beside the run")
     pf.add_argument("--json", default=None, help="write the record here")
     pf.set_defaults(func=cmd_facades)
 

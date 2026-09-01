@@ -417,6 +417,19 @@ export function SidePanel(p) {
               {/* The structural rebuild at full resolution. Named with its size
                   because it is two orders of magnitude larger than the tileset
                   and a reader should know that before clicking. */}
+              {/* The refined model, when a GPU has painted its facades. Named
+                  as synthesised in the link itself, because a reader clicking
+                  it is downloading walls no camera ever saw. */}
+              {mesh.structural && mesh.structural.refined ? (
+                <li>
+                  <a href={base + mesh.structural.refined.obj} download>
+                    {`structural_refined.obj — ${mesh.structural.refined.buildings_refined || 0}`}
+                    {` of ${mesh.structural.refined.buildings_total || 0} buildings with `}
+                    {mesh.structural.refined.synthesised
+                      ? 'SYNTHESISED walls' : 'measured texture only'}
+                  </a>
+                </li>
+              ) : null}
               {mesh.structural ? (
                 <li>
                   <a href={base + mesh.structural.obj} download>
