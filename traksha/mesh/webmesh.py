@@ -30,7 +30,12 @@ import struct
 import numpy as np
 
 MAGIC = b"TKM1"
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
+
+# Version 2 adds a texture table. A refined facade is a different image from the
+# orthophoto - painted per building - so a mesh that can only carry one texture
+# can show the measured scene or the refined one but never both, and the walls
+# the refinement exists to paint are exactly what would be missing.
 
 # What a browser should be asked to hold. The height-field surface.obj is
 # budgeted to about the same, so the two are comparable when a reader switches
@@ -112,8 +117,16 @@ def build_web_mesh(dsm: np.ndarray, ndsm: np.ndarray, instances, sem,
     return mesh
 
 
-def write(path: str, mesh: dict, grid_shape, gsd_m: float) -> dict:
-    """Write the binary the renderer reads. Returns what the manifest records."""
+def write(path: str, mesh: dict, grid_shape, gsd_m: float,
+          textures: "dict | None" = None,
+          group_uv: "dict | None" = None) -> dict:
+    """Write the binary the renderer reads. Returns what the manifest records.
+
+    `textures` maps a group name to an image file beside this one; those groups
+    are drawn with that image instead of the scene texture. `group_uv` supplies
+    the UVs that go with them, since a painted facade has its own parameterisation
+    and the world-derived UV would sample the orthophoto in the wrong place.
+    """
     os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
     V = np.asarray(mesh["vertices"], np.float32)
     F = np.asarray(mesh["triangles"], np.uint32)
@@ -133,10 +146,20 @@ def write(path: str, mesh: dict, grid_shape, gsd_m: float) -> dict:
     # from y mirrors the scene about its east-west axis, which is subtle enough
     # in an aerial texture to survive a casual look and be obviously wrong once
     # you find a river.
-    uv = np.ascontiguousarray(np.stack(
-        [V[:, 0] / span_x, 1.0 - V[:, 1] / span_y], 1))
+    uv = np.stack([V[:, 0] / span_x, 1.0 - V[:, 1] / span_y], 1)
+    # Refined groups bring their own parameterisation with their own image.
+    F_all = np.asarray(mesh["triangles"], np.int64)
+    for name, first, count in (mesh.get("groups") or []):
+        vs = (group_uv or {}).get(name)
+        if vs is None:
+            continue
+        verts = np.unique(F_all[first:first + count])
+        if len(verts) == len(vs):
+            uv[verts] = np.asarray(vs, np.float32)
+    uv = np.ascontiguousarray(uv)
 
     groups = mesh.get("groups") or [("surface", 0, len(F))]
+    tex_names: list = []
     table = []
     for name, first, count in groups:
         kind = 0 if name == "terrain" else 1
@@ -144,11 +167,18 @@ def write(path: str, mesh: dict, grid_shape, gsd_m: float) -> dict:
             ident = int(name.rsplit("_", 1)[-1])
         except ValueError:
             ident = 0
-        table.append((first, count, kind, ident))
+        # -1 means "the scene texture", which is what every measured surface uses.
+        tex = -1
+        img = (textures or {}).get(name)
+        if img:
+            if img not in tex_names:
+                tex_names.append(img)
+            tex = tex_names.index(img)
+        table.append((first, count, kind, ident, tex))
 
     header = struct.pack(
-        "<4sIIIIfffff", MAGIC, FORMAT_VERSION, len(V), int(F.size), len(table),
-        float(gsd_m), float(span_x), float(span_y),
+        "<4sIIIIIfffff", MAGIC, FORMAT_VERSION, len(V), int(F.size), len(table),
+        len(tex_names), float(gsd_m), float(span_x), float(span_y),
         float(height.min()) if len(V) else 0.0,
         float(height.max()) if len(V) else 0.0)
 
@@ -160,8 +190,11 @@ def write(path: str, mesh: dict, grid_shape, gsd_m: float) -> dict:
         fh.write(N.astype("<f4").tobytes() if N.size else
                  np.zeros((len(V), 3), "<f4").tobytes())
         fh.write(F.ravel().astype("<u4").tobytes())
-        for first, count, kind, ident in table:
-            fh.write(struct.pack("<IIII", first, count, kind, ident))
+        for first, count, kind, ident, tex in table:
+            fh.write(struct.pack("<IIIIi", first, count, kind, ident, tex))
+        for name in tex_names:
+            raw = name.encode("utf-8")
+            fh.write(struct.pack("<I", len(raw)) + raw)
 
     return {
         "path": os.path.basename(path),
@@ -169,7 +202,9 @@ def write(path: str, mesh: dict, grid_shape, gsd_m: float) -> dict:
         "vertices": int(len(V)),
         "triangles": int(len(F)),
         "groups": len(table),
-        "buildings": int(sum(1 for _, _, k, _ in table if k == 1)),
+        "buildings": int(sum(1 for _, _, k, _, _ in table if k == 1)),
+        "textures": list(tex_names),
+        "refined_groups": int(sum(1 for _, _, _, _, t in table if t >= 0)),
         "stride": int(mesh.get("stride", 1)),
         "gsd_m": round(float(mesh.get("gsd_m", gsd_m)), 4),
         "reduction": mesh.get("decimated", {}),
@@ -182,11 +217,11 @@ def read(path: str) -> dict:
     is not the renderer - a format only one side can parse is not a format."""
     with open(path, "rb") as fh:
         blob = fh.read()
-    magic, version, nv, ni, ng, gsd, sx, sy, zmin, zmax = struct.unpack_from(
-        "<4sIIIIfffff", blob, 0)
+    magic, version, nv, ni, ng, ntex, gsd, sx, sy, zmin, zmax = struct.unpack_from(
+        "<4sIIIIIfffff", blob, 0)
     if magic != MAGIC:
         raise ValueError(f"not a TRAKSHA mesh: {magic!r}")
-    off = struct.calcsize("<4sIIIIfffff")
+    off = struct.calcsize("<4sIIIIIfffff")
 
     def take(count, dtype, itemsize):
         nonlocal off
@@ -199,7 +234,15 @@ def read(path: str) -> dict:
     uv = take(nv * 2, "<f4", 4).reshape(nv, 2)
     nrm = take(nv * 3, "<f4", 4).reshape(nv, 3)
     idx = take(ni, "<u4", 4)
-    groups = [struct.unpack_from("<IIII", blob, off + 16 * i) for i in range(ng)]
+    groups = [struct.unpack_from("<IIIIi", blob, off + 20 * i) for i in range(ng)]
+    off += 20 * ng
+    tex_names = []
+    for _ in range(ntex):
+        (n,) = struct.unpack_from("<I", blob, off)
+        off += 4
+        tex_names.append(blob[off:off + n].decode("utf-8"))
+        off += n
     return {"version": version, "gsd_m": gsd, "extent_m": (sx, sy),
             "z_range": (zmin, zmax), "positions": pos, "heights": height,
-            "uv": uv, "normals": nrm, "indices": idx, "groups": groups}
+            "uv": uv, "normals": nrm, "indices": idx, "groups": groups,
+            "textures": tex_names}

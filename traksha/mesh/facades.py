@@ -243,7 +243,12 @@ def refine(mesh: dict, out_dir: str, max_buildings: int = DEFAULT_MAX_BUILDINGS,
 
     os.makedirs(out_dir, exist_ok=True)
     produced = []
-    for name, first, count in building_groups(mesh)[:max_buildings]:
+    # 0 means every building. It is minutes each, so a hundred-building scene is
+    # hours - which is a decision for whoever owns the GPU, not a default.
+    chosen = building_groups(mesh)
+    if max_buildings and max_buildings > 0:
+        chosen = chosen[:max_buildings]
+    for name, first, count in chosen:
         V, F = extract(mesh, first, count)
         if dry_run:
             import trimesh
@@ -274,6 +279,27 @@ def refine(mesh: dict, out_dir: str, max_buildings: int = DEFAULT_MAX_BUILDINGS,
     with open(os.path.join(out_dir, "facades.json"), "w", encoding="utf-8") as fh:
         json.dump(record, fh, indent=1, default=float)
     return record
+
+
+def transfer_uv(src_V: np.ndarray, src_uv: np.ndarray, dst_V: np.ndarray):
+    """Carry a painted UV from the full-resolution building onto the decimated one.
+
+    The download is full resolution and the browser copy is quadric-decimated,
+    so they do not share vertices - but they are the same building in the same
+    metres, and a decimated vertex sits on (or within centimetres of) the
+    original surface. Nearest neighbour is therefore the right transfer: it is
+    a resampling of the parameterisation, not an interpolation of geometry, and
+    it cannot move a vertex.
+    """
+    try:
+        from scipy.spatial import cKDTree
+    except ImportError:                                # pragma: no cover
+        return None
+    if len(src_V) == 0 or len(dst_V) == 0:
+        return None
+    _, idx = cKDTree(np.asarray(src_V, np.float64)).query(
+        np.asarray(dst_V, np.float64), k=1)
+    return np.asarray(src_uv, np.float32)[idx]
 
 
 # ------------------------------------------------------- the assembled model
@@ -370,6 +396,7 @@ def assemble(mesh: dict, results, out_path: str, grid_shape, gsd_m: float,
 
     return {
         "obj": out_path, "mtl": mtl_path,
+        "uv": uv, "materials": dict(materials),
         "bytes": int(os.path.getsize(out_path)),
         "vertices": int(len(V)), "triangles": int(len(F)),
         "buildings_refined": len(refined),

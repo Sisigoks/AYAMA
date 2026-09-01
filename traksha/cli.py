@@ -825,6 +825,7 @@ def _completed_scene(ref, out_dir: str, want_delivery: bool):
 def cmd_facades(args) -> int:
     """Synthesise facade texture for a run's structural mesh, on a GPU."""
     import json
+    import shutil
 
     from .mesh import facades as fa
     from .mesh.build import load_run
@@ -859,8 +860,11 @@ def cmd_facades(args) -> int:
     buildings = select_buildings(field, run["dsm"], run["ndsm"],
                                  None if sem is None else sem.astype("uint8"))
     mesh = build_structural(run["dsm"], run["ndsm"], buildings, gsd)
-    print(f"  buildings    {len(buildings)} in the mesh, refining "
-          f"{min(len(buildings), args.limit)}")
+    want = len(buildings) if args.limit <= 0 else min(len(buildings), args.limit)
+    print(f"  buildings    {len(buildings)} in the mesh, refining {want}")
+    if want > 12 and not args.dry_run:
+        print(f"  note         {want} buildings is roughly "
+              f"{want * 3}-{want * 6} minutes on one GPU")
 
     out = args.out or os.path.join(args.run, "facades")
     rec = fa.refine(mesh, out, max_buildings=args.limit,
@@ -885,6 +889,43 @@ def cmd_facades(args) -> int:
           f"{info['buildings_refined']}/{info['buildings_total']} buildings with "
           f"synthesised walls")
 
+    # Rebuild the browser copy so the viewer draws what was just painted.
+    # Without this the refined walls exist only in the download, and the site
+    # keeps showing the measured mesh while the panel claims otherwise.
+    web_info = None
+    if tileset and info["materials"]:
+        from .mesh import webmesh
+
+        tiles_dir = os.path.dirname(tileset)
+        web = webmesh.build_web_mesh(run["dsm"], run["ndsm"], field,
+                                     None if sem is None else sem.astype("uint8"),
+                                     gsd, source=mesh)
+        F_full = mesh["triangles"]
+        textures, group_uv = {}, {}
+        for name, png in info["materials"].items():
+            src = os.path.join(mesh_dir, png)
+            if not os.path.exists(src):
+                continue
+            shutil.copyfile(src, os.path.join(tiles_dir, png))
+            full = next((g for g in mesh["groups"] if g[0] == name), None)
+            small = next((g for g in web["groups"] if g[0] == name), None)
+            if full is None or small is None:
+                continue
+            sv = __import__("numpy").unique(F_full[full[1]:full[1] + full[2]])
+            dv = __import__("numpy").unique(
+                web["triangles"][small[1]:small[1] + small[2]])
+            moved = fa.transfer_uv(mesh["vertices"][sv], info["uv"][sv],
+                                   web["vertices"][dv])
+            if moved is None:
+                continue
+            textures[name] = png
+            group_uv[name] = moved
+        web_info = webmesh.write(os.path.join(tiles_dir, "structural.bin"), web,
+                                 web["grid"], web["gsd_m"],
+                                 textures=textures, group_uv=group_uv)
+        print(f"  viewer       structural.bin rebuilt, "
+              f"{web_info['refined_groups']} painted group(s)")
+
     if tileset:
         # Patch the manifest the viewer reads, atomically, so a half-written
         # tileset.json cannot take the site down.
@@ -896,6 +937,8 @@ def cmd_facades(args) -> int:
         entry["mtl"] = os.path.relpath(info["mtl"],
                                        os.path.dirname(tileset)).replace("\\", "/")
         man.setdefault("mesh", {}).setdefault("structural", {})["refined"] = entry
+        if web_info:
+            man["mesh"]["structural"]["web"] = web_info
         tmp = tileset + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(man, fh, indent=1, default=float)
@@ -1469,7 +1512,8 @@ def build_parser() -> argparse.ArgumentParser:
     pf.add_argument("run", help="a run directory with segmentation/")
     pf.add_argument("--out", default=None, help="default <run>/facades")
     pf.add_argument("--limit", type=int, default=8,
-                    help="how many buildings, largest first; minutes each on a GPU")
+                    help="how many buildings, largest first; 0 for all. "
+                         "Minutes each on a GPU, so a whole scene is hours")
     pf.add_argument("--preset", default="sd_fixgeo",
                     choices=["sd_fixgeo", "if_fixgeo", "if2_fixgeo"],
                     help="only fixed-geometry presets; the others deform measured walls")

@@ -1050,6 +1050,19 @@ Geometry is byte-identical to the input, and a test asserts it: `max|Δv| = 0`
 over every vertex. A returned mesh whose vertex count moved is skipped for that
 building rather than reconciled.
 
+**The viewer draws the painted walls, not just the download.** `structural.bin`
+gained a texture table (format v2): a group can name its own image, and the
+renderer draws those groups in a second pass with it bound, so a scene with
+eight refined buildings costs nine draw calls rather than one per group. The
+browser copy is quadric-decimated and the refined model is full resolution, so
+they share no vertices — the parameterisation is carried across by nearest
+neighbour, which resamples the UV and cannot move a vertex. Verified in a real
+browser by painting six buildings in flat colours: each lands on exactly its own
+solid, roof and walls, with every other surface keeping the orthophoto.
+
+`--limit 0` refines every building. It is minutes each, so a hundred-building
+scene is hours, and the command says so before starting rather than after.
+
 **Not verified on hardware.** This was written and tested on a CPU-only machine.
 The extraction, the frame conversion, the round trip, both guards, the assembly
 and the artifact are covered by tests, and the web service was exercised with the

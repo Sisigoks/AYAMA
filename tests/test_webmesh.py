@@ -124,3 +124,44 @@ def test_a_file_that_is_not_ours_is_refused(tmp_path):
     bad.write_bytes(b"GLTF" + b"\x00" * 64)
     with pytest.raises(ValueError, match="not a TRAKSHA mesh"):
         W.read(str(bad))
+
+
+# ------------------------------------------------- painted facades (v2)
+def test_a_painted_group_carries_its_own_texture_and_uvs(tmp_path):
+    """What lets the viewer show a refined facade rather than the orthophoto.
+
+    A painted wall is a different image from the scene texture, so a format that
+    can hold only one can show the measured scene or the refined one but never
+    both - and the walls the refinement exists to paint are exactly what would
+    be missing.
+    """
+    dsm, ndsm, field = scene_with_a_block()
+    mesh = W.build_web_mesh(dsm, ndsm, field, None, 1.0, max_triangles=100_000)
+    name, first, count = next((n, f, c) for n, f, c in mesh["groups"]
+                              if n.startswith("building_"))
+    verts = np.unique(mesh["triangles"][first:first + count])
+    painted = np.full((len(verts), 2), 0.25, np.float32)
+
+    path = str(tmp_path / "m.bin")
+    info = W.write(path, mesh, mesh["grid"], mesh["gsd_m"],
+                   textures={name: "wall.png"}, group_uv={name: painted})
+    assert info["textures"] == ["wall.png"]
+    assert info["refined_groups"] == 1
+
+    back = W.read(path)
+    assert back["version"] == 2
+    assert back["textures"] == ["wall.png"]
+    tex_of = {g[3]: g[4] for g in back["groups"]}
+    ident = int(name.rsplit("_", 1)[-1])
+    assert tex_of[ident] == 0, "the painted group does not point at its image"
+    # and its UVs are the painted ones, not the world-derived default
+    assert np.allclose(back["uv"][verts], 0.25, atol=1e-5)
+
+
+def test_unpainted_groups_still_point_at_the_scene_texture(tmp_path):
+    dsm, ndsm, field = scene_with_a_block()
+    mesh = W.build_web_mesh(dsm, ndsm, field, None, 1.0, max_triangles=100_000)
+    path = str(tmp_path / "m.bin")
+    info = W.write(path, mesh, mesh["grid"], mesh["gsd_m"])
+    assert info["textures"] == [] and info["refined_groups"] == 0
+    assert all(g[4] == -1 for g in W.read(path)["groups"])

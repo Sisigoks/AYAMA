@@ -468,6 +468,30 @@ function draw() {
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, m.bufIdx);
     gl.drawElements(gl.TRIANGLES, m.nIdx, gl.UNSIGNED_INT, 0);
     tris += m.nIdx / 3;
+
+    // Painted facades on top. Drawn a second time over the same triangles
+    // rather than carved out of the first pass: an index buffer per refined
+    // building would be the alternative, and at eight buildings the depth test
+    // does the same job for the cost of eight small draws. GL_EQUAL keeps them
+    // from z-fighting the pass underneath.
+    if (m.painted && m.painted.length && m.groupTex) {
+      gl.depthFunc(gl.LEQUAL);
+      for (var gi = 0; gi < m.painted.length; gi++) {
+        var grp = m.painted[gi];
+        var img = m.groupTex[grp.tex];
+        if (!img) continue;
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, img);
+        gl.uniform1i(gl.getUniformLocation(P, 'uTex'), 0);
+        gl.drawElements(gl.TRIANGLES, grp.count * 3, gl.UNSIGNED_INT,
+                        grp.first * 3 * 4);
+      }
+      gl.depthFunc(gl.LESS);
+      if (m.tex) {
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, m.tex);
+      }
+    }
     if (state.wire && m.bufWire) {
       gl.uniform1f(uWire, 0.85);
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, m.bufWire);
@@ -943,9 +967,14 @@ function parseTKM1(buf) {
   var magic = String.fromCharCode(dv.getUint8(0), dv.getUint8(1),
                                   dv.getUint8(2), dv.getUint8(3));
   if (magic !== 'TKM1') throw new Error('not a TRAKSHA mesh: ' + magic);
+  var version = dv.getUint32(4, true);
+  if (version !== 2) {
+    throw new Error('structural.bin is format v' + version
+      + ', this viewer reads v2 - rebuild it with `traksha mesh`');
+  }
   var nv = dv.getUint32(8, true), ni = dv.getUint32(12, true);
-  var ng = dv.getUint32(16, true);
-  var o = 40;                                  // header is 4 + 4*4 + 5*4 bytes
+  var ng = dv.getUint32(16, true), ntex = dv.getUint32(20, true);
+  var o = 44;                                  // 4 + 5*4 + 5*4 bytes
   var pos = new Float32Array(buf, o, nv * 2); o += nv * 8;
   var hgt = new Float32Array(buf, o, nv); o += nv * 4;
   var uv = new Float32Array(buf, o, nv * 2); o += nv * 8;
@@ -953,19 +982,28 @@ function parseTKM1(buf) {
   var idx = new Uint32Array(buf, o, ni); o += ni * 4;
   var groups = [];
   for (var i = 0; i < ng; i++) {
-    groups.push({ first: dv.getUint32(o + i * 16, true),
-                  count: dv.getUint32(o + i * 16 + 4, true),
-                  kind: dv.getUint32(o + i * 16 + 8, true),
-                  id: dv.getUint32(o + i * 16 + 12, true) });
+    groups.push({ first: dv.getUint32(o + i * 20, true),
+                  count: dv.getUint32(o + i * 20 + 4, true),
+                  kind: dv.getUint32(o + i * 20 + 8, true),
+                  id: dv.getUint32(o + i * 20 + 12, true),
+                  tex: dv.getInt32(o + i * 20 + 16, true) });
+  }
+  o += ng * 20;
+  // The texture table: a name per painted facade, relative to structural.bin.
+  var texNames = [], dec = new TextDecoder();
+  for (var t = 0; t < ntex; t++) {
+    var len = dv.getUint32(o, true); o += 4;
+    texNames.push(dec.decode(new Uint8Array(buf, o, len))); o += len;
   }
   return { pos: pos, heights: hgt, uv: uv, normals: nrm, indices: idx,
-           groups: groups, version: dv.getUint32(4, true),
-           zMin: dv.getFloat32(32, true), zMax: dv.getFloat32(36, true) };
+           groups: groups, textures: texNames, version: version,
+           zMin: dv.getFloat32(36, true), zMax: dv.getFloat32(40, true) };
 }
 
 function disposeStructural() {
   var gl = state.gl, m = state.structural;
   if (!gl || !m) return;
+  (m.groupTex || []).forEach(function (t) { if (t) gl.deleteTexture(t); });
   [m.bufPos, m.bufH, m.bufUV, m.bufN, m.bufIdx, m.bufWire].forEach(function (b) {
     if (b) gl.deleteBuffer(b);
   });
@@ -1027,6 +1065,19 @@ async function loadStructural(base, manifest) {
   }
   out.bufWire = buf(wire, gl.ELEMENT_ARRAY_BUFFER);
   out.nWire = wire.length;
+
+  // Painted facades: one image per refined building, drawn in its own pass.
+  // Everything else shares the scene texture, so a scene with eight refined
+  // buildings costs nine draw calls rather than one per group.
+  out.groupTex = [];
+  for (var t = 0; t < (m.textures || []).length; t++) {
+    try {
+      out.groupTex.push(texture(gl, await loadImage(base + m.textures[t])));
+    } catch (e) {
+      out.groupTex.push(null);                 // missing image: fall back
+    }
+  }
+  out.painted = m.groups.filter(function (g) { return g.tex >= 0; });
 
   state.structural = out;
   // One texture for the whole mesh, composited from the tiles so that the
