@@ -186,7 +186,8 @@ def refine_one(vertices: np.ndarray, faces: np.ndarray, out_dir: str, name: str,
     cmd = [shutil.which("threefiner") or "python", *([] if shutil.which("threefiner")
                                                      else ["-m", "threefiner.cli"]),
            preset, "--mesh", src, "--prompt", prompt,
-           "--outdir", out_dir, "--save", f"{name}.glb"]
+           "--outdir", out_dir, "--save", f"{name}.glb",
+           "--force_cuda_rast"]
     if iters:
         cmd += ["--iters", str(int(iters))]
 
@@ -276,8 +277,9 @@ def refine(mesh: dict, out_dir: str, max_buildings: int = DEFAULT_MAX_BUILDINGS,
         "buildings": produced,
         "environment": checks,
     }
-    with open(os.path.join(out_dir, "facades.json"), "w", encoding="utf-8") as fh:
-        json.dump(record, fh, indent=1, default=float)
+    from ..core.jsonio import save_json
+
+    save_json(record, os.path.join(out_dir, "facades.json"), indent=1)
     return record
 
 

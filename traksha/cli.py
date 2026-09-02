@@ -873,6 +873,9 @@ def cmd_facades(args) -> int:
                     dry_run=args.dry_run)
     ok = sum(1 for b in rec["buildings"] if b.get("glb") or b.get("dry_run"))
     print(f"  refined      {ok}/{len(rec['buildings'])} into {out}/")
+    for b in rec["buildings"]:
+        if b.get("error"):
+            print(f"    ! {b['name']} failed (exit code {b.get('returncode')}): {b['error'].strip()}")
 
     # The assembled model: the whole scene, with threefiner's texture on the
     # buildings it refined. This is the artifact the request is really about -
@@ -926,6 +929,8 @@ def cmd_facades(args) -> int:
         print(f"  viewer       structural.bin rebuilt, "
               f"{web_info['refined_groups']} painted group(s)")
 
+    from .core.jsonio import save_json
+
     if tileset:
         # Patch the manifest the viewer reads, atomically, so a half-written
         # tileset.json cannot take the site down.
@@ -940,15 +945,13 @@ def cmd_facades(args) -> int:
         if web_info:
             man["mesh"]["structural"]["web"] = web_info
         tmp = tileset + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(man, fh, indent=1, default=float)
+        save_json(man, tmp, indent=1)
         os.replace(tmp, tileset)
         print(f"  manifest     {os.path.basename(tileset)} updated")
 
     rec["assembled"] = info
     if args.json:
-        with open(args.json, "w", encoding="utf-8") as fh:
-            json.dump(rec, fh, indent=1, default=float)
+        save_json(rec, args.json, indent=1)
     return 0
 
 

@@ -470,10 +470,9 @@ class JobStore:
         man["mesh"]["structural"]["web"] = web_info
 
         fa.retire_superseded(mesh_dir, man, entry["obj"])
+        from ..core.jsonio import save_json
 
-        with open(os.path.join(tiles_dir, "tileset.json"), "w",
-                  encoding="utf-8") as fh:
-            json.dump(man, fh, indent=1, default=float)
+        save_json(man, os.path.join(tiles_dir, "tileset.json"), indent=1)
 
         emit(StageEvent("facades", "done",
                         f"{info['buildings_refined']}/{info['buildings_total']} "
