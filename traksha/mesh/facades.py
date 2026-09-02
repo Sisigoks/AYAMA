@@ -76,6 +76,22 @@ class FacadeUnavailable(RuntimeError):
     """Facade refinement cannot run here. Carries what is missing."""
 
 
+def _ensure_kiui_compatibility() -> None:
+    """Fix kiui.op missing 'from typing import Union' in Python 3.13 environments."""
+    try:
+        import kiui
+        p = os.path.join(os.path.dirname(kiui.__file__), "op.py")
+        if os.path.exists(p):
+            with open(p, "r", encoding="utf-8") as fh:
+                src = fh.read()
+            if "from typing import" not in src and "Union" in src:
+                src = "from typing import Union\n" + src
+                with open(p, "w", encoding="utf-8") as fh:
+                    fh.write(src)
+    except Exception:
+        pass
+
+
 def preflight() -> dict:
     """What this needs, and which parts are present.
 
@@ -83,6 +99,7 @@ def preflight() -> dict:
     that this runs on a different machine from the one the pipeline usually
     runs on, and the failure a user hits is a missing dependency on that box.
     """
+    _ensure_kiui_compatibility()
     out: dict = {"ok": False, "missing": [], "notes": []}
 
     try:
@@ -175,6 +192,7 @@ def refine_one(vertices: np.ndarray, faces: np.ndarray, out_dir: str, name: str,
             "are allowed here: deforming a measured wall to satisfy a generative "
             "prior would turn a measurement into a guess.")
 
+    _ensure_kiui_compatibility()
     import trimesh
 
     os.makedirs(out_dir, exist_ok=True)
