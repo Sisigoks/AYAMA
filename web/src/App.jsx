@@ -70,7 +70,7 @@ function useJob(id) {
 
 function Viewer({ manifest, base, layer, lod, exagg, shade, fog, wire,
                   onStats, onReadout, onFlying, flyNonce,
-                  structural, onStructuralReady }) {
+                  structural, onStructuralReady, onStructuralFallback }) {
   const ref = useRef(null);
   const api = useRef(null);
   const [err, setErr] = useState('');
@@ -93,11 +93,19 @@ function Viewer({ manifest, base, layer, lod, exagg, shade, fog, wire,
   useEffect(() => { api.current?.setFog(fog); }, [fog]);
   useEffect(() => { api.current?.setWire(wire); }, [wire]);
   useEffect(() => {
-    // Several megabytes, fetched on first use. A failure here is reported
-    // rather than swallowed: silently showing the height field while the
-    // control says "structural" is the kind of lie this project avoids.
-    api.current?.setStructural(structural)
-      .catch((e) => setErr(String(e.message || e)));
+    // Several megabytes, fetched on first use. A failure falls back to the
+    // height field and says why - the viewer keeps working, and the panel does
+    // not claim a geometry it is not drawing. Silently showing one while the
+    // control says the other is the kind of lie this project avoids.
+    const v = api.current;
+    if (!v) return;
+    v.setStructural(structural)
+      .then((on) => {
+        if (structural && !on) {
+          onStructuralFallback?.('this run has no structural mesh');
+        }
+      })
+      .catch((e) => onStructuralFallback?.(String(e.message || e)));
   }, [structural]);
   useEffect(() => {
     if (!flyNonce || !api.current) return;
@@ -137,7 +145,11 @@ export default function App() {
   const [wire, setWire] = useState(false);
   // The height field or the structural rebuild. Two different meshes, not
   // two styles: a height field has one z per (x, y) and cannot show a wall.
-  const [structural, setStructural] = useState(false);
+  // The structural rebuild is the default: it is the same calibrated heights as
+  // the height field, with the buildings actually separated and their walls
+  // vertical. A reader arriving at the viewer should see the better geometry
+  // first and be able to switch back, not the other way round.
+  const [structural, setStructural] = useState(true);
   const [hasStructural, setHasStructural] = useState(false);
   const [flying, setFlying] = useState(false);
   const [flyNonce, setFlyNonce] = useState(0);
@@ -147,6 +159,9 @@ export default function App() {
   // null while unknown, then true/false. Drives the one thing a viewer with no
   // service behind it must not do: look identical to one that has a service.
   const [service, setService] = useState(null);
+  // Why the structural mesh is not showing, when it was asked for and could not
+  // be drawn. Silence would leave the panel claiming a geometry it is not using.
+  const [structuralNote, setStructuralNote] = useState('');
 
   const job = useJob(manifest ? '' : jobId);
 
@@ -230,6 +245,7 @@ export default function App() {
             manifest={manifest} base={base} layer={layer} lod={lod} exagg={exagg}
             shade={shade} fog={fog} wire={wire} flyNonce={flyNonce}
             structural={structural} onStructuralReady={setHasStructural}
+            onStructuralFallback={(why) => { setStructural(false); setStructuralNote(why); }}
             onStats={(tris, l) => setStats({ triangles: tris, lod: l })}
             onReadout={setReadout}
             onFlying={setFlying}
@@ -241,7 +257,7 @@ export default function App() {
             exagg={exagg} setExagg={setExagg} shade={shade} setShade={setShade}
             fog={fog} setFog={setFog} wire={wire} setWire={setWire}
             structural={structural} setStructural={setStructural}
-            hasStructural={hasStructural}
+            hasStructural={hasStructural} structuralNote={structuralNote}
             flying={flying} onFly={() => setFlyNonce((n) => n + 1)} readout={readout}
           />
         </div>

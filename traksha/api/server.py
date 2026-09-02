@@ -37,6 +37,9 @@ from typing import Optional
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 WEB_SRC = os.path.join(_ROOT, "web")
 WEB_DIR = os.path.join(WEB_SRC, "dist")
+# The delivered study, which results.html renders. Served beside the build
+# so the dashboard behaves the same under this server as under Pages.
+RESULTS_DIR = os.path.join(_ROOT, "results")
 
 
 def web_root(explicit: str = "") -> str:
@@ -226,13 +229,29 @@ def create_app(jobs_root: str = "out/jobs", web_dir: Optional[str] = None,
 
     @app.get("/{name:path}")
     async def static_file(name: str):
+        """The built front end, and the delivered study beside it.
+
+        `results/` is not part of the build - it is the study this repository
+        delivers, sitting at the repository root - but `results.html` fetches
+        `results/dataset.json` at load, and the "Study & results" link in the
+        viewer goes straight there. Without this the dashboard renders its empty
+        state under `traksha serve` while working fine under `scripts/serve.py`,
+        which copies the directory in: the same page, two servers, two answers.
+        """
         parts = [p for p in name.split("/") if p not in ("", ".", "..")]
         if not parts:
             raise HTTPException(404, "not found")
-        target = os.path.abspath(os.path.join(web, *parts))
-        if os.path.commonpath([target, web]) != web or not os.path.isfile(target):
-            raise HTTPException(404, "not found")
-        return FileResponse(target)
+
+        roots = [web]
+        if parts[0] == "results" and os.path.isdir(RESULTS_DIR):
+            roots.insert(0, os.path.dirname(RESULTS_DIR))
+        for root in roots:
+            target = os.path.abspath(os.path.join(root, *parts))
+            if os.path.commonpath([target, os.path.abspath(root)]) !=                     os.path.abspath(root):
+                continue
+            if os.path.isfile(target):
+                return FileResponse(target)
+        raise HTTPException(404, "not found")
 
     return app
 

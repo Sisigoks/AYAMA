@@ -1820,6 +1820,13 @@ but not what to do. That is now one line naming the command, the proxy answers
 `web/data` with a note saying so, which is the same thing the published site
 does and for the same reason.
 
+`traksha serve` serves the delivered study at `/results/` as well as the build,
+because `results.html` fetches `results/dataset.json` at load and the viewer's
+"Study & results" link goes straight there. Without it the dashboard rendered its
+empty state under the service while working under `scripts/serve.py`, which
+copies the directory in — the same page answering differently depending on which
+server was in front of it, which is how it surfaced as a 404 on Colab.
+
 Vite proxies `/api` to the service and serves `results/` from the repository
 root; `web/data` is a static file it already serves. Every fetch in the app is a
 relative path, so nothing in the front end needs to know which server answered.

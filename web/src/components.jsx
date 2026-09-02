@@ -264,7 +264,7 @@ function OfflineNote() {
 export function SidePanel(p) {
   const { manifest: m, base, layer, setLayer, lod, setLod, exagg, setExagg,
           shade, setShade, fog, setFog, wire, setWire, flying, onFly, readout,
-          offline, structural, setStructural, hasStructural } = p;
+          offline, structural, setStructural, hasStructural, structuralNote } = p;
   const g = m.grid || {};
   const layers = LAYERS.filter((l) => m.layers && m.layers[l.id]);
   const active = LAYERS.find((l) => l.id === layer);
@@ -303,6 +303,9 @@ export function SidePanel(p) {
               Structural mesh
             </button>
           </div>
+          {structuralNote ? (
+            <p className="note-sm">{`Showing the height field: ${structuralNote}.`}</p>
+          ) : null}
           {structural && m.mesh && m.mesh.structural ? (
             <div className="kv">
               <Row k="buildings" v={m.mesh.structural.buildings ?? '–'} />

@@ -399,3 +399,37 @@ def test_an_upload_can_run_structural_segmentation_and_serves_the_artifact(clien
 
     phase = next(p for p in job["phases"] if p["name"] == "instances")
     assert phase["status"] == "done" and phase["duration_s"] > 0
+
+
+def test_the_results_dashboard_can_load_its_data_from_this_server(tmp_path):
+    """`results.html` fetches `results/dataset.json` at load.
+
+    It is not part of the build - it is the delivered study at the repository
+    root - so a server that only serves `web/dist` renders the dashboard's empty
+    state while `scripts/serve.py`, which copies the directory in, renders the
+    study. The same page answering differently depending on which server is in
+    front of it is the bug this pins; it showed up as a 404 on Colab.
+    """
+    from fastapi.testclient import TestClient
+
+    from traksha.api.server import RESULTS_DIR, create_app
+
+    if not os.path.isfile(os.path.join(RESULTS_DIR, "dataset.json")):
+        pytest.skip("no delivered study in this checkout")
+
+    c = TestClient(create_app(jobs_root=str(tmp_path)))
+    assert c.get("/results.html").status_code == 200
+    got = c.get("/results/dataset.json")
+    assert got.status_code == 200, "the dashboard cannot reach its own data"
+    assert "aggregate" in got.json()
+
+
+def test_serving_results_cannot_be_used_to_escape_the_repository(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from traksha.api.server import create_app
+
+    c = TestClient(create_app(jobs_root=str(tmp_path)))
+    for path in ("/results/../pyproject.toml", "/results/../../etc/passwd",
+                 "/../pyproject.toml"):
+        assert c.get(path).status_code == 404, path
