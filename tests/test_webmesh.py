@@ -165,3 +165,18 @@ def test_unpainted_groups_still_point_at_the_scene_texture(tmp_path):
     info = W.write(path, mesh, mesh["grid"], mesh["gsd_m"])
     assert info["textures"] == [] and info["refined_groups"] == 0
     assert all(g[4] == -1 for g in W.read(path)["groups"])
+
+
+def test_a_zero_vertex_normal_never_reaches_the_shader():
+    """`normalize(vec3(0))` is undefined and comes back NaN on some drivers.
+
+    The renderer mixes a vertex normal against a normal map weighted by a
+    uniform, and `NaN * 0.0` is still NaN - so a weight of zero does not save
+    you. That turned the whole height field black after a visit to the
+    structural mesh. The writer must never emit a zero-length normal.
+    """
+    dsm, ndsm, field = scene_with_a_block()
+    mesh = W.build_web_mesh(dsm, ndsm, field, None, 1.0, max_triangles=100_000)
+    lengths = np.linalg.norm(mesh["normals"], axis=1)
+    assert lengths.min() > 0.9, "a degenerate normal would render as NaN"
+    assert np.isfinite(mesh["normals"]).all()

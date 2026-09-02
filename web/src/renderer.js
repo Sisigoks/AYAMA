@@ -208,7 +208,8 @@ var VERT = [
   '  // Scaling z by uExagg tilts every surface, so the normal transforms by',
   '  // the inverse transpose - for diag(1,1,e) that is diag(1,1,1/e). A wall',
   '  // has nz = 0 and therefore correctly stays vertical.',
-  '  vN = normalize(vec3(aN.x, aN.y, aN.z / max(uExagg, 1e-3)));',
+  '  vec3 nRaw = vec3(aN.x, aN.y, aN.z / max(uExagg, 1e-3));',
+  '  vN = dot(nRaw, nRaw) > 1e-8 ? normalize(nRaw) : vec3(0.0, 0.0, 1.0);',
   '  float z = (aH - uZBase) * uExagg;',
   '  vec3 world = vec3(aPos.x, aPos.y, z);',
   '  vDist = length(world - uEye);',
@@ -237,8 +238,14 @@ var FRAG = [
   '  // A normal map is indexed by (u, v), and a wall shares its UV with the',
   '  // pavement under it - so a facade would shade as though it were ground.',
   '  // A mesh that carries per-vertex normals overrides the map.',
+  '  // normalize(vec3(0)) is undefined and comes back NaN on some drivers,',
+  '  // and NaN * 0.0 is still NaN - so a mix() weighted to zero does not save',
+  '  // you. The tiles draw with aN disabled, which is exactly that case, and',
+  '  // it turned the whole height field black after a visit to the structural',
+  '  // mesh. Guarded here rather than relying on the weight.',
+  '  vec3 vnorm = dot(vN, vN) > 1e-8 ? normalize(vN) : vec3(0.0, 0.0, 1.0);',
   '  vec3 n = mix(normalize(texture2D(uNrm, vUV).rgb * 2.0 - 1.0),',
-  '               normalize(vN), uVertexNormal);',
+  '               vnorm, uVertexNormal);',
   '',
   '  // direct sun',
   '  float lam = max(dot(n, normalize(uLight)), 0.0);',
@@ -507,6 +514,12 @@ function draw() {
     return;
   }
   gl.uniform1f(uVN, 0);
+  // The tiles carry no per-vertex normal; the generic attribute would otherwise
+  // be (0, 0, 0), which is not a direction.
+  if (aN >= 0) {
+    gl.disableVertexAttribArray(aN);
+    gl.vertexAttrib3f(aN, 0.0, 0.0, 1.0);
+  }
 
   state.tiles.forEach(function (t) {
     gl.bindBuffer(gl.ARRAY_BUFFER, t.bufPos);

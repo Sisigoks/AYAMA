@@ -475,3 +475,19 @@ def test_the_fitted_run_recovers_relief_and_stops_warning(tmp_path):
     ids = {n["id"] for n in m["notes"]}
     assert not (ids & {"flat_surface", "low_relief"}), \
         f"relief warning fired on a surface with {st['max']:.0f} m of structure: {ids}"
+
+
+def test_the_shaders_never_normalise_a_possibly_zero_vector():
+    """A guard only a browser can execute, so its presence is pinned here.
+
+    `normalize(vec3(0))` is undefined and returns NaN on some drivers, and
+    `NaN * 0.0` is still NaN - so mixing it away with a zero weight does not
+    help. The tiles draw with the normal attribute disabled, which is exactly
+    that case, and it rendered the entire height field black after the viewer
+    had shown the structural mesh once.
+    """
+    src = _read("src/renderer.js")
+    assert "dot(vN, vN) > 1e-8" in src, "the fragment-stage guard is gone"
+    assert "dot(nRaw, nRaw) > 1e-8" in src, "the vertex-stage guard is gone"
+    # and the disabled attribute is given a real direction rather than (0,0,0)
+    assert "vertexAttrib3f(aN, 0.0, 0.0, 1.0)" in src

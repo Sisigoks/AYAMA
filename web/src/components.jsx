@@ -215,6 +215,14 @@ export function Progress({ job, onCancel }) {
             <span className="nm">{p.name}</span>
             {p.status === 'running' && p.message ? (
               <span className="dt">{p.message}</span>
+            ) : p.status === 'skipped' ? (
+              /* A skipped phase without its reason is the same as a broken one
+                 to anyone reading the screen. The full text is on the title,
+                 because the reason a GPU stage skipped is a list of packages. */
+              <span className="dt" title={p.message}>
+                {`skipped — ${(p.message || 'not applicable').slice(0, 52)}`}
+                {(p.message || '').length > 52 ? '…' : ''}
+              </span>
             ) : (
               <span className="dt">
                 {PHASE_ICON[p.status] || ''}
