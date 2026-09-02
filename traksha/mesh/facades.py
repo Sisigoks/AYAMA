@@ -77,17 +77,34 @@ class FacadeUnavailable(RuntimeError):
 
 
 def _ensure_kiui_compatibility() -> None:
-    """Fix kiui.op missing 'from typing import Union' in Python 3.13 environments."""
+    """Fix kiui type annotations on Python 3.13 environments."""
     try:
         import kiui
-        p = os.path.join(os.path.dirname(kiui.__file__), "op.py")
-        if os.path.exists(p):
-            with open(p, "r", encoding="utf-8") as fh:
-                src = fh.read()
-            if "from typing import" not in src and "Union" in src:
-                src = "from typing import Union\n" + src
-                with open(p, "w", encoding="utf-8") as fh:
-                    fh.write(src)
+        d = os.path.dirname(kiui.__file__)
+        header = (
+            "from __future__ import annotations\n"
+            "from typing import Union, Optional, List, Tuple, Any\n"
+            "try:\n"
+            "    from torch import Tensor\n"
+            "except Exception:\n"
+            "    Tensor = Any\n"
+            "try:\n"
+            "    from numpy import ndarray\n"
+            "except Exception:\n"
+            "    ndarray = Any\n"
+        )
+        for fname in os.listdir(d):
+            if fname.endswith(".py"):
+                p = os.path.join(d, fname)
+                try:
+                    with open(p, "r", encoding="utf-8") as fh:
+                        src = fh.read()
+                    if "from __future__ import annotations" not in src:
+                        src = header + src
+                        with open(p, "w", encoding="utf-8") as fh:
+                            fh.write(src)
+                except Exception:
+                    pass
     except Exception:
         pass
 
