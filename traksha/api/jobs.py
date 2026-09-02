@@ -422,14 +422,19 @@ class JobStore:
             job.save()
             return man
 
+        # The orthophoto is needed before the run, not after: it colours the
+        # handover, and threefiner renders that colour to initialise its
+        # texture before the first diffusion step.
+        mesh_dir = os.path.join(tiles_dir, "mesh")
+        base = os.path.join(mesh_dir, "surface.jpg")
         rec = fa.refine(mesh, os.path.join(run_dir, "facades"),
                         max_buildings=limit,
                         prompt=p.get("facade_prompt") or fa.DEFAULT_PROMPT,
-                        preset=p.get("facade_preset") or fa.DEFAULT_PRESET)
+                        preset=p.get("facade_preset") or fa.DEFAULT_PRESET,
+                        texture=base if os.path.exists(base) else None,
+                        grid_shape=run["dsm"].shape, gsd_m=gsd)
         emit(StageEvent("facades", "running", f"assembling {want} building(s)", 0.9))
 
-        mesh_dir = os.path.join(tiles_dir, "mesh")
-        base = os.path.join(mesh_dir, "surface.jpg")
         info = fa.assemble(mesh, rec["buildings"],
                            os.path.join(mesh_dir, "structural_refined.obj"),
                            run["dsm"].shape, gsd,

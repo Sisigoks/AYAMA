@@ -179,7 +179,7 @@ def test_sam2_really_segments_the_bundled_scene():
         seg.unload()
 
     assert masks, "the generator returned nothing on a real scene"
-    f = I.from_masks(masks, scene.shape)
+    f = I.from_masks(masks, scene.rgb.shape[:2])
     assert f.count == len(masks)
     assert 0.0 < f.coverage <= 1.0
     assert f.instance_map.max() == f.count

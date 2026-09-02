@@ -1007,10 +1007,36 @@ three constraints that are the whole reason it is allowed to exist here.
 **Geometry is fixed, and it is enforced twice.** Only the `*_fixgeo` presets are
 accepted (`fix_geo=True, geom_mode='mesh'`) — the geometry-training modes are
 refused with a reason, because deforming a wall to satisfy a generative prior
-converts a measurement into a guess. And independently of that flag, only the
-UVs and the texture are read back: the vertex positions written out are this
-pipeline's own, copied verbatim. A returned mesh whose vertex count moved is
-refused rather than reconciled.
+converts a measurement into a guess. And independently of that flag, nothing
+from threefiner's output reaches the geometry: only colour does, resampled onto
+an atlas built for this pipeline's own triangles. The vertex positions written
+out are the calibrated ones, copied verbatim.
+
+**Two things threefiner does that the obvious implementation does not survive.**
+Both were found by running it, and both are now the shape of the code.
+
+*It renders the mesh you give it before it trains.* `fit_tex` is on by default
+and initialises the trainable texture from 512 orbits of the input mesh. kiui's
+renderer takes the vertex-colour branch only when the mesh has vertex colours;
+otherwise it interpolates `vt`, which for a nadir reconstruction with no UV
+atlas is `None`, and the run dies several minutes in with `'NoneType' object has
+no attribute 'unsqueeze'`. So the handover carries per-vertex colour sampled
+from the orthophoto — which is also the right initialisation, because the roof
+it starts from is the roof that was photographed.
+
+*The mesh that comes back is not the mesh that went in.* Before the first
+iteration threefiner runs kiui's `clean_mesh`, which merges every pair of
+vertices closer than 1% of the bounding-box diagonal — on a 40 m building at
+0.5 m ground sampling, most of the grid — and at export it unwraps a fresh
+atlas, which splits vertices again along every chart seam. Neither the vertex
+count nor the face order survives, so a UV cannot be carried back by index. It
+is carried back through *space* instead: our own xatlas atlas is rasterised into
+3D points, each point takes the colour of the nearest point on the refined
+surface, and what is written is a texture indexed by our faces. The distance of
+that nearest point is also the guarantee — if `fix_geo` had not held, the
+refined surface would not be where ours is, and the median offset says so before
+any colour is written. On the delivered scenes it is under 0.1% of the
+building's largest dimension; anything past 2% is refused.
 
 **The output is a separate artifact that says what it is.** `structural.obj`,
 the tileset and every calibrated raster are untouched. `facades/facades.json`
@@ -1030,10 +1056,17 @@ than the whole scene. On a 16 GB T4 use `sd_fixgeo` (Stable Diffusion 2, not
 gated, fits); DeepFloyd IF-II is finer and heavier and may not fit.
 
 ```bash
-pip install threefiner trimesh
+pip install threefiner trimesh xatlas pillow
 pip install git+https://github.com/NVlabs/nvdiffrast     # CUDA, source build
 python -m traksha.cli facades results/zurich --limit 8 --preset sd_fixgeo
 ```
+
+`preflight()` checks ten modules, not the obvious three, and prints what is
+missing before anything starts. Four of them are threefiner's own dependencies
+rather than this pipeline's — `xatlas` and `pygltflib` are imported only at
+export, `sklearn` only in the UV padding immediately before it, `cv2` at kiui's
+import time. A box missing one of those trains for ten minutes and then throws
+the result away, which is a worse failure than not starting.
 
 **It produces the final model, not an intermediate.** Per-building GLBs are a
 staging format; what the command assembles is one multi-material OBJ over the
@@ -1047,8 +1080,12 @@ site down) and offered as a download in the viewer, labelled with how many
 buildings actually carry synthesised walls.
 
 Geometry is byte-identical to the input, and a test asserts it: `max|Δv| = 0`
-over every vertex. A returned mesh whose vertex count moved is skipped for that
-building rather than reconciled.
+over every vertex, with the stand-in for threefiner's result welded and re-split
+exactly as kiui does it. A refined group's faces carry `v/vt` with the two
+indices differing, because a chart seam gives one vertex two texture
+coordinates; the vertex index on both sides of that seam is still ours. A
+returned mesh whose *shape* is not this building's is skipped for that building
+rather than reconciled.
 
 **The viewer draws the painted walls, not just the download.** `structural.bin`
 gained a texture table (format v2): a group can name its own image, and the
@@ -1092,12 +1129,21 @@ four buildings painted, four textures fetched by the browser, every download
 resolving, and the retired files returning 404.
 
 **Not verified on hardware.** This was written and tested on a CPU-only machine.
-The extraction, the frame conversion, the round trip, both guards, the assembly
-and the artifact are covered by tests, and the web service was exercised with the
-refined model registered — every layer, the exaggeration and the downloads, with
-no errors. The diffusion step itself has never been executed here. `--dry-run`
-prepares the handover and assembles the model without touching a GPU, and
-`traksha facades` without it prints exactly what the box is missing.
+The extraction, the frame conversion, the handover, the bake, both guards, the
+assembly and the artifact are covered by tests, and the web service was
+exercised with the refined model registered — every layer, the exaggeration and
+the downloads, with no errors. The diffusion step itself has never been executed
+here. What *has* been run here is everything on either side of it, on the real
+Zurich scene, with threefiner stood in by a stub that welds and re-splits the
+mesh exactly as kiui does: four buildings baked at 1024 px with the refined
+surface 0.05% of the building away from the measured one, `structural.obj`'s
+`v` block reproduced byte for byte in the refined model, and all 687 690
+triangles present in a file trimesh reopens with five materials.
+
+`--dry-run` writes the handover meshes and stops there — it does not assemble,
+because assembling with nothing painted would overwrite a real refined model
+with an empty one and register that in the manifest. `traksha facades` without
+it prints exactly what the box is missing before anything starts.
 
 ### 6.3 Fitting it into a budget: decimate, do not stride — and do not subdivide
 

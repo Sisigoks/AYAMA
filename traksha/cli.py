@@ -822,6 +822,19 @@ def _completed_scene(ref, out_dir: str, want_delivery: bool):
     return rec
 
 
+def _shortest_path(path: str) -> str:
+    """Relative to the working directory when that means anything.
+
+    On Windows it does not always: `relpath` raises outright when the two paths
+    are on different drives, which is not an unusual place to put a run, and a
+    printed path is not worth ending a command over.
+    """
+    try:
+        return os.path.relpath(path, os.getcwd())
+    except ValueError:
+        return path
+
+
 def cmd_facades(args) -> int:
     """Synthesise facade texture for a run's structural mesh, on a GPU."""
     import json
@@ -862,35 +875,72 @@ def cmd_facades(args) -> int:
     mesh = build_structural(run["dsm"], run["ndsm"], buildings, gsd)
     want = len(buildings) if args.limit <= 0 else min(len(buildings), args.limit)
     print(f"  buildings    {len(buildings)} in the mesh, refining {want}")
-    if want > 12 and not args.dry_run:
-        print(f"  note         {want} buildings is roughly "
-              f"{want * 3}-{want * 6} minutes on one GPU")
-
+    # The orthophoto is found before the run, not after it: it is what the
+    # handover is coloured with, and threefiner renders that colour to
+    # initialise its texture before the first diffusion step.
+    tileset = args.tileset or _guess_tileset(args.run)
     out = args.out or os.path.join(args.run, "facades")
+    mesh_dir = os.path.join(os.path.dirname(tileset), "mesh") if tileset else out
+    base_tex = os.path.join(mesh_dir, "surface.jpg")
+    have_tex = os.path.exists(base_tex)
+    print(f"  handover     per-vertex colour from "
+          f"{'surface.jpg' if have_tex else 'a flat grey (no orthophoto beside the mesh)'}")
+    if not args.dry_run:
+        low, high = fa.MINUTES_PER_BUILDING
+        print(f"  note         roughly {want * low}-{want * high} minutes on one "
+              f"GPU, plus the first model download")
+
     rec = fa.refine(mesh, out, max_buildings=args.limit,
                     prompt=args.prompt or fa.DEFAULT_PROMPT,
                     preset=args.preset, iters=args.iters or None,
-                    dry_run=args.dry_run)
+                    dry_run=args.dry_run,
+                    texture=base_tex if have_tex else None,
+                    grid_shape=run["dsm"].shape, gsd_m=gsd,
+                    timeout_s=args.timeout)
     ok = sum(1 for b in rec["buildings"] if b.get("glb") or b.get("dry_run"))
     print(f"  refined      {ok}/{len(rec['buildings'])} into {out}/")
     for b in rec["buildings"]:
         if b.get("error"):
-            print(f"    ! {b['name']} failed (exit code {b.get('returncode')}): {b['error'].strip()}")
+            print(f"    ! {b['name']} failed (exit code {b.get('returncode')}): "
+                  f"{b['error'].strip()}")
+        elif b.get("skipped"):
+            print(f"    - {b['name']} skipped: {b['skipped']}")
 
-    # The assembled model: the whole scene, with threefiner's texture on the
-    # buildings it refined. This is the artifact the request is really about -
-    # per-building GLBs are an intermediate, not a deliverable.
-    tileset = args.tileset or _guess_tileset(args.run)
-    mesh_dir = os.path.join(os.path.dirname(tileset), "mesh") if tileset else out
-    base_tex = os.path.join(mesh_dir, "surface.jpg")
+    if args.dry_run:
+        # Stop here on purpose. A dry run prepares the handover; assembling a
+        # model with nothing painted in it would overwrite a real refined model
+        # with an empty one and register that in the manifest, which is a worse
+        # outcome than the command doing less than it could.
+        print("  note         dry run: the handover meshes are written and "
+              "nothing else was touched")
+        return 0
+
+    # The assembled model: the whole scene, with threefiner's colour baked onto
+    # the buildings it refined. This is the artifact the request is really about
+    # - per-building GLBs are an intermediate, not a deliverable.
     info = fa.assemble(mesh, rec["buildings"],
                        os.path.join(mesh_dir, "structural_refined.obj"),
                        run["dsm"].shape, gsd,
-                       base_texture=base_tex if os.path.exists(base_tex) else None)
-    print(f"  assembled    {os.path.relpath(info['obj'], os.getcwd())}")
+                       base_texture=base_tex if have_tex else None,
+                       resolution=args.texture_res)
+    for b in rec["buildings"]:
+        if b.get("skipped") and b.get("glb"):
+            print(f"    - {b['name']} refined but not used: {b['skipped']}")
+        elif b.get("bake"):
+            print(f"    + {b['name']} baked at {args.texture_res} px, "
+                  f"{b['bake']['coverage']:.0%} of the atlas, surface offset "
+                  f"{b['bake']['surface_offset']:.3f} of the building")
+    print(f"  assembled    {_shortest_path(info['obj'])}")
     print(f"               {info['triangles']:,} triangles, "
           f"{info['buildings_refined']}/{info['buildings_total']} buildings with "
           f"synthesised walls")
+
+    # Rewritten now that the bake has run: whether a building's colour was
+    # actually used, and how far the refined surface sat from the measured one,
+    # are only known here, and facades.json is the artifact that claims it.
+    from .core.jsonio import save_json
+
+    save_json(rec, os.path.join(out, "facades.json"), indent=1)
 
     # Rebuild the browser copy so the viewer draws what was just painted.
     # Without this the refined walls exist only in the download, and the site
@@ -928,8 +978,6 @@ def cmd_facades(args) -> int:
                                  textures=textures, group_uv=group_uv)
         print(f"  viewer       structural.bin rebuilt, "
               f"{web_info['refined_groups']} painted group(s)")
-
-    from .core.jsonio import save_json
 
     if tileset:
         # Patch the manifest the viewer reads, atomically, so a half-written
@@ -1509,6 +1557,11 @@ def build_parser() -> argparse.ArgumentParser:
     pm.add_argument("--progress", default="auto", choices=["auto", "rich", "plain", "none"])
     pm.set_defaults(func=cmd_mesh)
 
+    # Imported for its defaults rather than duplicating them: the timeout and
+    # the atlas size are decided by what threefiner does, which is stated once,
+    # in the module that has to live with it.
+    from .mesh import facades as fa_defaults
+
     pf = sub.add_parser("facades", help=(
         "synthesise facade texture with threefiner (needs a CUDA GPU). "
         "Geometry is fixed and the output is a separate, labelled artifact."))
@@ -1522,6 +1575,11 @@ def build_parser() -> argparse.ArgumentParser:
                     help="only fixed-geometry presets; the others deform measured walls")
     pf.add_argument("--prompt", default=None)
     pf.add_argument("--iters", type=int, default=0, help="0 keeps the preset default")
+    pf.add_argument("--timeout", type=int, default=fa_defaults.DEFAULT_TIMEOUT_S,
+                    help="seconds per building before it is given up on; the "
+                         "first one also pays for the model download")
+    pf.add_argument("--texture-res", type=int, default=fa_defaults.DEFAULT_TEXTURE_RES,
+                    help="pixels per side of each refined building's baked atlas")
     pf.add_argument("--dry-run", action="store_true",
                     help="prepare the per-building meshes without touching a GPU")
     pf.add_argument("--tileset", default=None,

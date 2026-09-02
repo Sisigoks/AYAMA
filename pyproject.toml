@@ -29,7 +29,11 @@ api = ["fastapi>=0.110", "uvicorn[standard]>=0.29", "python-multipart>=0.0.9", "
 mesh = ["pymeshlab>=2023.12", "trimesh>=4.0"]
 # Facade texture synthesis. Needs a CUDA GPU and nvdiffrast, which is a
 # source build and cannot be declared here. See README section 6.2b.
-facades = ["threefiner>=0.1.2", "trimesh>=4.0"]
+# xatlas and pillow are listed because the *bake* needs them on this side, not
+# only threefiner on its own: the refined texture is resampled onto an atlas
+# built for our triangles, and pip resolving threefiner's tree is not a
+# guarantee that either is present.
+facades = ["threefiner>=0.1.2", "trimesh>=4.0", "xatlas>=0.0.9", "pillow>=10.0"]
 dev = ["pytest>=8.0"]
 
 [project.scripts]

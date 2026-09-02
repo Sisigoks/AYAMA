@@ -294,3 +294,16 @@ def write_obj_structural(
         "degenerate_faces": int(stats["degenerate_faces"]),
         "non_manifold_edges": int(stats["non_manifold_edges"]),
     }
+
+
+def _write_faces_uv(fh, tris: np.ndarray, uvs: np.ndarray) -> None:
+    """`f v/vt` where the two index streams are not the same stream.
+
+    Every grid-derived mesh here has one texture coordinate per vertex, so
+    `_write_faces` writes `v/v` and is done. A synthesised facade does not: it
+    carries its own UV atlas, and a vertex sitting on a chart seam has one
+    position and two texture coordinates. OBJ says that per face corner, which
+    is what this writes.
+    """
+    fh.writelines("f %d/%d %d/%d %d/%d\n" % (t[0], u[0], t[1], u[1], t[2], u[2])
+                  for t, u in zip(tris, uvs))
