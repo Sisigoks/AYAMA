@@ -427,12 +427,20 @@ class JobStore:
         # texture before the first diffusion step.
         mesh_dir = os.path.join(tiles_dir, "mesh")
         base = os.path.join(mesh_dir, "surface.jpg")
-        rec = fa.refine(mesh, os.path.join(run_dir, "facades"),
-                        max_buildings=limit,
-                        prompt=p.get("facade_prompt") or fa.DEFAULT_PROMPT,
-                        preset=p.get("facade_preset") or fa.DEFAULT_PRESET,
-                        texture=base if os.path.exists(base) else None,
-                        grid_shape=run["dsm"].shape, gsd_m=gsd)
+        try:
+            rec = fa.refine(mesh, os.path.join(run_dir, "facades"),
+                            max_buildings=limit,
+                            prompt=p.get("facade_prompt") or fa.DEFAULT_PROMPT,
+                            preset=p.get("facade_preset") or fa.DEFAULT_PRESET,
+                            texture=base if os.path.exists(base) else None,
+                            grid_shape=run["dsm"].shape, gsd_m=gsd)
+        except fa.FacadeUnavailable as exc:
+            # Most often the diffusion weights could not be fetched. That is a
+            # reason to skip one phase with the reason attached, not to fail a
+            # reconstruction that is already finished and on disk.
+            job.progress.skip("facades", str(exc).splitlines()[0][:200])
+            job.save()
+            return man
         emit(StageEvent("facades", "running", f"assembling {want} building(s)", 0.9))
 
         info = fa.assemble(mesh, rec["buildings"],

@@ -180,6 +180,74 @@ def test_the_frame_conversion_is_exactly_invertible():
     assert np.abs(inverse(local) - V).max() < 1e-9
 
 
+# ------------------------------------------------------------- the weights
+def test_every_allowed_preset_names_the_weights_it_needs():
+    """The fetch happens here, once, so it has to know what to fetch."""
+    for preset in FA.FIXED_GEOMETRY_PRESETS:
+        repo, variant = FA.PRESET_MODELS[preset]
+        assert "/" in repo
+        assert variant in (None, "fp16")
+
+
+def test_a_hub_failure_is_reported_once_with_what_to_do(monkeypatch):
+    """Four buildings failing on four identical stack traces is the failure
+    mode this replaced: one message, up front, naming the fix."""
+    calls = []
+
+    class Boom(Exception):
+        pass
+
+    class FakePipeline:
+        @staticmethod
+        def download(repo, **kwargs):
+            calls.append(repo)
+            raise Boom("429 Client Error: Too Many Requests")
+
+    monkeypatch.setitem(__import__("sys").modules, "diffusers",
+                        type("m", (), {"DiffusionPipeline": FakePipeline}))
+    monkeypatch.setattr(FA.time, "sleep", lambda s: None)
+
+    with pytest.raises(FA.FacadeUnavailable) as caught:
+        FA.ensure_weights("sd_fixgeo")
+    message = str(caught.value)
+    assert "stable-diffusion-2-1-base" in message
+    assert "HF_TOKEN" in message, "the message does not say what to do"
+    assert len(calls) == FA.WEIGHT_ATTEMPTS, "a rate limit was not retried"
+
+
+def test_warm_weights_are_fetched_once_for_the_whole_run(monkeypatch, tmp_path):
+    """Per building is what got rate-limited. Per run is the fix."""
+    calls = []
+
+    class FakePipeline:
+        @staticmethod
+        def download(repo, **kwargs):
+            calls.append(repo)
+            return str(tmp_path / "cache")
+
+    monkeypatch.setitem(__import__("sys").modules, "diffusers",
+                        type("m", (), {"DiffusionPipeline": FakePipeline}))
+    got = FA.ensure_weights("sd_fixgeo")
+    assert got["attempts"] == 1 and len(calls) == 1
+    assert got["repo"] == FA.PRESET_MODELS["sd_fixgeo"][0]
+
+
+def test_the_reported_error_is_the_exception_not_the_last_stack_frame():
+    """A traceback puts the reason at the end and frames above it, so tailing
+    the output prints frames and truncates the reason - which is what the first
+    run of this actually did."""
+    output = (
+        'Traceback (most recent call last):\n'
+        '  File "/usr/lib/python3.13/site-packages/diffusers/pipe.py", '
+        'line 1859, in download\n'
+        '    raise EnvironmentError(\n'
+        '    ...<3 lines>...\n'
+        'OSError: Cannot load model stabilityai/stable-diffusion-2-1-base: '
+        'the model is not fully cached locally\n')
+    assert FA._headline(output).startswith("OSError: Cannot load model")
+    assert FA._headline("") == "no output"
+
+
 def test_the_handover_carries_vertex_colour(tmp_path):
     """The regression for the failure this stage actually hit.
 

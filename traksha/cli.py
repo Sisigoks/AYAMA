@@ -885,10 +885,29 @@ def cmd_facades(args) -> int:
     have_tex = os.path.exists(base_tex)
     print(f"  handover     per-vertex colour from "
           f"{'surface.jpg' if have_tex else 'a flat grey (no orthophoto beside the mesh)'}")
+    # The weights, once, here. Each refinement is a subprocess that calls
+    # `from_pretrained`, and diffusers resolves that by asking the Hub and
+    # falling back to the cache when the call fails - so an un-warmed cache on a
+    # box the Hub is rate-limiting turns every building into "the model is not
+    # fully cached locally". One fetch up front removes that for the whole run,
+    # and a network problem is reported here, with what to do about it, instead
+    # of once per building after the meshes have been prepared.
+    weights = None
     if not args.dry_run:
+        repo = fa.PRESET_MODELS[args.preset][0]
+        print(f"  weights      {repo}, cached once before the first building")
+        try:
+            weights = fa.ensure_weights(
+                args.preset, on_note=lambda m: print(f"  note         {m}"))
+        except fa.FacadeUnavailable as exc:
+            print(f"error: {exc}")
+            return 1
+        print(f"  weights      ready after {weights['attempts']} attempt(s)"
+              + (", cache reads offline: the Hub is switched off for the run"
+                 if weights.get("offline_ok") else
+                 ", but the cache did not read back offline; the Hub stays on"))
         low, high = fa.MINUTES_PER_BUILDING
-        print(f"  note         roughly {want * low}-{want * high} minutes on one "
-              f"GPU, plus the first model download")
+        print(f"  note         roughly {want * low}-{want * high} minutes on one GPU")
 
     rec = fa.refine(mesh, out, max_buildings=args.limit,
                     prompt=args.prompt or fa.DEFAULT_PROMPT,
@@ -896,7 +915,7 @@ def cmd_facades(args) -> int:
                     dry_run=args.dry_run,
                     texture=base_tex if have_tex else None,
                     grid_shape=run["dsm"].shape, gsd_m=gsd,
-                    timeout_s=args.timeout)
+                    timeout_s=args.timeout, weights=weights)
     ok = sum(1 for b in rec["buildings"] if b.get("glb") or b.get("dry_run"))
     print(f"  refined      {ok}/{len(rec['buildings'])} into {out}/")
     for b in rec["buildings"]:

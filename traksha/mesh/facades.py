@@ -62,6 +62,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import time
 from typing import Optional
 
 import numpy as np
@@ -113,6 +114,20 @@ MAX_SURFACE_OFFSET = 0.02
 DEFAULT_PROMPT = ("a photograph of the facade of a European city building, "
                   "stone and render walls, regular rows of windows, flat roof")
 
+# The diffusion weights each preset scores against, and the variant threefiner
+# asks `from_pretrained` for. Stated here because they are fetched *here*,
+# before the first subprocess starts, rather than four times inside four
+# subprocesses that each have to reach the Hub and each fail separately when it
+# is rate-limiting an unauthenticated caller. Once the cache is warm, diffusers'
+# own fallback to `local_files_only` makes the refinement independent of the
+# network for the rest of the run.
+PRESET_MODELS = {
+    "sd_fixgeo": ("stabilityai/stable-diffusion-2-1-base", None),
+    "if_fixgeo": ("DeepFloyd/IF-I-XL-v1.0", "fp16"),
+    "if2_fixgeo": ("DeepFloyd/IF-II-M-v1.0", "fp16"),
+}
+WEIGHT_ATTEMPTS = 3
+
 
 class FacadeUnavailable(RuntimeError):
     """Facade refinement cannot run here. Carries what is missing."""
@@ -160,6 +175,8 @@ REQUIRED_MODULES = (
     ("threefiner", "the refiner itself", "pip install threefiner"),
     ("nvdiffrast", "threefiner's rasteriser",
      "pip install git+https://github.com/NVlabs/nvdiffrast (CUDA, source build)"),
+    ("diffusers", "the diffusion prior threefiner scores against",
+     "pip install diffusers"),
     ("trimesh", "reading the refined GLB back", "pip install trimesh"),
     ("xatlas", "unwrapping the atlas the texture is baked into",
      "pip install xatlas"),
@@ -329,11 +346,109 @@ def write_handover(path: str, local: np.ndarray, faces: np.ndarray,
     return path
 
 
+# ---------------------------------------------------------------- the weights
+def _hf_hint(exc: BaseException) -> str:
+    """The thing to actually do about a Hub failure, by what it looks like."""
+    text = f"{type(exc).__name__}: {exc}"
+    low = text.lower()
+    if "401" in low or "403" in low or "gated" in low or "authoriz" in low:
+        return ("this repository is gated: accept its licence on huggingface.co "
+                "and export HF_TOKEN=<your token>")
+    if "429" in low or "rate limit" in low or "too many requests" in low:
+        return ("the Hub is rate-limiting unauthenticated requests; export "
+                "HF_TOKEN=<your token> and run it again")
+    if "offline" in low or "outgoing traffic has been disabled" in low:
+        return ("HF_HUB_OFFLINE is set, so nothing can be fetched; unset it, or "
+                "warm the cache on a machine that has network")
+    if "space" in low and "no space" in low:
+        return "the disk filled up; these weights are about 5 GB"
+    return ("check network access to huggingface.co, and export HF_TOKEN=<your "
+            "token> if the box is being rate-limited")
+
+
+def ensure_weights(preset: str = DEFAULT_PRESET, attempts: int = WEIGHT_ATTEMPTS,
+                   on_note=None) -> dict:
+    """Put the diffusion weights in the cache, once, before any subprocess runs.
+
+    threefiner calls `from_pretrained` inside each refinement, and diffusers
+    resolves that by asking the Hub for metadata first and falling back to
+    `local_files_only` when the call fails. The fallback only works if the model
+    is *fully* cached - so on a box where the Hub call fails, an un-warmed cache
+    turns every building into `Cannot load model ...: the model is not fully
+    cached locally`, which is the failure this exists to remove.
+
+    Doing it here also means one metadata request instead of one per building,
+    which is the difference between being rate-limited and not, and it means a
+    network problem is reported once, up front, with what to do about it -
+    rather than four identical stack traces after the meshes have been prepared.
+
+    The second download call is not redundant. It asks for the same thing with
+    `local_files_only=True`, which is exactly the call the subprocess will make
+    when the Hub refuses it - so if that call succeeds here, the subprocess can
+    be run with the Hub switched off entirely and cannot fail on it. If it does
+    not succeed, the cache is left online and diffusers falls back on its own.
+    """
+    if preset not in PRESET_MODELS:
+        raise FacadeUnavailable(f"no weights are recorded for the '{preset}' preset")
+    repo, variant = PRESET_MODELS[preset]
+    try:
+        from diffusers import DiffusionPipeline
+    except ImportError as exc:                         # pragma: no cover
+        raise FacadeUnavailable(
+            "diffusers is needed to fetch the diffusion prior "
+            "(pip install diffusers)") from exc
+
+    kwargs = {"variant": variant} if variant else {}
+    last: Optional[BaseException] = None
+    for attempt in range(1, max(1, attempts) + 1):
+        try:
+            path = DiffusionPipeline.download(repo, **kwargs)
+            try:
+                DiffusionPipeline.download(repo, local_files_only=True, **kwargs)
+                offline_ok = True
+            except Exception:                          # noqa: BLE001
+                offline_ok = False
+            return {"repo": repo, "variant": variant, "path": str(path),
+                    "attempts": attempt, "offline_ok": offline_ok}
+        except Exception as exc:                       # noqa: BLE001 - reported
+            last = exc
+            if attempt < attempts:
+                if on_note:
+                    on_note(f"{repo}: {type(exc).__name__}, retrying "
+                            f"({attempt}/{attempts})")
+                # Long enough to outlast a rate-limit window, short enough that
+                # a genuinely unreachable Hub is reported inside a minute.
+                time.sleep((10, 30)[min(attempt, 2) - 1])
+    raise FacadeUnavailable(
+        f"could not fetch {repo}, which the {preset} preset scores against: "
+        f"{type(last).__name__}: {str(last)[:300]}\n  -> {_hf_hint(last)}")
+
+
+def _headline(output: str) -> str:
+    """The exception a subprocess died of, not the last 800 bytes of its stack.
+
+    A Python traceback puts the one useful line at the end and the frames that
+    led to it above, so tailing the output prints frames and truncates the
+    reason - which is how the first run of this reported four identical
+    fragments of `pipeline_utils.py` and none of what went wrong. The full tail
+    is kept alongside, in the record, for when the headline is not enough.
+    """
+    lines = [ln.rstrip() for ln in (output or "").splitlines() if ln.strip()]
+    for line in reversed(lines):
+        # `SomeError: message`, at the left margin: the end of a traceback.
+        if line[:1].isalpha() and ": " in line[:120]:
+            head = line.split(":", 1)[0]
+            if head.replace(".", "").replace("_", "").isalnum():
+                return line.strip()[:600]
+    return (lines[-1][:600] if lines else "no output")
+
+
 # ------------------------------------------------------------------- the run
 def refine_one(vertices: np.ndarray, faces: np.ndarray, out_dir: str, name: str,
                prompt: str = DEFAULT_PROMPT, preset: str = DEFAULT_PRESET,
                iters: Optional[int] = None, timeout_s: int = DEFAULT_TIMEOUT_S,
-               colours: Optional[np.ndarray] = None) -> dict:
+               colours: Optional[np.ndarray] = None,
+               offline: bool = False) -> dict:
     """Run threefiner over one building. Returns what it produced.
 
     The mesh is written Y-up, normalised and vertex-coloured; threefiner is
@@ -363,10 +478,21 @@ def refine_one(vertices: np.ndarray, faces: np.ndarray, out_dir: str, name: str,
     if iters:
         cmd += ["--iters", str(int(iters))]
 
+    # With the weights already cached and that cache proved readable offline,
+    # the Hub is switched off for the refinement itself. It has nothing left to
+    # fetch, and leaving it on is what let a rate-limited metadata call fail
+    # four buildings in a row on a box that had already downloaded the model.
+    env = dict(os.environ)
+    if offline:
+        env["HF_HUB_OFFLINE"] = "1"
+        env["TRANSFORMERS_OFFLINE"] = "1"
+
     result = {"name": name, "preset": preset, "prompt": prompt, "frame": frame,
-              "coarse": src, "returncode": None, "glb": None}
+              "coarse": src, "offline": bool(offline),
+              "returncode": None, "glb": None}
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s)
+        proc = subprocess.run(cmd, capture_output=True, text=True,
+                              timeout=timeout_s, env=env)
     except subprocess.TimeoutExpired:
         result["error"] = (f"no result after {timeout_s}s; raise --timeout, or "
                            "lower --iters if the GPU is a slow one")
@@ -377,7 +503,9 @@ def refine_one(vertices: np.ndarray, faces: np.ndarray, out_dir: str, name: str,
 
     result["returncode"] = proc.returncode
     if proc.returncode != 0:
-        result["error"] = (proc.stderr or proc.stdout or "").strip()[-800:]
+        output = (proc.stderr or proc.stdout or "").strip()
+        result["error"] = _headline(output)
+        result["stderr_tail"] = output[-4000:]
         return result
     if not os.path.exists(glb):
         result["error"] = ("threefiner exited cleanly but wrote no "
@@ -391,7 +519,8 @@ def refine(mesh: dict, out_dir: str, max_buildings: int = DEFAULT_MAX_BUILDINGS,
            prompt: str = DEFAULT_PROMPT, preset: str = DEFAULT_PRESET,
            iters: Optional[int] = None, dry_run: bool = False,
            texture: Optional[str] = None, grid_shape=None,
-           gsd_m: float = 1.0, timeout_s: int = DEFAULT_TIMEOUT_S) -> dict:
+           gsd_m: float = 1.0, timeout_s: int = DEFAULT_TIMEOUT_S,
+           weights: Optional[dict] = None) -> dict:
     """Refine the facades of the largest buildings. Writes a separate artifact.
 
     `dry_run` does everything except invoke the GPU: extraction, framing, the
@@ -403,6 +532,11 @@ def refine(mesh: dict, out_dir: str, max_buildings: int = DEFAULT_MAX_BUILDINGS,
     if not dry_run and not checks["ok"]:
         raise FacadeUnavailable(
             "facade refinement needs: " + "; ".join(checks["missing"]))
+
+    # Before the first subprocess, not inside all of them. A caller that has
+    # already done it passes the record in, so the Hub is asked once per run.
+    if not dry_run and weights is None:
+        weights = ensure_weights(preset)
 
     os.makedirs(out_dir, exist_ok=True)
     colours = None
@@ -442,7 +576,8 @@ def refine(mesh: dict, out_dir: str, max_buildings: int = DEFAULT_MAX_BUILDINGS,
             produced.append(entry)
             continue
         entry.update(refine_one(V, F, out_dir, name, prompt, preset, iters,
-                                timeout_s=timeout_s, colours=col))
+                                timeout_s=timeout_s, colours=col,
+                                offline=bool((weights or {}).get("offline_ok"))))
         produced.append(entry)
 
     record = {
@@ -455,6 +590,7 @@ def refine(mesh: dict, out_dir: str, max_buildings: int = DEFAULT_MAX_BUILDINGS,
         "tool": "threefiner (3DTopia)",
         "preset": preset,
         "prompt": prompt,
+        "weights": weights,
         "buildings": produced,
         "environment": checks,
     }
