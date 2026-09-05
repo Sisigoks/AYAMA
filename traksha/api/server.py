@@ -118,9 +118,12 @@ def create_app(jobs_root: str = "out/jobs", web_dir: Optional[str] = None,
         mesh: bool = Form(False),
         instances: str = Form("auto"),
         instance_points: int = Form(16),
-        facades: str = Form("auto"),
-        facade_limit: int = Form(4),
-        facade_preset: str = Form("sd_fixgeo"),
+        osm: bool = Form(False),
+        dtm: str = Form("bulldozer"),
+        refine: str = Form("auto"),
+        refine_limit: int = Form(8),
+        refine_resolution: int = Form(1024),
+        trellis_root: Optional[str] = Form(None),
     ):
         data = await image.read()
         try:
@@ -128,8 +131,10 @@ def create_app(jobs_root: str = "out/jobs", web_dir: Optional[str] = None,
                 "backbone": backbone, "chip": chip, "bootstrap": bootstrap,
                 "mesh": mesh,
                 "instances": instances, "instance_points": instance_points,
-                "facades": facades, "facade_limit": facade_limit,
-                "facade_preset": facade_preset,
+                "osm": osm, "dtm": dtm,
+                "refine": refine, "refine_limit": refine_limit,
+                "refine_resolution": refine_resolution,
+                "trellis_root": trellis_root,
                 "sun_azimuth": sun_azimuth, "sun_elevation": sun_elevation,
             })
         except UploadRejected as exc:

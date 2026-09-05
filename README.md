@@ -643,7 +643,9 @@ no account are required.
 > redistributed under those same terms; its provenance is recorded in
 > [`traksha/data/fixture/ATTRIBUTION.md`](traksha/data/fixture/ATTRIBUTION.md).
 
-**Copernicus GLO-30** is referenced but not downloaded. `simulate_public_dem`
+**Copernicus GLO-30** is now fetchable — `--dem copernicus --fetch-dem` pulls the
+tiles a scene touches from the AWS Open Data mirror (§6.2a). Every number
+published in §3 predates that and was produced with `simulate_public_dem`, which
 degrades the survey-grade swissALTI3D DTM to GLO-30's 30 m posting and 3 m
 correlated noise, so the anchor DEM is no better than a freely available global
 DEM would be. Anchoring to survey-grade lidar directly would be a far easier
@@ -657,7 +659,7 @@ are stamped `sim:` in their provenance so the two can never be confused.
 | **DFC2019 Track 1 / US3D** [12] | The best match for the problem — WorldView-3 satellite imagery with co-registered AGL rasters and semantic labels. Behind a registration wall, so no script can fetch it and no claim built on it is reproducible by one command. The `us3d` layout is implemented and tested; point `--root` at your own copy |
 | **IARPA MVS3DM** | Multi-view by construction; this project is monocular |
 | **ISPRS Vaihingen / Potsdam** | Aerial, with DSMs, but small and long superseded by the Swiss products for this purpose |
-| **OpenStreetMap building heights** | Sparse, inconsistently attributed, and not co-registered to any particular acquisition |
+| **OpenStreetMap building heights** | Sparse, inconsistently attributed, and not co-registered to any particular acquisition. Still true, and still not used. OSM *footprints and roads* are now used — for shape and for where the ground is, never for a height — after being checked against lidar: see §6.2a |
 
 **The consequence, stated plainly: this study is aerial, not satellite.** It
 tests the calibration against real surfaces, real materials and real building
@@ -992,158 +994,502 @@ where the remaining 18 non-manifold edges were.
 detailed download rather than a web asset, and it is not committed; it rebuilds
 in seconds from what is. `--no-structural` skips it.
 
-### 6.2b Facade texture with threefiner, on a GPU
+### 6.2a Geospatial grounding: OpenStreetMap, Copernicus GLO-30, and a cloth filter
 
-A nadir image photographs roofs. It does not photograph walls, so the structural
-mesh's facades sample the orthophoto at the footprint edge and stretch that one
-line of pixels down the wall. The *geometry* of those walls is measured — the
-roof height and the local ground are both calibrated — but their appearance is
-not, and cannot be, from this input.
+Three external sources were added, each answering a defect that was measured
+first. None of them supplies a height, and none of them overrules the image
+about what exists.
 
-threefiner [14] refines a mesh against a diffusion prior by score distillation,
-and given a CUDA GPU it can paint them. `traksha facades <run>` does that, under
-three constraints that are the whole reason it is allowed to exist here.
+#### The DEM is now fetched, not simulated
 
-**Geometry is fixed, and it is enforced twice.** Only the `*_fixgeo` presets are
-accepted (`fix_geo=True, geom_mode='mesh'`) — the geometry-training modes are
-refused with a reason, because deforming a wall to satisfy a generative prior
-converts a measurement into a guess. And independently of that flag, nothing
-from threefiner's output reaches the geometry: only colour does, resampled onto
-an atlas built for this pipeline's own triangles. The vertex positions written
-out are the calibrated ones, copied verbatim.
+§2.8 admitted that **Copernicus GLO-30 is referenced but not downloaded** — every
+published number here was anchored to `sim:`, swissALTI3D artificially degraded
+to look like a global product. `traksha.data.dem` removes the assumption: the
+GLO-30 COGs are on the AWS Open Data mirror, anonymous, no credentials, so
+`--dem copernicus --fetch-dem` resolves the tiles a scene touches, mosaics them
+onto the image grid and records which tiles and what coverage.
 
-**Two things threefiner does that the obvious implementation does not survive.**
-Both were found by running it, and both are now the shape of the code.
+**Copernicus rather than NASADEM, on the published comparisons.** GLO-30 ranks
+first in urban/industrial and low-relief classes — 0.82 m mean error and 2.34 m
+RMSE over urban Cape Town — while NASADEM only leads on steep terrain. City
+centres are low-relief. That ordering was already encoded in
+`chhaya.anchors.DEM_SIGMA_M` (copernicus 3.0 m against nasadem 5.5 m), which is
+what the anchor weights key off, so the other choice would have made every
+anchor less confident for no gain. NASADEM and SRTM stay file-only and say so:
+both sit behind NASA Earthdata authentication, and a fetcher would have to
+prompt for credentials mid-run or embed them.
 
-*It renders the mesh you give it before it trains.* `fit_tex` is on by default
-and initialises the trainable texture from 512 orbits of the input mesh. kiui's
-renderer takes the vertex-colour branch only when the mesh has vertex colours;
-otherwise it interpolates `vt`, which for a nadir reconstruction with no UV
-atlas is `None`, and the run dies several minutes in with `'NoneType' object has
-no attribute 'unsqueeze'`. So the handover carries per-vertex colour sampled
-from the orthophoto — which is also the right initialisation, because the roof
-it starts from is the roof that was photographed.
+Two caveats are recorded in the provenance rather than silently corrected.
+GLO-30 is a **DSM**, not a DTM — over a city its 30 m postings sit between the
+street and the rooftops — and its vertical datum is **EGM2008**, which a national
+product very often is not.
 
-*The mesh that comes back is not the mesh that went in.* Before the first
-iteration threefiner runs kiui's `clean_mesh`, which merges every pair of
-vertices closer than 1% of the bounding-box diagonal — on a 40 m building at
-0.5 m ground sampling, most of the grid — and at export it unwraps a fresh
-atlas, which splits vertices again along every chart seam. Neither the vertex
-count nor the face order survives, so a UV cannot be carried back by index. It
-is carried back through *space* instead: our own xatlas atlas is rasterised into
-3D points, each point takes the colour of the nearest point on the refined
-surface, and what is written is a texture indexed by our faces. The distance of
-that nearest point is also the guarantee — if `fix_geo` had not held, the
-refined surface would not be where ours is, and the median offset says so before
-any colour is written. On the delivered scenes it is under 0.1% of the
-building's largest dimension; anything past 2% is refused.
+#### OpenStreetMap, for shape and for where the ground is
 
-**The output is a separate artifact that says what it is.** `structural.obj`,
-the tileset and every calibrated raster are untouched. `facades/facades.json`
-carries `"synthesised": true` and, in words, that these walls are what a
-diffusion model expects a building of that shape to look like — plausible, not
-measured.
+§2.8 rejected OSM and gave a good reason: building *heights* there are sparse and
+inconsistently attributed. That judgement was about heights and it stands.
+Nothing added here reads a height.
 
-**It is per building.** threefiner orbits a camera around one normalised object,
-which is the wrong shape for a square kilometre of city and the right shape for
-one building — and §3.6 has already made every building its own connected
-component, so the objects are sitting there. Each is centred, scaled into
-roughly [−0.9, 0.9] and rotated Z-up to Y-up on the way out, and the inverse is
-exact to 1e-9 m on the way back.
+What it reads is **shape** and **where the ground is**, and on the bundled Zürich
+fixture both were checked against airborne lidar before being used:
 
-It costs minutes per building, so `--limit` defaults to the eight largest rather
-than the whole scene. On a 16 GB T4 use `sd_fixgeo` (Stable Diffusion 2, not
-gated, fits); DeepFloyd IF-II is finer and heavier and may not fit.
+| check | result |
+|---|---|
+| OSM footprint precision for lidar `nDSM > 2.5 m` | **0.962** |
+| median lidar `nDSM` under the OSM road mask | **−0.00 m** |
+| best footprint alignment, searched ±6 px | **0 px shift** |
 
-```bash
-pip install threefiner trimesh xatlas pillow
-pip install git+https://github.com/NVlabs/nvdiffrast     # CUDA, source build
-python -m traksha.cli facades results/zurich --limit 8 --preset sd_fixgeo
+So on this scene the prior is well registered. The gate is what makes that a
+finding rather than an assumption: `mesh.regularize.snap_to_osm` adopts an OSM
+outline only where it already agrees with the SAM 2 mask above an IoU threshold,
+and where they disagree **the mask wins**, because the mask is what this image
+observed.
+
+The stronger half is the road network. `chhaya.anchors.harvest_dem` samples a
+public DEM only where the scene is `DEM_ADMISSIBLE`, and it decides that from a
+five-class colour classifier whose errors are not random — a grey roof reads as
+bare ground, and a DEM sample taken there asserts that the terrain is at roof
+height. `data.osm.refine_semantics` demotes OSM footprints to `BUILDING` and
+promotes the road network to `ROAD` outside them, on the evidence above:
+
+| DEM-admissible pixels | before | after |
+|---|---|---|
+| share of the scene | 74.4 % | 54.1 % |
+| **median true height above ground** | **+6.39 m** | **+2.01 m** |
+| mean absolute height above ground | 8.03 m | 6.98 m |
+
+**A 68 % reduction in the systematic bias of the anchor gate.** The residual is
+tree canopy, which OSM does not map and this correction cannot reach.
+
+Elevated ways are excluded throughout: a bridge deck is metres above the terrain
+it crosses, so a DEM anchor there is not a weak constraint but a confidently
+wrong one.
+
+#### Bare earth by cloth simulation
+
+`dsm.assemble.extract_dtm` keeps the pixels the semantic raster calls ground and
+carries them under everything else. Its failure mode follows directly from the
+paragraph above: it believes the classifier, so every mislabelled rooftop becomes
+terrain and the surface rises to meet the roofs. On the bundled fixture, against
+swissALTI3D:
+
+| terrain estimator | MAE | RMSE | bias |
+|---|---|---|---|
+| `extract_dtm` (morphological) | 6.195 m | 8.136 m | **+6.193 m** |
+| **CNES Bulldozer** (`dsm.dtm`) | **0.811 m** | **1.234 m** | **−0.038 m** |
+
+The `+6.193 m` is not noise; it is the surface standing on the rooftops.
+Bulldozer [15] is a multi-scale drape-cloth filter — a stiff sheet dropped onto
+the inverted DSM — so it infers terrain from the surface's own shape and nothing
+has to be labelled correctly for it to work. It is CPU-only, Apache-2.0, and
+runs in about two seconds on a 576 px scene.
+
+`max_object_size` is the one parameter that matters and it was swept, not
+guessed, over the four delivered scenes against lidar truth:
+
+| `max_object_size` | Bern | Geneva | Lausanne | Zürich | mean MAE |
+|---|---|---|---|---|---|
+| 10 m | 2.820 | 1.081 | 0.542 | 0.960 | 1.351 |
+| **15 m** | 1.310 | 0.731 | 0.584 | 0.886 | **0.878** |
+| 20 m | 1.362 | 0.769 | 0.591 | 0.968 | 0.922 |
+| 30 m | 0.971 | 1.468 | 1.578 | 2.053 | 1.518 |
+| 60 m | 0.917 | 4.368 | 2.695 | 3.977 | 2.989 |
+
+15 m is the default because it is the minimum of that curve — **not** because it
+is the width of a building. A European city block is far wider, and setting the
+parameter to the block width makes the result three times worse: the cloth is
+multi-scale and removes a wide building through its coarse levels regardless, so
+what the parameter really trades is how much genuine terrain relief the filter is
+allowed to flatten. Bern, the scene with 110 m of relief, is the one that prefers
+a larger value, and it is outvoted.
+
+Bulldozer accepts a ground mask, and the OSM road network was tried as one. It
+made every scene **worse** and is off by default, with the plumbing left in place
+and the measurement recorded: a road under tree canopy is a pixel the mask swears
+is ground and whose DSM value is metres above it.
+
+#### What this does to the delivered surface
+
+Four scenes, `dav2-vits`, control against the same pipeline with `--osm` and
+Bulldozer. This is the §3.1 trade again, and sharper:
+
+| | control | with OSM + Bulldozer |
+|---|---|---|
+| DSM MAE (m) | 9.74 | 9.79 |
+| nDSM MAE (m) | 6.48 | 7.35 |
+| nDSM Pearson *r* | 0.389 | **0.465** |
+| **building-only nDSM MAE (m)** | 11.72 | **9.67** |
+| **building-only bias (m)** | **−11.30** | **−0.48** |
+| relief recovered | 44 % | 121 % |
+
+**Every building was being under-measured by about eleven metres, and now it is
+not.** The bias moves to −0.48 m and the improvement is consistent across all
+four scenes; nDSM correlation rises on all four; building-height MAE falls on
+three and is flat on the fourth. The cost is 0.87 m of overall nDSM MAE, on a
+metric dominated by the flat majority of the scene, and relief now slightly
+*over*-recovers at 121 % where it used to recover 44 %. A project steering by MAE
+would reject this change, which is the same finding §3.1 records and the same
+reason it is recorded here.
+
+### 6.2c The facades were painting themselves with the road
+
+This one is arithmetic, and it had nothing to do with a GPU.
+
+`mesh.webmesh.write` derives every texture coordinate from world position:
+
+```python
+uv = np.stack([V[:, 0] / span_x, 1.0 - V[:, 1] / span_y], 1)
 ```
 
-`preflight()` checks ten modules, not the obvious three, and prints what is
-missing before anything starts. Four of them are threefiner's own dependencies
-rather than this pipeline's — `xatlas` and `pygltflib` are imported only at
-export, `sklearn` only in the UV padding immediately before it, `cv2` at kiui's
-import time. A box missing one of those trains for ten minutes and then throws
-the result away, which is a worse failure than not starting.
+That is a top-down planar projection — correct for an orthophoto draped on
+terrain, wrong for anything vertical. `structural._solid` builds a wall between a
+roof vertex and a ground vertex at *the same (row, col)*; only z differs. So both
+ends of every wall receive the same UV. **Every wall quad in the delivered mesh
+had a degenerate, zero-area UV**, and the whole facade rendered as one texel row
+taken from the footprint boundary and stretched from roof to pavement.
 
-**It produces the final model, not an intermediate.** Per-building GLBs are a
-staging format; what the command assembles is one multi-material OBJ over the
-whole scene — `mesh/structural_refined.obj`. The terrain and every unrefined
-building sit under `measured_mat`, which is the orthophoto; each refined building
-gets a `synth_*` material pointing at its own painted texture. Opened in any
-tool, which walls are photographed and which are invented is visible in the
-material list rather than buried in a sidecar. The refined model is registered
-in `tileset.json` (written atomically, so a half-written manifest cannot take the
-site down) and offered as a download in the viewer, labelled with how many
-buildings actually carry synthesised walls.
+The footprint boundary is the worst place in the raster to sample. It is a mixed
+pixel by construction — half roof, half whatever the roof stands next to — and
+what a building most often stands next to is the street. So walls were painted
+with asphalt, and the taller the building the more asphalt.
 
-Geometry is byte-identical to the input, and a test asserts it: `max|Δv| = 0`
-over every vertex, with the stand-in for threefiner's result welded and re-split
-exactly as kiui does it. A refined group's faces carry `v/vt` with the two
-indices differing, because a chart seam gives one vertex two texture
-coordinates; the vertex index on both sides of that seam is still ours. A
-returned mesh whose *shape* is not this building's is skipped for that building
-rather than reconciled.
+Measured on the bundled fixture against the OSM road network:
 
-**The viewer draws the painted walls, not just the download.** `structural.bin`
-gained a texture table (format v2): a group can name its own image, and the
-renderer draws those groups in a second pass with it bound, so a scene with
-eight refined buildings costs nine draw calls rather than one per group. The
-browser copy is quadric-decimated and the refined model is full resolution, so
-they share no vertices — the parameterisation is carried across by nearest
-neighbour, which resamples the UV and cannot move a vertex. Verified in a real
-browser by painting six buildings in flat colours: each lands on exactly its own
-solid, roof and walls, with every other surface keeping the orthophoto.
+| | wall vertices sampling a road pixel |
+|---|---|
+| before | **18.59 %** |
+| after `mesh.uvmap` | **0.00 %** |
 
-`--limit 0` refines every building. It is minutes each, so a hundred-building
-scene is hours, and the command says so before starting rather than after.
+`mesh.uvmap` does two things, and `webmesh.write` already accepted the per-group
+`group_uv` override they need, so this changed no file format, no renderer and no
+geometry — a test asserts the vertices are untouched.
 
-**It is a pipeline phase, not only a command.** An upload runs `facades` after
-`tiles`, and the progress screen lists it with the rest. Whether it *can* run is
-decided before the job starts rather than at the end, so a box without a GPU
-takes it out of the denominator immediately instead of sitting at 96% waiting
-for a phase that will never begin — the skipped phase carries the reason, in
-words, and the run still reaches 100%:
+**The roof rim is inset.** Boundary vertices' sample points are pulled 1.2 m
+toward the footprint centroid — never past it — so the rim reads roof instead of
+the blend of roof and street.
+
+**Each wall gets one flat colour from its own building.** Every wall foot maps to
+a single interior texel of its own footprint, chosen as the deepest point of the
+distance transform *restricted to admissible pixels*: not classified road, water
+or vegetation, and not under the OSM road mask. A footprint whose deepest point
+lands on a mislabelled road therefore does not paint its walls with that road,
+and one with no admissible pixel at all is recorded as unsampled with the reason
+attached rather than given a colour from nowhere.
+
+It is not a photograph of a wall. A nadir image does not contain one. It is a
+defensible, per-building, single colour, and it is never the road.
+
+### 6.2d Straight-sided footprints, and flat platforms
+
+`structural._solid` walks a cell mask and emits one axis-aligned wall quad per
+boundary cell edge, so every footprint was a staircase at the raster pitch — and
+the raster came from SAM 2, which decodes masks at 256×256 and upsamples.
+
+`mesh.regularize` traces the mask at the 0.5 level set (sub-pixel, not a
+pixel-corner walk), simplifies by Douglas–Peucker at 0.6 m, then squares the
+outline up: the dominant edge direction is a length-weighted circular mean modulo
+90°, the polygon is rotated into that frame, edges are classified along-axis or
+across-axis, runs are merged and each corner is rebuilt as the intersection of
+its two edges.
+
+Measured on a 28-building SAM 2 run over the bundled fixture, end to end through
+the pipeline:
+
+| | |
+|---|---|
+| median vertices per footprint | **204 → 6** |
+| squared up | 18 |
+| OpenStreetMap outline adopted | 5 |
+| refused, kept as simplified | 5 |
+
+The heights are read from the *observed* mask either way. What the regularised
+polygon changes is only which cells get a wall around them — the image says how
+tall the roof is, and the polygon says where its edge runs.
+
+**It declines when it should**, and on that run it declined five times out of 28,
+each with a reason recorded in the building's own record:
 
 ```
-facades   skipped   a CUDA device (threefiner has no CPU path); threefiner
-                    (pip install threefiner); nvdiffrast (...)
+squaring it up would change the footprint area by 16.8%, over the 12% limit
+squaring it up would move a corner by 3.7 m, over the 2.5 m limit
+the best OSM footprint overlaps at IoU 0.11, under the 0.50 needed to adopt its shape
 ```
 
-**The refined model replaces what it supersedes.** Once the walls are painted,
-`surface.obj`, `surface.mtl`, `structural.obj` and `structural.mtl` are deleted
-and unhooked from the manifest in the same call — `structural.obj` has
-byte-identical geometry and strictly worse texture, and `surface.obj` is the
-height field the structural mesh already replaced, so keeping either ships the
-same surface twice. `surface.jpg` stays: it is the measured texture, the refined
-`.mtl` references it for every unpainted surface, and it is the one image a
-camera actually took. The manifest and the disk are updated together, because a
-download link pointing at a deleted file is worse than one fewer download.
+A regularised outline is accepted only if it changes the footprint area by under
+12 % and moves no corner more than 2.5 m. A circular tower fails both and keeps
+its simplified outline, which is still far better than the staircase. Making a round building rectangular is exactly the
+plausible-looking fabrication this project refuses everywhere else — and the
+guard is not theoretical: the first implementation had its rotation sign
+inverted, which squares up an upright rectangle perfectly (a 90° error maps the
+axes onto each other) and fails on every rotated one. A test at five angles
+catches it; a test on one upright rectangle does not.
 
-The viewer then offers exactly the refined set — `structural_refined.obj`, its
-`.mtl`, the orthophoto and one PNG per painted facade — and draws the painted
-walls. Verified through an upload on the running site with the GPU call stubbed:
-four buildings painted, four textures fetched by the browser, every download
-resolving, and the retired files returning 404.
+**Roofs are now flat by default.** §3.6 refused to flatten roofs, on the grounds
+that it would be fabrication. That refusal was aimed at the wrong target. A
+monocular backbone's noise lives at the same spatial scale as a flat roof's real
+detail, so a level roof rebuilt vertex by vertex comes back *rippled*, and the
+ripple is the depth model's error rendered as architecture.
 
-**Not verified on hardware.** This was written and tested on a CPU-only machine.
-The extraction, the frame conversion, the handover, the bake, both guards, the
-assembly and the artifact are covered by tests, and the web service was
-exercised with the refined model registered — every layer, the exaggeration and
-the downloads, with no errors. The diffusion step itself has never been executed
-here. What *has* been run here is everything on either side of it, on the real
-Zurich scene, with threefiner stood in by a stub that welds and re-splits the
-mesh exactly as kiui does: four buildings baked at 1024 px with the refined
-surface 0.05% of the building away from the measured one, `structural.obj`'s
-`v` block reproduced byte for byte in the refined model, and all 687 690
-triangles present in a file trimesh reopens with five materials.
+`structural.choose_roof` decides between three branches:
 
-`--dry-run` writes the handover meshes and stops there — it does not assemble,
-because assembling with nothing painted would overwrite a real refined model
-with an empty one and register that in the manifest. `traksha facades` without
-it prints exactly what the box is missing before anything starts.
+| branch | condition | what is built |
+|---|---|---|
+| **platform** | the roof is level within 0.8 m RMS | one horizontal cap at the robust median |
+| **plane** | it rises ≥ 1.5 m across itself, a plane beats a constant by ≥ 30 %, **and** that plane's own residual is ≤ 1.5 m | the fitted tilted plane |
+| **platform** | neither of the above, but scatter is ≤ 4 m | one horizontal cap |
+| **measured** | scatter > 4 m | the calibrated heights, untouched |
+
+The third row is the one worth arguing about, and the direction it goes was
+wrong in the first implementation. A roof scattering three metres around no
+describable shape is not a complex roof; on this data it is the backbone's error.
+The delivered scenes show roofs "rising" ten metres across themselves with metres
+of residual around any plane fitted to them. **Keeping those heights does not
+preserve a measurement — it preserves an error and renders it as architecture**,
+and the robust median is the better estimate. Past 4 m of scatter there is
+usually more than one structure under the mask, and flattening two roofs into one
+platform would be the worse lie, so those keep what was calibrated.
+
+Tilting needs all three of its conditions because any one alone is satisfiable by
+noise: a plane fitted to noise always beats a constant by a little, and a large
+flat roof with one lift housing produces a rise without a pitch.
+
+Every building records which branch it took. On a 28-building SAM 2 run over the
+bundled fixture: **13 platform, 10 plane, 5 measured** — so "13 of 28 roofs were
+flattened" is checkable rather than an impression.
+
+### 6.2e Why threefiner was taken out of the delivered run
+
+threefiner is a **texture** refiner. The only presets `mesh.facades` accepts are
+the `*_fixgeo` ones, and the bake deliberately discards everything except colour,
+so it never had any mechanism for improving the geometry — which is what "the
+walls are wrong" was actually about. What it could produce was a score-distilled
+guess at what a building of that shape looks like, at six to twelve minutes per
+building, on a CUDA GPU this project does not have. On every CPU run the phase
+skipped, so the 960 s estimate in `api.phases` was never once paid and never once
+earned.
+
+It is no longer a pipeline phase. What replaced it is §6.2c, which is not a
+refiner at all — it fixes a defect, in milliseconds, on any machine, and it is
+arithmetic rather than a prior. `traksha facades` still exists for anyone with a
+GPU who wants the painted walls as a separate labelled artifact; it is opt-in and
+it is not part of a run.
+
+#### It has now been run on a GPU, and it failed
+
+The paragraph above was written from the code, before anyone had executed the
+diffusion step here. It has since been run on a CUDA box, and the output is on
+disk: six `building_*.glb` files under
+`out/jobs/7e9d6609224d4665/run/facades/`. Inspecting them settles the question
+with measurements rather than impressions.
+
+**The geometry is byte-identical to the input.** `building_1` goes in with
+33 128 vertices and 63 854 faces and comes back with 33 128 and 63 854; the same
+holds for every building. `fix_geo` did exactly what it promised — and that is
+also the confirmation that threefiner could never have addressed the complaint,
+because the complaint was about the walls.
+
+**The texture is not a facade. It is one flat colour per building.**
+
+| building | atlas | unique colours | per-channel std | mean RGB |
+|---|---|---|---|---|
+| building_1 | 64×64 | **1** | 0.0 | (220, 60, 50) |
+| building_11 | 64×64 | **1** | 0.0 | (60, 190, 90) |
+| building_16 | 64×64 | **1** | 0.0 | (240, 190, 40) |
+| building_17 | 64×64 | **1** | 0.0 | (70, 120, 240) |
+| building_18 | 64×64 | **1** | 0.0 | (40, 210, 200) |
+| building_19 | 64×64 | **1** | 0.0 | (230, 110, 200) |
+
+Every atlas is 64×64 and carries **exactly one colour**, at a standard deviation
+of zero on all three channels. The six colours are saturated primaries and
+secondaries — red, green, yellow, blue, cyan, magenta — one distinct hue per
+building index.
+
+That is not a diffusion output. No score-distilled texture is uniform to a
+standard deviation of zero, and no diffusion prior asked for "stone and render
+walls, regular rows of windows" returns flat magenta. These are categorical
+per-object identifier colours: the prompt never reached anything that could
+render it, and what came back was a placeholder palette.
+
+Two supporting details point the same way. The UV `v` coordinate spans only
+0.345–0.655 across the six — a narrow band rather than a packed atlas, which is
+the signature of a parameterisation that was never trained. And the assembled
+`structural_refined.mtl` names `building_1.png` … `building_19.png` as its
+material maps, none of which were ever written to `tiles/mesh/`, so the refined
+OBJ references textures that do not exist.
+
+One latent defect is worth recording even though it is now moot:
+`facades.DEFAULT_TEXTURE_RES` is 1024 and it is **never passed to the
+subprocess**. The command assembled at `facades.py:473` carries only the preset,
+the mesh, the prompt, the outdir, the save name, `--force_cuda_rast` and
+`--iters`; the declared 1024-pixel atlas is used on the *bake* side only. Whatever
+else went wrong, the resolution this project intended was never requested.
+
+**So the hardware run is not evidence that threefiner needs tuning. It is
+evidence that this integration produced coloured blobs** — at six to twelve
+minutes of GPU time each, for a stage that by construction could not have
+improved the geometry. The decision to take it out of the delivered run was made
+from the code, before these files were examined; they confirm it.
+
+### 6.2f Sat3DGen, evaluated and removed
+
+Sat3DGen (ICLR 2026, MIT, checkpoints released as `qian43/Sat3DGen`) was wired
+up as a labelled, scored side-artifact and has since been removed from the tree
+along with its tests, its phase, its CLI command and its viewer panel.
+
+It was the only one of the three published satellite-to-3D systems with code and
+weights actually released, and that made it worth building. What it could never
+be is a *refiner*: it has no input-mesh argument at all. It reads an image,
+predicts a triplane, and a mesh falls out — so it could only ever propose a
+different geometry, from the same single view, with no constraint tying it to
+the calibrated vertical datum. It was also out of distribution here, trained on
+VIGOR's North American street-view pairs and asked about Swiss aerial
+orthophotos at 0.5 m.
+
+So it sat in the pipeline as a hypothesis that had to be scored against the
+measurement and could never replace it — which is a defensible thing to keep,
+and a strictly worse thing to keep once §6.2g existed. §6.2g does what the
+request was actually for: it refines *this pipeline's own mesh*, preserves the
+measured geometry provably, and needs no training. A generator that cannot touch
+the geometry earns nothing beside it, and every stage in a delivered pipeline
+should be one someone would run.
+
+The record of what it was and why it went is this paragraph. The systems that
+have been evaluated and cannot run — Sat2City v1 and v2 — stay in
+`traksha/mesh/generative.py`, which is now a registry and not a runner, so
+`traksha doctor` still answers "why can I not run Sat2City" with the fact.
+
+
+### 6.2g Sat2City v1 and v2, and the half of v2 that can be run without training
+
+Sat2City v2 [17] is the strongest published answer to this problem, and neither
+it nor its v1 predecessor [18] has released anything. Checked by reading the
+repositories rather than the project pages: the v1 release repository
+`github.com/thua919/Sat2City-release` contains **exactly one file, `README.md`**,
+whose entire content is "Coming soon"; the v2 project page says "Code Coming"
+and names no repository at all. Both are registered in
+`traksha/mesh/generative.py` with that status, so `traksha generate --list`
+answers "why can I not run this" with the fact rather than with silence.
+
+But reading v2's architecture closely turns up something more useful than a
+waiting list.
+
+#### Exactly one module of Sat2City v2 is trained
+
+Its inference stack, with each component's status as the paper gives it:
+
+| stage | component | status |
+|---|---|---|
+| image encoding | DINOv3-L | **frozen**, from TRELLIS.2 |
+| sparse structure | generator $\mathcal{S}$ | **frozen**, from TRELLIS.2 |
+| geometry | satellite-conditioned flow $\mathcal{F}_{g,\theta}$ | **fine-tuned** — 1.3 B params, 30 k steps, 4×A800 |
+| geometry decode | $\mathcal{D}_g$ | **frozen**, from TRELLIS.2 |
+| geometry re-encode | $\mathcal{E}_g$, at resolution 1024 | **frozen**, from TRELLIS.2 |
+| appearance | geometry-aware flow $\mathcal{F}_a$ | **frozen**, from TRELLIS.2 |
+| materials | $\mathcal{D}_a$ → PBR baked at 2048² | **frozen**, from TRELLIS.2 |
+
+Every frozen component is TRELLIS.2 [19], which Microsoft released as
+`microsoft/TRELLIS.2-4B` under the MIT licence. The single trained module is the
+**geometry** flow — the part that invents a shape from an image.
+
+**That is precisely the part this project does not want.** TRAKSHA already has
+geometry, and it is measured: calibrated heights, a metric vertical datum,
+footprints cut from the image the run was given. Replacing it with a generated
+shape is what §2.1 and §6.2 refuse, and it is what makes every entry in §6.2f a
+side-artifact rather than a product. So the one module Sat2City v2 had to train
+is the one module we can skip, and the seven we would otherwise have to train
+are already frozen and already downloadable.
+
+#### What is left is a refiner, and TRELLIS.2 exposes it directly
+
+`Trellis2TexturingPipeline.run(mesh, image)` takes an **existing mesh** and an
+image and returns that mesh textured. Its body is Sat2City v2's stack from
+$\mathcal{E}_g$ onward, unchanged:
+
+```python
+cond       = get_cond([image], 1024)                   # DINOv3-L tokens
+shape_slat = encode_shape_slat(mesh, resolution)       # E_g, on OUR mesh
+tex_slat   = sample_tex_slat(cond, tex_model, shape_slat)   # F_a
+pbr_voxel  = decode_tex_slat(tex_slat)                 # D_a
+out_mesh   = postprocess_mesh(mesh, pbr_voxel, resolution, texture_size)
+```
+
+`traksha refine-mesh` drives it, one building at a time. Nothing is trained,
+nothing is fine-tuned, and no state is carried between buildings: each is
+encoded on its own, conditioned on its own crop of the orthophoto, and decoded
+on its own.
+
+#### Geometry is preserved, and it is asserted rather than promised
+
+This is the guarantee threefiner could not give, and the difference is
+structural rather than a matter of care. threefiner ran kiui's `clean_mesh`,
+which merges every pair of vertices within 1 % of the bounding-box diagonal, so
+the mesh that came back was not the mesh that went in and no index-wise
+comparison was possible.
+
+TRELLIS.2's `preprocess_mesh` is a **pure similarity transform** — centre,
+isotropic scale into $[-0.5, 0.5]$, then a Z-up to Y-up axis swap — constructed
+with `process=False`, so no vertex is merged and no face reordered. That is
+exactly invertible. `mesh.trellis.frame` reproduces it so the inverse exists on
+this side, and a test asserts the round trip over random point clouds:
+
+```
+round-trip max error   0.0 m       (1.4e-14 m worst case on a real building)
+normalised range       [-0.5, 0.5]  — satisfies the pipeline's own assert
+```
+
+So `refine_one` inverts the transform, compares the returned vertices against
+the ones it sent, and **refuses the result** if any has moved more than
+`MAX_VERTEX_DRIFT_M` (10 mm). Only colour crosses back.
+
+#### The image condition is ours, not theirs
+
+One integration detail matters more than it looks. TRELLIS.2's
+`preprocess_image` runs background removal — BiRefNet, built for photographs of
+objects on a background. A nadir city crop has no background it would recognise,
+and it would cut the building out along whatever contrast it happened to find.
+
+So `mesh.trellis.crop` supplies **alpha from the footprint this pipeline
+measured**. That sends `preprocess_image` down its has-alpha branch, and the
+segmentation stays the one §3.6 and §6.2d produced rather than one a saliency
+model invented.
+
+#### What it is not
+
+It is not Sat2City v2's accuracy. Their contribution *is* the satellite
+fine-tune of the geometry flow; without it the conditioning is TRELLIS.2's
+generic image-to-3D prior applied to an aerial crop, which is out of
+distribution. And it is not a photograph of a wall — a nadir image does not
+contain one — so a facade that comes back with rows of windows has them because
+the prior expects them. `refined/trellis.json` says exactly that, in the file.
+
+It is also not free. TRELLIS.2 is 4 B parameters, its README asks for **24 GB of
+VRAM**, and it needs `flash-attn`, `nvdiffrast`, `nvdiffrec`, `cumesh`,
+`o-voxel` and `flexgemm` built from source. `--resolution 512` selects a lighter
+flow model and fits a smaller card. `preflight()` names each missing piece up
+front rather than letting the failure arrive mid-run, and the phase is skipped
+with the reason recorded on any machine that cannot run it.
+
+**Not verified on hardware.** This machine is `torch 2.13.0+cpu`. The
+extraction, the framing and its inverse, the crop, the geometry guard and the
+artifact labelling are covered by tests; the diffusion call has never executed
+here. See [`docs/COLAB.md`](docs/COLAB.md) for the GPU path.
+
+### 6.2b The threefiner integration, removed
+
+threefiner is gone from the tree. `traksha/mesh/facades.py` and its tests are
+deleted, the `facades` extra is gone from `pyproject.toml`, the phase is gone
+from `api.phases`, the `_refine_facades` stage is gone from the job runner, and
+the CLI command is gone. What it did and why it went is §6.2e above, including
+the hardware run that returned a flat colour per building. The operational
+detail of how to invoke it is not preserved, because there is nothing left to
+invoke.
+
+The one piece of it worth keeping was the file format. `structural.bin` v2
+carries a per-group texture table, and `webmesh.write` accepts a `group_uv`
+override — both added so a painted facade could bring its own parameterisation.
+That machinery is generic and it stayed: `mesh.uvmap` uses the override to fix
+the degenerate wall UVs (§6.2c), and any future per-group texture has a route
+into the viewer without a format change.
 
 ### 6.3 Fitting it into a budget: decimate, do not stride — and do not subdivide
 
@@ -2023,7 +2369,34 @@ finding.
 [14] J. Chen, C. Lyu, B. Dai, et al. *threefiner: an interface for text-guided
     mesh refinement.* 3DTopia, 2024. https://github.com/3DTopia/threefiner —
     used only in its fixed-geometry modes, for wall texture, on a separate and
-    clearly labelled artifact.
+    clearly labelled artifact. **No longer a pipeline phase**; see §6.2e.
+
+[15] D. Youssefi, P. Lassalle, et al. *Bulldozer, a free open source scalable
+    software for DTM extraction.* ISPRS Archives XLVIII-4/W7-2023, 89–94, 2023.
+    CNES. https://github.com/CNES/bulldozer — Apache-2.0, CPU-only, `pip install
+    bulldozer-dtm`. Supplies the bare-earth surface (§6.2a).
+
+[16] M. Qian, et al. *Sat3DGen: comprehensive street-level 3D scene generation
+    from a single satellite image.* ICLR 2026.
+    https://github.com/qianmingduowan/Sat3DGen — MIT, CUDA-only. Evaluated and
+    built here as a scored side-artifact, then removed once §6.2g existed: it
+    has no input-mesh argument, so it could never refine the measured
+    geometry (§6.2f).
+
+[17] T. Hua, et al. *Sat2City v2: native 3D city asset generation from a single
+    satellite image.* arXiv 2606.24138, 2026.
+    https://ai4city-hkust.github.io/Sat2City-v2/ — no code and no checkpoint
+    released; its frozen appearance path is reproduced here from TRELLIS.2 (§6.2g).
+
+[18] T. Hua, J. Jiang, et al. *Sat2City: 3D city generation from a single
+    satellite image with cascaded latent diffusion.* ICCV 2025.
+    https://github.com/thua919/Sat2City-release — release repository holds one
+    file, README.md, reading "Coming soon".
+
+[19] J. Xiang, et al. *Structured 3D latents for scalable and versatile 3D
+    generation.* CVPR 2025 Spotlight. https://github.com/microsoft/TRELLIS.2 —
+    TRELLIS.2-4B, MIT licence. Supplies every frozen module Sat2City v2 uses,
+    and therefore the whole of the training-free refiner in §6.2g.
 
 ---
 
@@ -2046,6 +2419,42 @@ Model checkpoints, the Copernicus DEM and the other dependencies carry their own
 terms, which this licence does not supersede — they are listed at the foot of
 [LICENSE](LICENSE). The Depth Anything V2 **Large** checkpoint in particular has
 different terms from Small/Base and should be checked before any commercial use.
+
+## Originality
+
+Every line under `traksha/`, `tests/`, `scripts/` and `web/src/` was written for
+this project. No source file is a copy, a fork, a port or a lightly edited
+derivative of another codebase, and **nothing third-party is vendored into this
+tree**. Dependencies are *called*, at their public interfaces, exactly as any
+application calls a library — which is checkable: no file here carries another
+party's copyright header or SPDX identifier, and no directory under `traksha/`
+contains third-party sources.
+
+Two clarifications, because they are where a reader would reasonably ask:
+
+- **`mesh.trellis.frame` reproduces a transform, not code.** It implements
+  TRELLIS.2's input normalisation independently so that it can be **inverted**
+  on this side — without the inverse there is no way to assert that the refiner
+  returned the geometry it was given, and that assertion is the whole safety
+  argument of §6.2g. Same posture as Mapbox Terrain-RGB: a documented
+  convention implemented to specification.
+- **Algorithms are not authorship.** Marching squares, Douglas–Peucker, quadric
+  edge collapse, guided filtering, drape-cloth filtering and IRLS are published
+  methods. Where a well-tested implementation exists it is called; where one is
+  written out here — the scanline fill in `data/osm.py`, the rectilinear
+  regularisation in `mesh/regularize.py` — it is this project's own, and the
+  docstring says why it was not imported.
+
+Citing a paper is not using its code. Of the systems evaluated in §6.2,
+threefiner was integrated and removed (§6.2e), Sat3DGen was integrated and
+removed (§6.2f), and Sat2City v1 and v2 have never published any code at all
+(§6.2g). What §6.2g actually runs is TRELLIS.2, under its own MIT licence,
+through its own public pipeline class.
+
+**A run made with `--osm` carries an obligation.** OpenStreetMap data is
+ODbL 1.0. The attribution notice travels in the run's own
+`osm/osm.json` — `"© OpenStreetMap contributors"` — so anything published from
+such a run must carry it too.
 
 ---
 

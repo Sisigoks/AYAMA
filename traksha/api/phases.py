@@ -47,16 +47,13 @@ MEASURED_SECONDS = {
     "artifacts": 4.50,
     "validation": 5.76,
     "tiles": 20.83,
-    # An estimate, not a measurement, and the only one in this table. Facade
-    # refinement needs a CUDA GPU and there is none on the machine these numbers
-    # were taken on, so this is four buildings at the ~4 minutes each that
-    # threefiner reports - marked as an estimate rather than quietly mixed in
-    # with figures that were timed.
-    "facades": 960.0,
+    # An estimate, not a measurement, and the only one in this table: TRELLIS.2
+    # texturing at 25-90 s per building on a 24 GB card, for the default eight.
+    # There is no GPU on the machine these numbers were taken on, so this is
+    # marked as an estimate rather than quietly mixed in with figures that were
+    # timed.
+    "refine": 450.0,
 }
-
-# Per building, for costing a run before it starts. Same caveat: estimated.
-FACADE_SECONDS_PER_BUILDING = 240.0
 
 # The order a run executes in. `instances` is the structural segmentation and
 # runs before depth, which is the architectural change: everything after it can
@@ -66,10 +63,32 @@ FACADE_SECONDS_PER_BUILDING = 240.0
 PIPELINE_PHASES = ("ingest", "instances", "depth", "segmentation", "shadow",
                    "anchors", "calibration", "uncertainty", "assemble",
                    "artifacts", "validation")
-# `facades` is last because it needs the mesh the tileset build produces, and
-# because it is the one phase that can be absent: it needs a CUDA GPU, and a run
-# without one skips it with the reason recorded rather than failing.
-JOB_PHASES = PIPELINE_PHASES + ("tiles", "facades")
+# threefiner is gone, and the reason is worth stating where the change is.
+#
+# It was a *texture* refiner. Its only admissible presets here were the
+# `*_fixgeo` ones and the bake discarded everything but colour, so it never had
+# any way to improve the geometry - which is what "the walls are wrong" was
+# actually about. Run on a CUDA box it returned, for every building, a 64x64
+# atlas holding exactly one flat saturated colour at zero standard deviation:
+# a categorical placeholder palette, not a diffusion result. Six to twelve
+# minutes of GPU time each, for coloured blobs. See README section 6.2e.
+#
+# What replaced it is `mesh.uvmap`, which is not a refiner at all: it fixes a
+# defect. Every wall's UV was degenerate - both ends of a wall project to the
+# same texel, at the footprint boundary - so each facade rendered as one
+# stretched pixel row taken from the ground beside it, which next to a street is
+# the street. Measured on the bundled fixture, 18.59% of wall vertices sampled a
+# road pixel; after the fix, 0.00%. That runs inside `tiles`, in milliseconds,
+# on any machine, and it is arithmetic rather than a prior.
+#
+# `refine` is Sat2City v2's frozen appearance path applied to our own mesh: mesh
+# in, textured mesh out, geometry asserted unchanged against the input. Nothing
+# in it is trained - every module in that path is a frozen TRELLIS.2 component,
+# and the one module Sat2City v2 does train is its geometry flow, which is
+# exactly the part this pipeline does not want. It is the one phase that can be
+# absent: it needs a CUDA GPU and a checkout, and a run without either skips it
+# with the reason recorded rather than failing. See `mesh.trellis`.
+JOB_PHASES = PIPELINE_PHASES + ("tiles", "refine")
 
 PENDING, RUNNING, DONE, FAILED, SKIPPED = (
     "pending", "running", "done", "failed", "skipped")
@@ -89,7 +108,7 @@ DESCRIPTIONS = {
     "artifacts": "Writing the GeoTIFFs and previews",
     "validation": "Scoring against the reference DSM",
     "tiles": "Building the 3D tileset and mesh",
-    "facades": "Painting facades with threefiner",
+    "refine": "Refining facade appearance with TRELLIS.2, geometry untouched",
 }
 
 

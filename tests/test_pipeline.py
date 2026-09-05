@@ -272,8 +272,23 @@ def test_missing_dem_file_fails_loudly(written_scene):
     from traksha.api.pipeline import run
 
     sc, paths = written_scene
-    cfg = Config(backbone=BACKBONE, chip=256, dem_source="copernicus", n_bootstrap=0)
+    cfg = Config(backbone=BACKBONE, chip=256, n_bootstrap=0,
+                 dem_source="no_such_dem_anywhere.tif")
     with pytest.raises(FileNotFoundError):
+        run(paths["rgb"], cfg, out_dir=None, write_artifacts=False)
+
+
+def test_a_fetchable_product_still_fails_loudly_when_it_is_not_cached(written_scene):
+    """`copernicus` is a real product name now, so it resolves rather than being a
+    typo - but resolving it without the network or a cached tile is still an
+    error, and never a silent skip. See `data.dem`."""
+    from traksha.api.pipeline import run
+    from traksha.data.dem import DEMUnavailable
+
+    sc, paths = written_scene
+    cfg = Config(backbone=BACKBONE, chip=256, dem_source="copernicus", n_bootstrap=0,
+                 extras={"fetch_dem": False})
+    with pytest.raises(DEMUnavailable):
         run(paths["rgb"], cfg, out_dir=None, write_artifacts=False)
 
 

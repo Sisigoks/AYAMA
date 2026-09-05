@@ -276,3 +276,67 @@ apply and are not superseded by this file:
                                    attribution, check before redistribution
   Mapbox Terrain-RGB             - an encoding convention, used here by
                                    specification only; no Mapbox code is used
+  scikit-image                   - BSD-3-Clause. Marching squares and
+                                   Douglas-Peucker in mesh/regularize.py
+  CNES Bulldozer                 - Apache-2.0. Called as a library by
+                                   dsm/dtm.py; no Bulldozer code is copied
+  trimesh, pymeshlab             - MIT / GPL-3.0 respectively. pymeshlab is
+                                   OPTIONAL and its GPL terms are the reason:
+                                   mesh/decimate.py degrades to a strided
+                                   rebuild without it, so no configuration of
+                                   this project requires linking GPL code
+  OpenStreetMap data             - Open Database Licence (ODbL) 1.0. Data only,
+                                   fetched at run time and cached; derived
+                                   works carry share-alike obligations, so a
+                                   run made with --osm must attribute OSM
+  Overpass API                   - queried under its usage policy; data is ODbL
+  Microsoft TRELLIS.2            - MIT. Invoked as a subprocess/library by
+                                   mesh/trellis.py. No TRELLIS code is copied;
+                                   see ORIGINALITY below for the single
+                                   interoperability exception
+  SAM 2 checkpoints              - see the model card; used for structural
+                                   instance segmentation
+
+-------------------------------------------------------------------------------
+ORIGINALITY
+-------------------------------------------------------------------------------
+
+Every line under traksha/, tests/, scripts/ and web/src/ was written for this
+project. No source file is a copy, a fork, a port or a lightly edited
+derivative of another codebase, and nothing third-party is vendored into this
+tree. The dependencies above are *called*, at their public interfaces, exactly
+as any application calls a library.
+
+That claim is checkable rather than asserted: no file in this repository
+carries another party's copyright header or SPDX identifier, and no directory
+under traksha/ contains third-party sources.
+
+Two clarifications, because they are the places a reader would reasonably ask.
+
+  1. INTEROPERABILITY, NOT COPYING.  mesh/trellis.py contains `frame()`, which
+     reproduces the *behaviour* of TRELLIS.2's input normalisation - centre,
+     isotropic scale into [-0.5, 0.5], Z-up to Y-up axis swap. It is written
+     independently, in this project's own idiom, with its own numerical guard,
+     and it exists for one reason: the transform must be INVERTED on this side
+     so the geometry that comes back can be compared against the geometry that
+     was sent. Without the inverse there is no way to assert that a refiner
+     preserved a measurement, and that assertion is the whole safety argument
+     of the stage. This is the same posture as the Mapbox Terrain-RGB entry
+     above - a documented convention implemented to specification, not code
+     taken from anyone.
+
+  2. ALGORITHMS ARE NOT AUTHORSHIP.  Marching squares, Douglas-Peucker, quadric
+     edge collapse, guided filtering, drape-cloth filtering and IRLS are
+     published algorithms and are used as such. Where a well-tested
+     implementation exists it is called (scikit-image, SciPy, Bulldozer,
+     PyMeshLab); where one is written out here - the scanline polygon fill in
+     data/osm.py, the rectilinear regularisation in mesh/regularize.py, the
+     Douglas-Peucker fallback - it is this project's own implementation, and
+     the docstring says why it was written rather than imported.
+
+Research prior art is cited in README section 10 and throughout section 6.
+Citing a paper is not using its code: of the systems evaluated in section 6.2,
+threefiner was integrated and then removed (section 6.2e), Sat3DGen was
+integrated and then removed (section 6.2f), and Sat2City v1 and v2 have never
+published any code at all (section 6.2g). What section 6.2g runs is TRELLIS.2,
+under its own MIT licence, through its own public pipeline class.

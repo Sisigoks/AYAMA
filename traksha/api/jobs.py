@@ -223,18 +223,23 @@ class JobStore:
         progress = JobProgress()
         if not params.get("reference"):
             progress.skip("validation", "no reference DSM was supplied")
-        # Facade refinement needs a CUDA GPU. Deciding here rather than at the
-        # end keeps it out of the denominator from the first frame, so a run
-        # that cannot do it does not sit at 4% while the bar waits for a phase
-        # that will never start.
-        if str(params.get("facades", "auto")) in ("off", "none", "no", "False"):
-            progress.skip("facades", "not requested")
+        # Facade texture is no longer a phase: `mesh.uvmap` fixes the wall UVs
+        # inside the tiles stage, in milliseconds, on any machine. See
+        # `api.phases` for why threefiner was removed from the tree entirely.
+        #
+        # Sat3DGen is decided here rather than at the end, for the same reason
+        # facade refinement used to be: a phase that will never start must leave
+        # the denominator on the first frame, or a run that cannot do it sits at
+        # 4% while the bar waits for something that is not coming.
+        if str(params.get("refine", "auto")) in ("off", "none", "no", "False"):
+            progress.skip("refine", "not requested")
         else:
-            from ..mesh.facades import preflight
+            from ..mesh.trellis import preflight as _tr_preflight
 
-            checks = preflight()
-            if not checks["ok"]:
-                progress.skip("facades", "; ".join(checks["missing"])[:200])
+            _c = _tr_preflight(params.get("trellis_root")
+                               or os.environ.get("TRELLIS_ROOT"))
+            if not _c["ok"]:
+                progress.skip("refine", "; ".join(_c["missing"])[:200])
 
         job = Job(id=job_id, dir=d, progress=progress,
                   params=dict(params, original_name=filename))
@@ -334,7 +339,19 @@ class JobStore:
                             "instance_points": int(p.get("instance_points", 16)),
                             "scale_model": p.get("scale_model", "auto"),
                             "dual_branch": p.get("scale_model", "auto")
-                            not in ("off", "none", "no")},
+                            not in ("off", "none", "no"),
+                            # OpenStreetMap footprints and roads, used as a
+                            # shape prior and as the bare-earth gate the DEM
+                            # anchors read. Off by default for an upload
+                            # because it is a network call the uploader did
+                            # not ask for; the form can turn it on.
+                            "osm": bool(p.get("osm", False)),
+                            "osm_network": True,
+                            # Bare earth by drape-cloth filter rather than by
+                            # believing the semantic raster. See `dsm.dtm`.
+                            "dtm": p.get("dtm", "bulldozer"),
+                            "dtm_max_object_m": float(
+                                p.get("dtm_max_object_m", 15.0))},
                 )
                 out_dir = os.path.join(job.dir, "run")
                 res = run_pipeline(src, cfg=cfg, out_dir=out_dir,
@@ -351,9 +368,13 @@ class JobStore:
                                 f"{len(man['lods'])} LODs", 1.0))
                 job.progress["tiles"].artifact = "tiles/tileset.json"
 
-                # ---- facades: paint the walls, if this box can ------------
-                if job.progress["facades"].status == "pending":
-                    man = self._refine_facades(job, out_dir, tiles_dir, man, emit)
+                # The walls are handled inside the tiles stage now, by fixing
+                # the UVs that made every facade sample the street beside it.
+                # See `mesh.uvmap`; it needs no GPU and no separate phase.
+
+                # ---- refine: TRELLIS.2 appearance on our own geometry ------
+                if job.progress["refine"].status == "pending":
+                    man = self._refine_appearance(job, out_dir, tiles_dir, man, emit)
 
                 job.notes = man.get("notes", [])
                 job.summary = {
@@ -377,119 +398,88 @@ class JobStore:
                 job.save()
                 job._done.set()
 
-    # -------------------------------------------------------------- facades
-    def _refine_facades(self, job, run_dir, tiles_dir, man, emit):
-        """Paint the walls, assemble the final model, and retire what it replaces.
+    # -------------------------------------------------------------- refine
+    def _refine_appearance(self, job, run_dir, tiles_dir, man, emit):
+        """Sat2City v2's frozen appearance path, applied to our own mesh.
 
-        The refined mesh has byte-identical geometry to `structural.obj` and
-        strictly better texture, so keeping both would ship the same surface
-        twice and leave a reader choosing between them. `surface.obj` is the
-        height field the structural mesh supersedes. Both are removed once the
-        refined model exists, and the manifest is updated to match - a download
-        link pointing at a file that is no longer there is worse than one fewer
-        download.
+        Nothing here is trained and nothing here moves a vertex. TRELLIS.2's
+        texturing pipeline takes a mesh and an image and returns that mesh
+        textured; every module in it is frozen, and `mesh.trellis` asserts the
+        surface that comes back is the one that was sent before it keeps
+        anything. What crosses back is colour.
+
+        Never raises into the run: the measured products are already written by
+        the time this starts, so a failure is recorded and the job continues.
         """
-        import shutil
+        from ..mesh import trellis as tr
 
-        import numpy as np
+        params = job.params or {}
+        root = params.get("trellis_root") or os.environ.get("TRELLIS_ROOT")
 
-        from ..mesh import facades as fa
-        from ..mesh import webmesh
+        checks = tr.preflight(root)
+        if not checks["ok"]:
+            job.progress.skip("refine", "; ".join(checks["missing"])[:200])
+            job.save()
+            return man
+
         from ..mesh.build import load_run
-        from ..mesh.structural import build as build_structural
-        from ..mesh.structural import select as select_buildings
+        from ..mesh import structural as struct
         from ..semantics import instances as inst_mod
 
-        p = job.params
-        limit = int(p.get("facade_limit", 4) or 4)
-        emit(StageEvent("facades", "running", "loading the structural mesh", 0.0))
-
-        field = inst_mod.load(os.path.join(run_dir, "segmentation"))
-        if field is None:
-            job.progress.skip("facades", "this run has no segmentation")
-            job.save()
-            return man
-
         run = load_run(run_dir)
-        gsd = float(run["meta"].get("gsd_m") or 1.0)
+        dsm, ndsm = run.get("dsm"), run.get("ndsm")
+        seg_dir = os.path.join(run_dir, "segmentation")
+        field = inst_mod.load(seg_dir) if os.path.isdir(seg_dir) else None
+        if dsm is None or ndsm is None or field is None or field.count == 0:
+            job.progress.skip("refine", "this run has no structural segmentation")
+            job.save()
+            return man
+
+        gsd = float((run.get("meta") or {}).get("gsd_m", 1.0))
         sem = run.get("sem")
-        buildings = select_buildings(field, run["dsm"], run["ndsm"],
-                                     None if sem is None else sem.astype("uint8"))
-        mesh = build_structural(run["dsm"], run["ndsm"], buildings, gsd)
-        want = len(buildings) if limit <= 0 else min(len(buildings), limit)
-        if not want:
-            job.progress.skip("facades", "no buildings to refine")
+        buildings = struct.select(
+            field, dsm, ndsm, None if sem is None else sem.astype("uint8"),
+            regularise=True, gsd_m=gsd, osm_rings=run.get("osm_buildings"))
+        if not buildings:
+            job.progress.skip("refine", "no buildings to refine")
             job.save()
             return man
 
-        # The orthophoto is needed before the run, not after: it colours the
-        # handover, and threefiner renders that colour to initialise its
-        # texture before the first diffusion step.
-        mesh_dir = os.path.join(tiles_dir, "mesh")
-        base = os.path.join(mesh_dir, "surface.jpg")
+        mesh = struct.build(dsm, ndsm, buildings, gsd)
+        rgb = run.get("texture")
+        if rgb is None:
+            job.progress.skip("refine", "this run wrote no orthophoto to condition on")
+            job.save()
+            return man
+
+        emit(StageEvent("refine", "running",
+                        f"texturing {min(len(buildings), int(params.get('refine_limit', 8)))} "
+                        "building(s) with TRELLIS.2", 0.1))
         try:
-            rec = fa.refine(mesh, os.path.join(run_dir, "facades"),
-                            max_buildings=limit,
-                            prompt=p.get("facade_prompt") or fa.DEFAULT_PROMPT,
-                            preset=p.get("facade_preset") or fa.DEFAULT_PRESET,
-                            texture=base if os.path.exists(base) else None,
-                            grid_shape=run["dsm"].shape, gsd_m=gsd)
-        except fa.FacadeUnavailable as exc:
-            # Most often the diffusion weights could not be fetched. That is a
-            # reason to skip one phase with the reason attached, not to fail a
-            # reconstruction that is already finished and on disk.
-            job.progress.skip("facades", str(exc).splitlines()[0][:200])
+            rec = tr.refine(mesh, rgb, gsd, os.path.join(run_dir, "refined"),
+                            buildings=buildings,
+                            limit=int(params.get("refine_limit", 8)),
+                            resolution=int(params.get("refine_resolution", 1024)),
+                            texture_size=int(params.get("refine_texture", 2048)))
+        except Exception as exc:                       # noqa: BLE001 - reported
+            job.progress.skip("refine", f"{type(exc).__name__}: {exc}"[:200])
             job.save()
             return man
-        emit(StageEvent("facades", "running", f"assembling {want} building(s)", 0.9))
 
-        info = fa.assemble(mesh, rec["buildings"],
-                           os.path.join(mesh_dir, "structural_refined.obj"),
-                           run["dsm"].shape, gsd,
-                           base_texture=base if os.path.exists(base) else None)
-
-        # The browser copy, repainted so the viewer shows what was just made.
-        textures, group_uv = {}, {}
-        web = webmesh.build_web_mesh(run["dsm"], run["ndsm"], field,
-                                     None if sem is None else sem.astype("uint8"),
-                                     gsd, source=mesh)
-        for name, png in info["materials"].items():
-            src = os.path.join(mesh_dir, png)
-            if not os.path.exists(src):
-                continue
-            shutil.copyfile(src, os.path.join(tiles_dir, png))
-            full = next((g for g in mesh["groups"] if g[0] == name), None)
-            small = next((g for g in web["groups"] if g[0] == name), None)
-            if full is None or small is None:
-                continue
-            sv = np.unique(mesh["triangles"][full[1]:full[1] + full[2]])
-            dv = np.unique(web["triangles"][small[1]:small[1] + small[2]])
-            moved = fa.transfer_uv(mesh["vertices"][sv], info["uv"][sv],
-                                   web["vertices"][dv])
-            if moved is not None:
-                textures[name] = png
-                group_uv[name] = moved
-        web_info = webmesh.write(os.path.join(tiles_dir, "structural.bin"), web,
-                                 web["grid"], web["gsd_m"],
-                                 textures=textures, group_uv=group_uv)
-
-        def rel(path):
-            return os.path.relpath(path, tiles_dir).replace(os.sep, "/")
-
-        entry = {k: v for k, v in info.items() if k not in ("uv", "materials")}
-        entry["obj"], entry["mtl"] = rel(info["obj"]), rel(info["mtl"])
-        entry["textures"] = sorted(info["materials"].values())
+        entry = {k: v for k, v in rec.items() if k != "environment"}
+        entry["dir"] = "refined"
         man.setdefault("mesh", {}).setdefault("structural", {})["refined"] = entry
-        man["mesh"]["structural"]["web"] = web_info
-
-        fa.retire_superseded(mesh_dir, man, entry["obj"])
         from ..core.jsonio import save_json
 
         save_json(man, os.path.join(tiles_dir, "tileset.json"), indent=1)
 
-        emit(StageEvent("facades", "done",
-                        f"{info['buildings_refined']}/{info['buildings_total']} "
-                        f"buildings painted", 1.0))
+        if rec.get("skipped"):
+            job.progress.skip("refine", str(rec["skipped"])[:200])
+            job.save()
+            return man
+        emit(StageEvent("refine", "done",
+                        f"{rec.get('refined', 0)}/{rec.get('attempted', 0)} "
+                        "buildings textured, geometry unchanged", 1.0))
         return man
 
     # ------------------------------------------------------------ retention

@@ -98,6 +98,16 @@ def load_run(run_dir: str) -> dict:
         out[key] = _read_raster(os.path.join(run_dir, fname))
     sem = _read_raster(os.path.join(run_dir, "sem.tif"))
     out["sem"] = None if sem is None else sem.astype(np.int16)
+    # The OpenStreetMap road network, if the run harvested one. It is optional
+    # everywhere it is read: a scene that is not georeferenced cannot have one,
+    # and a run made before this stage existed does not. `mesh.uvmap` uses it to
+    # keep a facade's colour off the street it stands on, and `chhaya.anchors`
+    # uses it as a bare-earth gate.
+    roads = _read_raster(os.path.join(run_dir, "osm", "roads.tif"))
+    out["osm_road_mask"] = None if roads is None else roads.astype(bool)
+    out["osm"] = _read_json(os.path.join(run_dir, "osm", "osm.json"))
+    rings = (_read_json(os.path.join(run_dir, "osm", "buildings.json")) or {}).get("rings")
+    out["osm_buildings"] = ([np.asarray(r, float) for r in rings] if rings else None)
     return out
 
 
@@ -357,7 +367,9 @@ def _structural_mesh(run: dict, mdir: str, out_dir: str, dsm, gsd: float,
 
     sem = run.get("sem")
     buildings = struct.select(field, dsm, ndsm,
-                              None if sem is None else sem.astype(np.uint8))
+                              None if sem is None else sem.astype(np.uint8),
+                              regularise=True, gsd_m=gsd,
+                              osm_rings=run.get("osm_buildings"))
     if not buildings:
         return None
     mesh = struct.build(dsm, ndsm, buildings, gsd)
@@ -378,8 +390,45 @@ def _structural_mesh(run: dict, mdir: str, out_dir: str, dsm, gsd: float,
     # web copy is decimated from it rather than built a second time.
     web = webmesh.build_web_mesh(dsm, ndsm, field, run.get("sem"), gsd,
                                  source=mesh)
+
+    # Facade texture coordinates, before the binary is written. Without this
+    # every wall in the browser samples the one orthophoto pixel row at its own
+    # footprint boundary - which, where a building meets a street, is the
+    # street. See `mesh.uvmap`; on the bundled fixture it moved 18.6% of wall
+    # vertices off a road pixel and onto the building's own roof colour.
+    from . import uvmap
+
+    # The web copy is either decimated at the full grid (stride 1) or rebuilt on
+    # a strided one. In the strided case the full-resolution footprints and
+    # rasters are the wrong shape for it, so they are strided to match and the
+    # Building objects - whose cell masks cannot be strided meaningfully - are
+    # dropped, leaving uvmap to recover each footprint from its own roof.
+    stride = int(web.get("stride", 1) or 1)
+    sem_web = run.get("sem")
+    road = run.get("osm_road_mask")
+    web_buildings = buildings
+    if stride > 1:
+        sl = (slice(None, None, stride), slice(None, None, stride))
+        sem_web = None if sem_web is None else sem_web[sl]
+        road = None if road is None else road[sl]
+        web_buildings = None
+
+    group_uv, uv_report = uvmap.build_group_uv(
+        web, web["grid"], web["gsd_m"], buildings=web_buildings,
+        sem=sem_web, road_mask=road)
+    info["facade_uv"] = {k: v for k, v in uv_report.items() if k != "notes"}
+    if road is not None:
+        info["facade_uv"]["sampling_road_before"] = uvmap.audit(
+            web, web["grid"], web["gsd_m"], None, road, web_buildings
+        ).get("sampling_road")
+        info["facade_uv"]["sampling_road_after"] = uvmap.audit(
+            web, web["grid"], web["gsd_m"], group_uv, road, web_buildings
+        ).get("sampling_road")
+
     info["web"] = webmesh.write(os.path.join(out_dir, "structural.bin"), web,
-                                web["grid"], web["gsd_m"])
+                                web["grid"], web["gsd_m"],
+                                group_uv=group_uv or None)
+    info["roof_modes"] = mesh.get("roof_modes", {})
     return info
 
 

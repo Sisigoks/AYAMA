@@ -279,6 +279,7 @@ export function SidePanel(p) {
   const met = m.metrics || {};
   const prov = m.provenance || {};
   const mesh = m.mesh;
+  const refined = (mesh && mesh.structural && mesh.structural.refined) || null;
   const st = (k) => (m.layers && m.layers[k] ? m.layers[k].stats : null);
 
   return (
@@ -416,36 +417,7 @@ export function SidePanel(p) {
       <Panel title="Download">
         <ul className="dl">
           <li><a href={base + 'tileset.json'} download>tileset.json</a></li>
-          {/* Once the facades are painted, the refined model replaces what it
-              supersedes rather than sitting beside it: its geometry is
-              byte-identical to structural.obj and its texture is strictly
-              better, so offering both would ship the same surface twice. */}
-          {mesh && mesh.structural && mesh.structural.refined ? (
-            <>
-              <li>
-                <a href={base + mesh.structural.refined.obj} download>
-                  {`structural_refined.obj — ${(mesh.structural.refined.triangles || 0).toLocaleString()} triangles, `}
-                  {`${mesh.structural.refined.buildings_refined || 0} of `}
-                  {`${mesh.structural.refined.buildings_total || 0} buildings with `}
-                  {mesh.structural.refined.synthesised
-                    ? 'SYNTHESISED walls' : 'measured texture only'}
-                </a>
-              </li>
-              <li>
-                <a href={base + mesh.structural.refined.mtl} download>
-                  structural_refined.mtl
-                </a>
-              </li>
-              {mesh.texture ? (
-                <li><a href={base + mesh.texture} download>surface.jpg — the orthophoto</a></li>
-              ) : null}
-              {(mesh.structural.refined.textures || []).map((t) => (
-                <li key={t}>
-                  <a href={base + 'mesh/' + t} download>{`${t} — synthesised facade`}</a>
-                </li>
-              ))}
-            </>
-          ) : mesh ? (
+          {mesh ? (
             <>
               <li>
                 <a href={base + mesh.obj} download>
@@ -470,6 +442,95 @@ export function SidePanel(p) {
           )}
         </ul>
       </Panel>
+
+      {/* Facade texture. Not a download panel: what there is to say is a
+          measurement, and it is the one that used to be wrong. Every wall's UV
+          was degenerate - both ends of a wall project to the same texel, at the
+          footprint boundary - so a facade rendered as one stretched pixel row
+          taken from the ground beside it, which next to a street is the street.
+          `mesh.uvmap` fixes it; this reports how much it moved. */}
+      {mesh && mesh.structural && mesh.structural.facade_uv ? (
+        <Panel title="Facades">
+          <div className="kv">
+            <Row k="walls given a flat colour"
+                 v={`${mesh.structural.facade_uv.walls_flattened || 0} of ${mesh.structural.facade_uv.groups || 0}`} />
+            <Row k="roof rims inset off the edge"
+                 v={mesh.structural.facade_uv.rims_inset || 0} />
+            {mesh.structural.facade_uv.sampling_road_before !== undefined
+             && mesh.structural.facade_uv.sampling_road_before !== null ? (
+              <Row k="wall texels on a road"
+                   v={`${(mesh.structural.facade_uv.sampling_road_before * 100).toFixed(2)}% → `
+                      + `${((mesh.structural.facade_uv.sampling_road_after || 0) * 100).toFixed(2)}%`} />
+            ) : null}
+            {mesh.structural.facade_uv.unsampled ? (
+              <Row k="no admissible sample"
+                   v={mesh.structural.facade_uv.unsampled} />
+            ) : null}
+          </div>
+          <p className="note-sm">
+            A nadir image does not photograph walls. Each facade is one flat
+            colour taken from the deepest admissible pixel of its own roof —
+            never a road, never vegetation, never water. Defensible, and not a
+            photograph.
+          </p>
+        </Panel>
+      ) : null}
+
+      {/* Roof shape. Flat is the default and the burden of proof is on tilting:
+          a monocular backbone's noise sits at the same scale as a flat roof's
+          detail, so a level roof rebuilt vertex by vertex comes back rippled. */}
+      {mesh && mesh.structural && mesh.structural.roof_modes ? (
+        <Panel title="Roofs">
+          <div className="kv">
+            <Row k="flat platform" v={mesh.structural.roof_modes.platform || 0} />
+            <Row k="fitted plane" v={mesh.structural.roof_modes.plane || 0} />
+            <Row k="left as measured" v={mesh.structural.roof_modes.measured || 0} />
+          </div>
+          <p className="note-sm">
+            A roof is capped flat at its robust median unless it measurably
+            rises and a plane measurably fits. Past four metres of scatter the
+            mask has usually crossed two structures, so those keep the
+            calibrated heights.
+          </p>
+        </Panel>
+      ) : null}
+
+      {/* Refined appearance. Sat2City v2's frozen appearance path run on our
+          own mesh: nothing trained, no vertex moved, and the drift against the
+          input is asserted before any colour is kept. Reported as a panel and
+          not swapped into the scene, because the texture is synthesised even
+          though the geometry is measured. */}
+      {refined ? (
+        <Panel title="Refined appearance">
+          <div className="kv">
+            <Row k="refiner" v="TRELLIS.2 texturing" />
+            <Row k="trained" v={refined.trained === false ? 'no — all frozen' : '–'} />
+            <Row k="buildings"
+                 v={`${refined.refined || 0} of ${refined.attempted || 0}`
+                    + (refined.candidates ? ` (${refined.candidates} candidates)` : '')} />
+            {refined.resolution
+              ? <Row k="atlas" v={`${refined.texture_size}px, encoded at ${refined.resolution}`} /> : null}
+            {(() => {
+              const done = (refined.buildings || []).filter((b) => b.file
+                && typeof b.max_drift_m === 'number');
+              if (!done.length) return null;
+              const worst = Math.max(...done.map((b) => b.max_drift_m));
+              return <Row k="worst vertex drift" v={`${worst.toFixed(4)} m`} />;
+            })()}
+          </div>
+          {refined.skipped ? (
+            <p className="note-sm">{refined.skipped}</p>
+          ) : (
+            <p className="note-sm">
+              Geometry is this pipeline's own and was checked against the input
+              before anything was kept — only colour crossed back. The texture
+              itself is synthesised: a nadir image does not photograph a wall,
+              so these facades are what a 3D prior expects a building of this
+              shape to look like.
+            </p>
+          )}
+        </Panel>
+      ) : null}
 
       {readout ? (
         <Panel title="Cursor">

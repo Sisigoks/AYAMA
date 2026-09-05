@@ -20,7 +20,7 @@ from ..chhaya.uncertainty import (bootstrap_sigma, combine, reference_sigma)
 from ..core.ingest import ingest
 from ..core.types import (Config, ElevationSurface, GCP, Scene, StageEvent,
                           Tier)
-from ..dsm.assemble import assemble
+from ..dsm.assemble import assemble, fill_holes
 from ..dsm.cog import write_cog, write_png_preview, write_rgb
 from ..measure.derive import slope_deg
 from ..semantics import instances as inst_mod
@@ -154,13 +154,19 @@ def dem_source_name(spec: Optional[str]) -> Optional[str]:
     return "unknown"
 
 
-def load_dem(spec: Optional[str], scene: Scene) -> tuple[Optional[np.ndarray], str]:
+def load_dem(spec: Optional[str], scene: Scene,
+             allow_network: bool = False) -> tuple[Optional[np.ndarray], str]:
     """Resample a bare-earth DEM onto the image grid.
 
-    Accepts a path to a GeoTIFF, or `sim:<path>` to simulate a public DEM from a
-    known terrain surface during development. Fetching Copernicus/SRTM tiles
-    from the network belongs here and is deliberately not implemented offline:
-    a run must never silently proceed with a DEM it could not actually load.
+    Accepts a path to a GeoTIFF, `sim:<path>` to simulate a public DEM from a
+    known terrain surface during development, or the name of a fetchable global
+    product - `copernicus` (GLO-30, the default and the best of the free global
+    DEMs in urban terrain) or `copernicus90`.
+
+    The network is opt-in. `allow_network=False` still resolves a product name,
+    but only from the on-disk tile cache; it raises rather than downloading, and
+    it raises rather than returning nothing, because a run that silently
+    proceeds with a DEM it failed to load is worse than one that stops.
     """
     if not spec:
         return None, "none"
@@ -175,10 +181,45 @@ def load_dem(spec: Optional[str], scene: Scene) -> tuple[Optional[np.ndarray], s
             f"simulated copernicus from {os.path.basename(spec[4:])}"
     if os.path.exists(spec):
         return _resample_to_scene(spec, scene), f"raster:{os.path.basename(spec)}"
+
+    from ..data import dem as dem_mod
+
+    key = spec.strip().lower()
+    key = "copernicus" if key in ("glo30", "glo-30", "copernicus30") else key
+    if key in dem_mod.PRODUCTS or key in dem_mod.MANUAL_PRODUCTS:
+        arr, prov = dem_mod.load_for_scene(scene.meta, scene.shape, product=key,
+                                           allow_network=allow_network)
+        return arr, (f"{prov['product']} ({len(prov['tiles'])} tile"
+                     f"{'s' if len(prov['tiles']) != 1 else ''}, "
+                     f"{prov['coverage'] * 100:.0f}% coverage, "
+                     f"{prov['vertical_datum']})")
     raise FileNotFoundError(
-        f"DEM source '{spec}' is not a file. Pass a GeoTIFF path, or 'sim:<terrain.tif>' "
-        "for development. Network DEM fetching is not wired up."
+        f"DEM source '{spec}' is not a file and is not a known product. Pass a "
+        f"GeoTIFF path, 'sim:<terrain.tif>' for development, or one of: "
+        f"{', '.join(sorted(dem_mod.PRODUCTS))}."
     )
+
+
+def load_osm(cfg, scene: Scene):
+    """The OpenStreetMap layer for this scene, or None with the reason recorded.
+
+    Never raises into the pipeline. OSM is a refinement everything downstream is
+    written to work without - a scene with no georeferencing cannot have one at
+    all - so a failure here degrades the run rather than ending it. What it must
+    not do is fail *silently*, so the reason travels in the provenance.
+    """
+    if not cfg.extras.get("osm"):
+        return None, {"used": False, "reason": "not requested (pass --osm)"}
+    from ..data import osm as osm_mod
+
+    try:
+        layer = osm_mod.load(scene.meta, scene.shape,
+                             allow_network=bool(cfg.extras.get("osm_network", True)))
+    except osm_mod.OSMUnavailable as exc:
+        return None, {"used": False, "reason": str(exc)}
+    except Exception as exc:                            # pragma: no cover
+        return None, {"used": False, "reason": f"{type(exc).__name__}: {exc}"}
+    return layer, {"used": True, **layer.summary()}
 
 
 def load_reference(path: str, scene: Scene) -> np.ndarray:
@@ -361,8 +402,27 @@ def run(
     with clock.stage("segmentation") as st:
         sem, sem_provenance = segment(scene, method=cfg.extras.get("segmentation", "heuristic"),
                                       path=cfg.extras.get("segmentation_path"))
+
+        # OpenStreetMap, where the run asked for it. It lands here rather than in
+        # its own stage because what it does first is correct *this* raster, and
+        # every consumer of `sem` downstream - the DEM anchor gate above all -
+        # should see the corrected one. See `data.osm.refine_semantics`: on the
+        # bundled fixture it moves the median height error of a DEM-admissible
+        # pixel from +6.39 m to +2.01 m.
+        osm_layer, osm_provenance = load_osm(cfg, scene)
+        osm_road_mask = None
+        if osm_layer is not None:
+            from ..data import osm as osm_mod
+
+            osm_road_mask = osm_mod.road_mask(osm_layer, scene.shape, scene.meta.gsd_m)
+            sem, refine_report = osm_mod.refine_semantics(sem, osm_layer,
+                                                          scene.meta.gsd_m)
+            osm_provenance.update(refine_report)
+
         frac = class_fractions(sem)
-        st.done("  ".join(f"{k} {v*100:.0f}%" for k, v in frac.items() if v > 0.01))
+        st.done("  ".join(f"{k} {v*100:.0f}%" for k, v in frac.items() if v > 0.01)
+                + (f"   (OSM: {osm_provenance.get('buildings', 0)} footprints, "
+                   f"{osm_provenance.get('roads', 0)} ways)" if osm_layer else ""))
 
     # ---- shadow ----------------------------------------------------------
     with clock.stage("shadow") as st:
@@ -374,7 +434,9 @@ def run(
 
     # ---- anchors ---------------------------------------------------------
     with clock.stage("anchors") as st:
-        dem_m, dem_provenance = load_dem(cfg.dem_source, scene)
+        dem_m, dem_provenance = load_dem(
+            cfg.dem_source, scene,
+            allow_network=bool(cfg.extras.get("fetch_dem", False)))
         decision = select_tier(scene, cfg, gcps, dem_available=dem_m is not None)
         res.tier, res.tier_reason = decision.tier, decision.reason
 
@@ -420,9 +482,30 @@ def run(
 
     # ---- assemble --------------------------------------------------------
     with clock.stage("assemble") as st:
-        res.surface = assemble(surface, sem, scene.meta, sigma_m=sigma, tier=decision.tier)
+        # Bare earth by cloth simulation rather than by believing the semantic
+        # raster. Measured on the bundled fixture against swissALTI3D, the
+        # morphological extractor sits 6.19 m above true terrain - on the
+        # rooftops it mislabelled as ground - and Bulldozer sits 0.04 m below
+        # it. See `dsm.dtm`. Falls back with the reason recorded when Bulldozer
+        # is not installed.
+        from ..dsm import dtm as dtm_mod
+
+        dtm_m, dtm_provenance = None, {"method": "morphological",
+                                       "reason": "not requested"}
+        if cfg.extras.get("dtm", "bulldozer") != "morphological":
+            dtm_m, dtm_provenance = dtm_mod.extract(
+                fill_holes(np.asarray(surface, np.float32)), scene.meta, sem=sem,
+                ground_mask=osm_road_mask,
+                max_object_size_m=float(cfg.extras.get(
+                    "dtm_max_object_m", dtm_mod.DEFAULT_MAX_OBJECT_SIZE_M)),
+                use_ground_anchors=bool(cfg.extras.get("dtm_ground_anchors", False)),
+                workers=int(cfg.extras.get("workers", 0)) or None)
+
+        res.surface = assemble(surface, sem, scene.meta, sigma_m=sigma,
+                               tier=decision.tier, dtm_m=dtm_m)
         st.done(f"elevation {res.surface.dsm_m.min():.1f}-{res.surface.dsm_m.max():.1f} m, "
-                f"max object height {res.surface.ndsm_m.max():.1f} m")
+                f"max object height {res.surface.ndsm_m.max():.1f} m "
+                f"(terrain: {dtm_provenance['method']})")
 
     res.provenance = {
         "image": os.path.abspath(image_path),
@@ -431,6 +514,8 @@ def run(
         "instances": inst_provenance,
         "instance_count": inst.count,
         "dem": dem_provenance,
+        "osm": osm_provenance,
+        "dtm": dtm_provenance,
         "tier": decision.tier.value,
         "chip": cfg.chip,
         "overlap": cfg.overlap,
@@ -442,7 +527,10 @@ def run(
     if write_artifacts and out_dir:
         with clock.stage("artifacts") as st:
             res.artifacts = write_outputs(res.surface, scene, sem, shadow, depth.relative, out_dir,
-                                          provenance=res.provenance, instances=inst)
+                                          provenance=res.provenance, instances=inst,
+                                          osm_road_mask=osm_road_mask,
+                                          osm_provenance=osm_provenance,
+                                          osm_layer=osm_layer)
             st.done(f"{len(res.artifacts)} files in {out_dir}")
 
     # ---- validation ------------------------------------------------------
@@ -461,8 +549,33 @@ def run(
 
 
 def write_outputs(surface, scene, sem, shadow, relative, out_dir: str,
-                  provenance: Optional[dict] = None, instances=None) -> dict:
+                  provenance: Optional[dict] = None, instances=None,
+                  osm_road_mask=None, osm_provenance: Optional[dict] = None,
+                  osm_layer=None) -> dict:
     os.makedirs(out_dir, exist_ok=True)
+    if osm_road_mask is not None:
+        # Written as its own artifact under osm/ so the mesh stage can read it
+        # back without re-fetching, and so a reader can see exactly which pixels
+        # the run treated as street. `mesh.build.load_run` looks for this path.
+        import json
+
+        osm_dir = os.path.join(out_dir, "osm")
+        os.makedirs(osm_dir, exist_ok=True)
+        write_cog(os.path.join(osm_dir, "roads.tif"),
+                  np.asarray(osm_road_mask, np.uint8), surface.meta,
+                  description="OSM road network, rasterised to carriageway width")
+        with open(os.path.join(osm_dir, "osm.json"), "w", encoding="utf-8") as fh:
+            json.dump(osm_provenance or {}, fh, indent=2, default=str)
+        # The footprint rings, in this scene's pixel coordinates, so the mesh
+        # stage can use them as a shape prior without re-fetching or
+        # re-projecting. Rounded to a millimetre of pixel, which is far finer
+        # than anything reads them and keeps the file to a sane size.
+        if osm_layer is not None and getattr(osm_layer, "buildings", None):
+            rings = [[[round(float(r), 3), round(float(c), 3)] for r, c in ring]
+                     for ring in osm_layer.buildings]
+            with open(os.path.join(osm_dir, "buildings.json"), "w",
+                      encoding="utf-8") as fh:
+                json.dump({"crs": "pixel (row, col)", "rings": rings}, fh)
     meta = surface.meta
     tags = {f"TRAKSHA_{k.upper()}": str(v) for k, v in (provenance or {}).items()}
     art = {}

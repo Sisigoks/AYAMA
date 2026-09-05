@@ -35,11 +35,22 @@ hiding it.
 is a render-space product derived from them, written beside them and labelled as
 such.
 
-**It does not force roofs flat.** A plane is fitted per roof and used only where
-the roof really is planar, measured by inlier fraction and residual. Pitched and
-complex roofs keep their calibrated shape, because flattening them would be
-exactly the kind of plausible-looking fabrication the rest of this project
-refuses.
+**It builds a flat roof flat, and says which roofs those were.** This used to
+read "it does not force roofs flat", and that refusal was aimed at the wrong
+target. A monocular backbone's noise lives at the same spatial scale as a flat
+roof's real detail, so a level roof rebuilt vertex by vertex comes back rippled -
+and the ripple is the depth model's error rendered as architecture, not a
+measurement worth preserving. `choose_roof` snaps a roof to its robust median,
+which for a flat roof *is* the measurement; it keeps a tilted plane only where
+the roof genuinely rises and a plane genuinely fits; and past `MAX_PLATFORM_SCATTER_M`
+of scatter, where the mask has usually crossed a height discontinuity, it leaves
+the calibrated heights alone. Every building records which branch it took.
+
+**The outline is straightened, and that can decline.** `mesh.regularize` traces
+each mask sub-pixel, simplifies it, and squares it into the building's own
+rectilinear frame - but only if doing so moves the footprint very little.
+A curved building keeps its curve. The heights are read from the observed mask
+either way; only which cells get a wall around them changes.
 """
 from __future__ import annotations
 
@@ -61,6 +72,39 @@ MIN_AREA_PX = 40
 # roof has to be inliers before the plane is used at all.
 PLANE_TOL_M = 0.6
 PLANE_INLIER_FRAC = 0.80
+
+# --------------------------------------------------------------- flat platforms
+# A roof whose calibrated heights sit this close to their own median, in RMS, is
+# level and is built as one horizontal platform. This is the "flat by default"
+# rung: monocular depth is noisy at exactly the scale of a flat roof's detail,
+# so a level roof reconstructed vertex by vertex comes out rippled, and the
+# ripple is the depth model's noise rather than the building's shape.
+PLATFORM_TOL_M = 0.8
+
+# How much of the roof a plane has to explain before its verdict is listened to
+# at all. Lower than PLANE_INLIER_FRAC because this fit is being used to answer
+# the much weaker question "is this roof tilted?" rather than to supply the
+# heights directly.
+PLATFORM_INLIER_FRAC = 0.55
+
+# A tilted plane is preferred over a flat platform only if it explains the roof
+# this much better in RMS, *and* the roof actually rises by MIN_PITCH_M across
+# its own footprint, *and* the plane genuinely fits rather than merely fitting
+# better than a constant. All three, because a plane fitted to noise always beats
+# a constant by a little, and tilting a flat roof to chase that is how a
+# measurement becomes a decoration.
+PITCH_GAIN = 0.70
+MIN_PITCH_M = 1.5
+PLANE_RESIDUAL_TOL_M = 1.5
+
+# Scatter above which no single surface is trusted and the calibrated heights are
+# kept as they are. Below it, scatter around a level roof is treated as the
+# backbone's noise and flattened - which is the point worth being explicit about:
+# keeping a roof that scatters three metres around no describable shape does not
+# preserve a measurement, it preserves an error. Matched to MAX_ROOF_MAD_M,
+# because past that the mask has usually crossed a height discontinuity and the
+# footprint spans two structures rather than one rough roof.
+MAX_PLATFORM_SCATTER_M = 4.0
 
 # Robust spread. A roof whose calibrated heights scatter more than this, after
 # MAD, is not a coherent surface - usually vegetation overhanging the mask, or a
@@ -85,6 +129,18 @@ class Building:
     plane: Optional[tuple] = None          # (a, b, c) with z = a*col + b*row + c
     confidence: float = 0.0
     note: str = ""
+    # How the roof cap is built. "platform" is one horizontal plane at
+    # `platform_z`; "plane" is the fitted tilted plane; "measured" keeps the
+    # calibrated surface vertex by vertex. Recorded per building so a run can
+    # say how many roofs it flattened instead of implying it flattened none.
+    roof_mode: str = "measured"
+    platform_z: Optional[float] = None
+    pitch_m: float = 0.0
+    roof_rmse_m: float = 0.0
+    # How the footprint outline was arrived at: traced, simplified, squared up,
+    # or adopted from OpenStreetMap - and, when it declined, why. See
+    # `mesh.regularize`.
+    outline: Optional[dict] = None
 
     def record(self) -> dict:
         return {
@@ -96,8 +152,14 @@ class Building:
             "height_m": round(self.height_m, 3),
             "outlier_ratio": round(self.outlier_ratio, 4),
             "planar": bool(self.planar),
+            "roof_mode": self.roof_mode,
+            "platform_z": (None if self.platform_z is None
+                           else round(self.platform_z, 3)),
+            "pitch_m": round(self.pitch_m, 3),
+            "roof_rmse_m": round(self.roof_rmse_m, 3),
             "confidence": round(self.confidence, 4),
             "note": self.note,
+            "outline": self.outline,
         }
 
 
@@ -138,6 +200,86 @@ def _fit_plane(rows: np.ndarray, cols: np.ndarray, z: np.ndarray):
     inliers = np.abs(resid) <= PLANE_TOL_M
     rmse = float(np.sqrt(np.mean(resid ** 2)))
     return tuple(float(v) for v in coef), float(inliers.mean()), rmse
+
+
+def choose_roof(rows: np.ndarray, cols: np.ndarray, z: np.ndarray) -> dict:
+    """Decide how one roof cap is built: flat platform, tilted plane, or as measured.
+
+    Flat is the default and the burden of proof is on tilting. The argument is
+    not aesthetic. A monocular depth model's noise lives at the same spatial
+    scale as a flat roof's real detail, so a level roof rebuilt vertex by vertex
+    comes back rippled - and that ripple is the backbone's error being rendered
+    as though it were architecture. Snapping to the robust median removes it and
+    removes nothing that was measured, because a flat roof's measurement *is*
+    its median.
+
+    Tilting is allowed only against two independent pieces of evidence: the
+    plane has to explain the roof materially better than a constant does
+    (`PITCH_GAIN`), and the roof has to actually rise by `MIN_PITCH_M` across
+    its own footprint. Either alone is not enough - a plane fitted to noise
+    always beats a constant by a little, and a large flat roof with one tall
+    lift housing produces a rise without a pitch.
+
+    Returns a dict with `mode`, `plane`, `platform_z`, `pitch_m` and `rmse_m`.
+    """
+    z = np.asarray(z, np.float64)
+    z = z[np.isfinite(z)] if z.ndim == 1 else z
+    out = {"mode": "measured", "plane": None, "platform_z": None,
+           "pitch_m": 0.0, "rmse_m": float("nan"), "inlier_frac": 0.0}
+    if z.size < 8:
+        return out
+
+    median = float(np.median(z))
+    rmse_flat = float(np.sqrt(np.mean((z - median) ** 2)))
+    out["platform_z"] = median
+    out["rmse_m"] = rmse_flat
+
+    plane, inlier_frac, rmse_plane = _fit_plane(
+        np.asarray(rows, np.float64), np.asarray(cols, np.float64), z)
+    out["inlier_frac"] = inlier_frac
+
+    # How far the fitted plane rises across the support it was fitted on. This
+    # is the quantity "pitched" actually means, and it is not the gradient: a
+    # steep plane over a tiny footprint is a few centimetres of rise.
+    pitch = 0.0
+    if plane is not None:
+        a, b, _ = plane
+        pitch = abs(a) * float(np.ptp(cols)) + abs(b) * float(np.ptp(rows))
+    out["pitch_m"] = float(pitch)
+
+    if rmse_flat <= PLATFORM_TOL_M:
+        # Measurably level. Nothing a plane can add.
+        out["mode"] = "platform"
+        return out
+
+    if (plane is not None and inlier_frac >= PLATFORM_INLIER_FRAC
+            and pitch >= MIN_PITCH_M
+            and rmse_plane <= PITCH_GAIN * rmse_flat
+            and rmse_plane <= PLANE_RESIDUAL_TOL_M):
+        # Genuinely pitched: the roof rises, and a plane actually describes the
+        # rise rather than just beating a constant by a margin noise supplies.
+        out["mode"] = "plane"
+        out["plane"] = plane
+        out["rmse_m"] = rmse_plane
+        return out
+
+    if rmse_flat <= MAX_PLATFORM_SCATTER_M:
+        # Scatter, but not a shape. This is the branch that matters and it is
+        # worth being explicit about which way it goes. A monocular backbone
+        # puts metres of spurious relief on a flat roof - the delivered scenes
+        # show roofs "rising" ten metres across themselves with three metres of
+        # residual around any plane you fit - and keeping those heights does not
+        # preserve a measurement, it preserves an error and renders it as
+        # architecture. The robust median is the better estimate of a roof whose
+        # scatter no surface explains.
+        out["mode"] = "platform"
+        return out
+
+    # Past MAX_PLATFORM_SCATTER_M there is usually more than one structure under
+    # this mask, and flattening two roofs into one platform would be a worse lie
+    # than leaving them rough. Keep the calibrated heights; `measure` has already
+    # attached a note saying the roof scatters.
+    return out
 
 
 def _to_cells(mask: np.ndarray) -> np.ndarray:
@@ -269,7 +411,10 @@ def measure(instance_id: int, mask: np.ndarray, dsm: np.ndarray, dtm: np.ndarray
             sem: Optional[np.ndarray] = None,
             confidence: float = 0.0,
             source_instance: Optional[int] = None,
-            cells: Optional[np.ndarray] = None) -> Optional[Building]:
+            cells: Optional[np.ndarray] = None,
+            regularise: bool = False,
+            gsd_m: Optional[float] = None,
+            osm_rings=None) -> Optional[Building]:
     """Turn one instance mask into a Building, or reject it with a reason.
 
     Rejection is the point of this function as much as measurement. SAM 2 is
@@ -324,11 +469,44 @@ def measure(instance_id: int, mask: np.ndarray, dsm: np.ndarray, dtm: np.ndarray
     if not cells.any():
         return None                        # thinner than one cell: nothing to extrude
 
+    # Straighten the outline before it is extruded. The heights above were all
+    # read from the *observed* mask and are not touched by this - what changes is
+    # only which cells get a wall around them. Keeping the two separate is the
+    # point: the image says how tall the roof is, and the regularised polygon
+    # says where its edge runs. `mesh.regularize` declines on anything it cannot
+    # square up without moving the footprint, so a round tower keeps its curve.
+    outline_rec = None
+    if regularise and gsd_m:
+        from . import regularize as R
+
+        got = R.outline(mask, gsd_m, osm_rings=osm_rings)
+        if got is not None and got.stage in ("regular", "osm"):
+            snapped = _to_cells(R.rasterise(got.ring, mask.shape))
+            snapped = unpinch(snapped)
+            # Refuse a regularisation that would empty the footprint or blow it
+            # up; either means the polygon and the mask disagree about what
+            # building this is.
+            if snapped.any() and 0.5 <= snapped.sum() / max(cells.sum(), 1) <= 2.0:
+                cells = snapped
+                outline_rec = got.record()
+            elif got is not None:
+                outline_rec = dict(got.record(), applied=False)
+        elif got is not None:
+            outline_rec = got.record()
+
     rows, cols = np.nonzero(inner)
     plane, inlier_frac, rmse = _fit_plane(rows.astype(np.float64),
                                           cols.astype(np.float64), dsm[inner])
     planar = bool(plane is not None and inlier_frac >= PLANE_INLIER_FRAC
                   and rmse <= PLANE_TOL_M * 2)
+
+    # The flat-platform decision is separate from `planar` and deliberately so.
+    # `planar` answers "does a plane describe this roof", which the tilted-plane
+    # branch of `build` still uses; `choose_roof` answers "how should the cap be
+    # built", and its default answer is flat. Keeping both means the older
+    # behaviour is still reachable and the new one is auditable against it.
+    roof_choice = choose_roof(rows.astype(np.float64), cols.astype(np.float64),
+                              dsm[inner])
 
     return Building(
         id=int(instance_id), source_instance=int(source_instance
@@ -337,16 +515,29 @@ def measure(instance_id: int, mask: np.ndarray, dsm: np.ndarray, dtm: np.ndarray
         cells=cells, area_px=area,
         roof_median_m=roof_med, roof_mad_m=roof_mad, ground_m=ground,
         height_m=height, outlier_ratio=outliers, planar=planar,
-        plane=plane if planar else None, confidence=float(confidence), note=note)
+        plane=plane if planar else None, confidence=float(confidence), note=note,
+        roof_mode=roof_choice["mode"],
+        platform_z=roof_choice["platform_z"],
+        pitch_m=roof_choice["pitch_m"],
+        roof_rmse_m=(0.0 if not np.isfinite(roof_choice["rmse_m"])
+                     else float(roof_choice["rmse_m"])),
+        outline=outline_rec)
 
 
 def select(instances, dsm: np.ndarray, ndsm: np.ndarray,
-           sem: Optional[np.ndarray] = None) -> list:
+           sem: Optional[np.ndarray] = None,
+           regularise: bool = False, gsd_m: Optional[float] = None,
+           osm_rings=None) -> list:
     """Which instances are buildings. Decided on height, not on colour.
 
     This is why the instance stage runs before depth but the building decision
     happens here: SAM 2 supplies the outlines, and only the calibrated surface
     can say which outlines enclose something tall.
+
+    `regularise` straightens each footprint before it is extruded (see
+    `mesh.regularize`); it needs `gsd_m`, because every tolerance it applies is
+    in metres. `osm_rings` offers OpenStreetMap polygons as a shape prior, which
+    are adopted only where they already agree with the mask.
     """
     dtm = np.asarray(dsm, np.float32) - np.asarray(ndsm, np.float32)
     dsm32 = np.asarray(dsm, np.float32)
@@ -358,7 +549,8 @@ def select(instances, dsm: np.ndarray, ndsm: np.ndarray,
         for part in pieces(unpinch(_to_cells(instances.mask(rec["id"])))):
             b = measure(next_id, _cells_to_px(part, dsm32.shape), dsm32, dtm, sem,
                         confidence=rec.get("score", 0.0),
-                        source_instance=rec["id"], cells=part)
+                        source_instance=rec["id"], cells=part,
+                        regularise=regularise, gsd_m=gsd_m, osm_rings=osm_rings)
             if b is not None:
                 out.append(b)
                 next_id += 1
@@ -373,8 +565,17 @@ class _Mesh:
         self.v: list = []
         self.f: list = []
         self.groups: list = []             # (name, first_face, n_faces)
+        # name -> (first_vertex, n_vertices, n_roof_vertices). The last figure
+        # is what splits a building's roof cap from its walls, and nothing else
+        # in the file can recover it: the two share their top vertices, so a
+        # consumer looking only at positions or faces cannot tell which
+        # vertices belong to a wall. `mesh.uvmap` needs exactly that split to
+        # stop a facade sampling the road it stands on, so it is recorded here
+        # at the one moment it is known.
+        self.spans: dict = {}
 
-    def add(self, name: str, verts: np.ndarray, tris: np.ndarray) -> None:
+    def add(self, name: str, verts: np.ndarray, tris: np.ndarray,
+            n_roof: Optional[int] = None) -> None:
         if len(tris) == 0:
             return
         base = len(self.v)
@@ -382,11 +583,14 @@ class _Mesh:
         first = len(self.f)
         self.f.extend((np.asarray(tris) + base).tolist())
         self.groups.append((name, first, len(self.f) - first))
+        n_v = len(self.v) - base
+        self.spans[name] = (base, n_v, int(n_v if n_roof is None else n_roof))
 
     def finish(self) -> dict:
         V = np.asarray(self.v, np.float64).reshape(-1, 3)
         F = np.asarray(self.f, np.int64).reshape(-1, 3)
-        return {"vertices": V, "triangles": F, "groups": self.groups}
+        return {"vertices": V, "triangles": F, "groups": self.groups,
+                "vertex_spans": self.spans}
 
 
 def _grid_xyz(rows, cols, z, h, gsd):
@@ -435,7 +639,7 @@ def _solid(cells: np.ndarray, roof_z: np.ndarray, ground: float, gsd: float,
     """
     rr, cc = np.nonzero(cells)
     if rr.size == 0:
-        return np.zeros((0, 3)), np.zeros((0, 3), np.int64)
+        return np.zeros((0, 3)), np.zeros((0, 3), np.int64), 0
 
     # roof vertices: every grid vertex the footprint cells touch
     used = np.zeros(roof_z.shape, bool)
@@ -491,12 +695,24 @@ def _solid(cells: np.ndarray, roof_z: np.ndarray, ground: float, gsd: float,
     if panels:
         tris.append(np.asarray([t for pair in panels for t in pair], np.int64))
 
-    return np.asarray(verts, np.float64), np.concatenate(tris, 0).astype(np.int64)
+    # `n_roof` is the count of cap vertices, which are all the vertices created
+    # before the first `base_of` call. Everything at or past that index is a
+    # wall foot sitting on the ground.
+    return (np.asarray(verts, np.float64),
+            np.concatenate(tris, 0).astype(np.int64), int(ur.size))
 
 
 def build(dsm_m: np.ndarray, ndsm_m: np.ndarray, buildings: list, gsd_m: float,
-          instances=None, use_planes: bool = True) -> dict:
-    """The refined mesh: terrain with holes, plus one solid per building."""
+          instances=None, use_planes: bool = True,
+          flat_platforms: bool = True) -> dict:
+    """The refined mesh: terrain with holes, plus one solid per building.
+
+    `flat_platforms` follows each building's own `roof_mode` (see `choose_roof`):
+    level roofs become one horizontal cap, measurably pitched ones get their
+    fitted plane, and complex ones keep their calibrated surface. Set it False
+    to restore the previous behaviour, where only `planar` roofs were planed and
+    everything else was built vertex by vertex.
+    """
     dsm = np.asarray(dsm_m, np.float32)
     h, w = dsm.shape
     dtm = dsm - np.asarray(ndsm_m, np.float32)
@@ -530,27 +746,43 @@ def build(dsm_m: np.ndarray, ndsm_m: np.ndarray, buildings: list, gsd_m: float,
         # come out serrated - visible in any oblique view.
         px = _cells_to_px(b.cells, dsm.shape)
         roof = _extend_from_core(dsm, px, core(px)).astype(np.float32)
-        if use_planes and b.planar and b.plane is not None:
+        grow = np.zeros((h, w), bool)
+        grow[:-1, :-1] |= b.cells
+        grow[:-1, 1:] |= b.cells
+        grow[1:, :-1] |= b.cells
+        grow[1:, 1:] |= b.cells
+
+        mode = b.roof_mode if flat_platforms else (
+            "plane" if (use_planes and b.planar and b.plane is not None) else "measured")
+        if mode == "platform" and b.platform_z is not None:
+            # One horizontal cap. Applied across the whole footprint and not
+            # gated on agreeing with the calibrated value, because the platform
+            # *is* the robust summary of those values - gating it on them would
+            # reintroduce the ripple it exists to remove.
+            roof = np.where(grow, np.float32(b.platform_z), roof).astype(np.float32)
+        elif mode == "plane" and b.plane is not None:
             a_, b_, c_ = b.plane
             rr, cc = np.mgrid[0:h, 0:w]
             fitted = a_ * cc + b_ * rr + c_
             # Only inside this footprint, and only where the plane is close to
             # the calibrated value: a plane extrapolated past its own support is
             # a fabrication, not a fit.
-            grow = np.zeros((h, w), bool)
-            grow[:-1, :-1] |= b.cells
-            grow[:-1, 1:] |= b.cells
-            grow[1:, :-1] |= b.cells
-            grow[1:, 1:] |= b.cells
             close = np.abs(fitted - roof) <= PLANE_TOL_M * 3
             roof = np.where(grow & close, fitted, roof).astype(np.float32)
 
         # Its own vertices, so a building shares none with the terrain or with
         # its neighbours and separation is a countable property of the mesh.
-        bv, bt = _solid(b.cells, roof, b.ground_m, gsd_m, h)
-        mesh.add(f"building_{b.id}", bv, bt)
+        bv, bt, n_roof = _solid(b.cells, roof, b.ground_m, gsd_m, h)
+        mesh.add(f"building_{b.id}", bv, bt, n_roof)
 
     out = mesh.finish()
     out["buildings"] = [b.record() for b in buildings]
     out["schema"] = SCHEMA_VERSION
+    modes: dict = {}
+    for b in buildings:
+        key = b.roof_mode if flat_platforms else (
+            "plane" if (use_planes and b.planar and b.plane is not None) else "measured")
+        modes[key] = modes.get(key, 0) + 1
+    out["roof_modes"] = modes
+    out["flat_platforms"] = bool(flat_platforms)
     return out

@@ -27,13 +27,19 @@ api = ["fastapi>=0.110", "uvicorn[standard]>=0.29", "python-multipart>=0.0.9", "
 # Optional: without it the mesh is built on a strided grid instead,
 # which is measurably worse (README section 6.3) but still works.
 mesh = ["pymeshlab>=2023.12", "trimesh>=4.0"]
-# Facade texture synthesis. Needs a CUDA GPU and nvdiffrast, which is a
-# source build and cannot be declared here. See README section 6.2b.
-# xatlas and pillow are listed because the *bake* needs them on this side, not
-# only threefiner on its own: the refined texture is resampled onto an atlas
-# built for our triangles, and pip resolving threefiner's tree is not a
-# guarantee that either is present.
-facades = ["threefiner>=0.1.2", "trimesh>=4.0", "xatlas>=0.0.9", "pillow>=10.0"]
+# The training-free appearance refiner (README section 6.2g). TRELLIS.2 itself
+# is not on PyPI - it is a git checkout with CUDA extensions built from source -
+# so what is declared here is only what this side of the handover needs.
+refiner = ["trimesh>=4.0", "pillow>=10.0", "huggingface_hub>=0.23"]
+# Bare earth by multi-scale drape-cloth filter (CNES Bulldozer). CPU-only,
+# Apache-2.0, and worth 6.195 m -> 0.811 m of DTM MAE on the bundled fixture -
+# see README section 6.2a. Optional because it is a compiled dependency;
+# `dsm.dtm` falls back to the morphological filter and records that it did.
+terrain = ["bulldozer-dtm>=1.3", "scikit-image>=0.22"]
+# Sub-pixel contour tracing and Douglas-Peucker for footprint regularisation
+# (README section 6.2d). scikit-image also arrives with `terrain`; listed here
+# too so either extra alone is sufficient.
+geometry = ["scikit-image>=0.22"]
 dev = ["pytest>=8.0"]
 
 [project.scripts]

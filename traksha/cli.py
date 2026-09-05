@@ -498,7 +498,13 @@ def cmd_run(args) -> int:
                 "instances": args.instances,
                 "instance_points": args.instance_points,
                 "scale_model": args.scale_model,
-                "dual_branch": args.scale_model not in ("off", "none", "no")},
+                "dual_branch": args.scale_model not in ("off", "none", "no"),
+                "osm": bool(getattr(args, "osm", False)
+                            or getattr(args, "osm_cache_only", False)),
+                "osm_network": not getattr(args, "osm_cache_only", False),
+                "fetch_dem": bool(getattr(args, "fetch_dem", False)),
+                "dtm": getattr(args, "dtm", "bulldozer"),
+                "dtm_max_object_m": float(getattr(args, "dtm_max_object", 15.0))},
     )
     from .core.progress import Live
 
@@ -835,201 +841,88 @@ def _shortest_path(path: str) -> str:
         return path
 
 
-def cmd_facades(args) -> int:
-    """Synthesise facade texture for a run's structural mesh, on a GPU."""
-    import json
-    import shutil
+def cmd_refine_mesh(args) -> int:
+    """Refine facade appearance with TRELLIS.2. Nothing is trained; nothing moves.
 
-    from .mesh import facades as fa
-    from .mesh.build import load_run
-    from .mesh.structural import build as build_structural
-    from .mesh.structural import select as select_buildings
+    This is Sat2City v2's appearance path - geometry encoder, appearance flow,
+    material decoder, PBR bake - every module of which is a frozen TRELLIS.2
+    component. The one module Sat2City v2 fine-tunes is its geometry flow, and
+    that is the part this pipeline does not want: it already has measured
+    geometry, and a generated shape would replace a measurement with a guess.
+    """
+    from .mesh import build as B
+    from .mesh import structural as struct
+    from .mesh import trellis as tr
     from .semantics import instances as inst_mod
 
-    checks = fa.preflight()
-    print("TRAKSHA facades   threefiner, fixed geometry, texture only")
-    for k in ("torch", "cuda", "device", "vram_gb"):
+    print(tr.describe())
+    print()
+
+    checks = tr.preflight(args.root)
+    for k in ("torch", "device", "vram_gb"):
         if k in checks:
-            print(f"  {k:12s} {checks[k]}")
+            print(f"  {k:10s} {checks[k]}")
     for note in checks.get("notes", []):
-        print(f"  note         {note}")
-    if checks["missing"]:
-        print("  missing:")
+        print(f"  note       {note}")
+    if not checks["ok"]:
         for m in checks["missing"]:
-            print(f"    - {m}")
+            print(f"  MISSING    {m}")
         if not args.dry_run:
-            print("\nNothing to do without those. `--dry-run` prepares "
-                  "the per-building meshes anyway, so the handoff can "
-                  "be checked on a machine with no GPU.")
+            print()
+            print("Not run. Fix the above, or pass --dry-run to cost the work.")
             return 1
 
-    run = load_run(args.run)
-    field = inst_mod.load(os.path.join(args.run, "segmentation"))
-    if field is None:
-        print("error: this run has no segmentation/; re-run with instances enabled")
+    run = B.load_run(args.run)
+    dsm, ndsm = run.get("dsm"), run.get("ndsm")
+    seg_dir = os.path.join(args.run, "segmentation")
+    field = inst_mod.load(seg_dir) if os.path.isdir(seg_dir) else None
+    if dsm is None or ndsm is None or field is None or field.count == 0:
+        print("this run has no structural segmentation to refine")
         return 1
-    gsd = float(run["meta"].get("gsd_m") or 1.0)
+
+    gsd = float((run.get("meta") or {}).get("gsd_m", 1.0))
     sem = run.get("sem")
-    buildings = select_buildings(field, run["dsm"], run["ndsm"],
-                                 None if sem is None else sem.astype("uint8"))
-    mesh = build_structural(run["dsm"], run["ndsm"], buildings, gsd)
-    want = len(buildings) if args.limit <= 0 else min(len(buildings), args.limit)
-    print(f"  buildings    {len(buildings)} in the mesh, refining {want}")
-    # The orthophoto is found before the run, not after it: it is what the
-    # handover is coloured with, and threefiner renders that colour to
-    # initialise its texture before the first diffusion step.
-    tileset = args.tileset or _guess_tileset(args.run)
-    out = args.out or os.path.join(args.run, "facades")
-    mesh_dir = os.path.join(os.path.dirname(tileset), "mesh") if tileset else out
-    base_tex = os.path.join(mesh_dir, "surface.jpg")
-    have_tex = os.path.exists(base_tex)
-    print(f"  handover     per-vertex colour from "
-          f"{'surface.jpg' if have_tex else 'a flat grey (no orthophoto beside the mesh)'}")
-    # The weights, once, here. Each refinement is a subprocess that calls
-    # `from_pretrained`, and diffusers resolves that by asking the Hub and
-    # falling back to the cache when the call fails - so an un-warmed cache on a
-    # box the Hub is rate-limiting turns every building into "the model is not
-    # fully cached locally". One fetch up front removes that for the whole run,
-    # and a network problem is reported here, with what to do about it, instead
-    # of once per building after the meshes have been prepared.
-    weights = None
-    if not args.dry_run:
-        repo = fa.PRESET_MODELS[args.preset][0]
-        print(f"  weights      {repo}, cached once before the first building")
-        try:
-            weights = fa.ensure_weights(
-                args.preset, on_note=lambda m: print(f"  note         {m}"))
-        except fa.FacadeUnavailable as exc:
-            print(f"error: {exc}")
-            return 1
-        print(f"  weights      ready after {weights['attempts']} attempt(s)"
-              + (", cache reads offline: the Hub is switched off for the run"
-                 if weights.get("offline_ok") else
-                 ", but the cache did not read back offline; the Hub stays on"))
-        low, high = fa.MINUTES_PER_BUILDING
-        print(f"  note         roughly {want * low}-{want * high} minutes on one GPU")
+    buildings = struct.select(
+        field, dsm, ndsm, None if sem is None else sem.astype("uint8"),
+        regularise=True, gsd_m=gsd, osm_rings=run.get("osm_buildings"))
+    if not buildings:
+        print("no buildings tall enough to refine")
+        return 1
 
-    rec = fa.refine(mesh, out, max_buildings=args.limit,
-                    prompt=args.prompt or fa.DEFAULT_PROMPT,
-                    preset=args.preset, iters=args.iters or None,
-                    dry_run=args.dry_run,
-                    texture=base_tex if have_tex else None,
-                    grid_shape=run["dsm"].shape, gsd_m=gsd,
-                    timeout_s=args.timeout, weights=weights)
-    ok = sum(1 for b in rec["buildings"] if b.get("glb") or b.get("dry_run"))
-    print(f"  refined      {ok}/{len(rec['buildings'])} into {out}/")
+    mesh = struct.build(dsm, ndsm, buildings, gsd)
+    rgb = run.get("texture")
+    if rgb is None:
+        print("this run wrote no orthophoto to condition on")
+        return 1
+
+    out_dir = args.out or os.path.join(args.run, "refined")
+    rec = tr.refine(mesh, rgb, gsd, out_dir, buildings=buildings,
+                    limit=args.limit, seed=args.seed,
+                    resolution=args.resolution, texture_size=args.texture_res,
+                    low_vram=not args.no_low_vram, dry_run=args.dry_run)
+
+    print(f"  candidates {rec['candidates']}")
+    print(f"  selected   {rec['selected']}")
+    if rec.get("skipped"):
+        lo, hi = rec.get("estimate_s", (0, 0))
+        print(f"  estimate   {lo}-{hi}s on a 24 GB card")
+        print()
+        print(rec["skipped"])
+        return 0 if args.dry_run else 1
+
+    print(f"  refined    {rec['refined']}/{rec['attempted']}")
     for b in rec["buildings"]:
-        if b.get("error"):
-            print(f"    ! {b['name']} failed (exit code {b.get('returncode')}): "
-                  f"{b['error'].strip()}")
-        elif b.get("skipped"):
-            print(f"    - {b['name']} skipped: {b['skipped']}")
-
-    if args.dry_run:
-        # Stop here on purpose. A dry run prepares the handover; assembling a
-        # model with nothing painted in it would overwrite a real refined model
-        # with an empty one and register that in the manifest, which is a worse
-        # outcome than the command doing less than it could.
-        print("  note         dry run: the handover meshes are written and "
-              "nothing else was touched")
-        return 0
-
-    # The assembled model: the whole scene, with threefiner's colour baked onto
-    # the buildings it refined. This is the artifact the request is really about
-    # - per-building GLBs are an intermediate, not a deliverable.
-    info = fa.assemble(mesh, rec["buildings"],
-                       os.path.join(mesh_dir, "structural_refined.obj"),
-                       run["dsm"].shape, gsd,
-                       base_texture=base_tex if have_tex else None,
-                       resolution=args.texture_res)
-    for b in rec["buildings"]:
-        if b.get("skipped") and b.get("glb"):
-            print(f"    - {b['name']} refined but not used: {b['skipped']}")
-        elif b.get("bake"):
-            print(f"    + {b['name']} baked at {args.texture_res} px, "
-                  f"{b['bake']['coverage']:.0%} of the atlas, surface offset "
-                  f"{b['bake']['surface_offset']:.3f} of the building")
-    print(f"  assembled    {_shortest_path(info['obj'])}")
-    print(f"               {info['triangles']:,} triangles, "
-          f"{info['buildings_refined']}/{info['buildings_total']} buildings with "
-          f"synthesised walls")
-
-    # Rewritten now that the bake has run: whether a building's colour was
-    # actually used, and how far the refined surface sat from the measured one,
-    # are only known here, and facades.json is the artifact that claims it.
-    from .core.jsonio import save_json
-
-    save_json(rec, os.path.join(out, "facades.json"), indent=1)
-
-    # Rebuild the browser copy so the viewer draws what was just painted.
-    # Without this the refined walls exist only in the download, and the site
-    # keeps showing the measured mesh while the panel claims otherwise.
-    web_info = None
-    if tileset and info["materials"]:
-        from .mesh import webmesh
-
-        tiles_dir = os.path.dirname(tileset)
-        web = webmesh.build_web_mesh(run["dsm"], run["ndsm"], field,
-                                     None if sem is None else sem.astype("uint8"),
-                                     gsd, source=mesh)
-        F_full = mesh["triangles"]
-        textures, group_uv = {}, {}
-        for name, png in info["materials"].items():
-            src = os.path.join(mesh_dir, png)
-            if not os.path.exists(src):
-                continue
-            shutil.copyfile(src, os.path.join(tiles_dir, png))
-            full = next((g for g in mesh["groups"] if g[0] == name), None)
-            small = next((g for g in web["groups"] if g[0] == name), None)
-            if full is None or small is None:
-                continue
-            sv = __import__("numpy").unique(F_full[full[1]:full[1] + full[2]])
-            dv = __import__("numpy").unique(
-                web["triangles"][small[1]:small[1] + small[2]])
-            moved = fa.transfer_uv(mesh["vertices"][sv], info["uv"][sv],
-                                   web["vertices"][dv])
-            if moved is None:
-                continue
-            textures[name] = png
-            group_uv[name] = moved
-        web_info = webmesh.write(os.path.join(tiles_dir, "structural.bin"), web,
-                                 web["grid"], web["gsd_m"],
-                                 textures=textures, group_uv=group_uv)
-        print(f"  viewer       structural.bin rebuilt, "
-              f"{web_info['refined_groups']} painted group(s)")
-
-    if tileset:
-        # Patch the manifest the viewer reads, atomically, so a half-written
-        # tileset.json cannot take the site down.
-        with open(tileset, encoding="utf-8") as fh:
-            man = json.load(fh)
-        entry = {k: v for k, v in info.items() if k != "obj"}
-        entry["obj"] = os.path.relpath(info["obj"],
-                                       os.path.dirname(tileset)).replace("\\", "/")
-        entry["mtl"] = os.path.relpath(info["mtl"],
-                                       os.path.dirname(tileset)).replace("\\", "/")
-        man.setdefault("mesh", {}).setdefault("structural", {})["refined"] = entry
-        if web_info:
-            man["mesh"]["structural"]["web"] = web_info
-        tmp = tileset + ".tmp"
-        save_json(man, tmp, indent=1)
-        os.replace(tmp, tileset)
-        print(f"  manifest     {os.path.basename(tileset)} updated")
-
-    rec["assembled"] = info
-    if args.json:
-        save_json(rec, args.json, indent=1)
+        if b.get("file"):
+            drift = b.get("max_drift_m")
+            where = f"{drift:.4f} m" if drift is not None else "unwrapped"
+            print(f"    building_{b['id']:<4} {b['seconds']:6.1f}s  "
+                  f"drift {where}  -> {b['file']}")
+        else:
+            print(f"    building_{b['id']:<4} skipped: {b.get('skipped') or b.get('refused')}")
+    print()
+    print("Geometry is TRAKSHA's own and was checked against the input. "
+          "The texture is synthesised and the manifest says so.")
     return 0
-
-
-def _guess_tileset(run_dir: str):
-    """Where the viewer's manifest lives for this run, if it is beside it."""
-    for candidate in (os.path.join(run_dir, "tiles3d", "tileset.json"),
-                      os.path.join(os.path.dirname(run_dir), "tiles", "tileset.json"),
-                      os.path.join(run_dir, "..", "tiles3d", "tileset.json")):
-        if os.path.exists(candidate):
-            return os.path.abspath(candidate)
-    return None
 
 
 def cmd_dataset(args) -> int:
@@ -1383,6 +1276,34 @@ def cmd_doctor(args) -> int:
         print("  transformers    NOT INSTALLED - no backbone can run")
         ok = False
 
+    # Optional stages. None of these stops a run, and that is exactly why they
+    # are worth printing: each one degrades to a worse estimator that still
+    # produces a plausible surface. A reader who does not know Bulldozer is
+    # absent will read the morphological DTM's output as if it were the cloth
+    # simulation's, and those differ by six metres of bias on the fixture.
+    from .dsm import dtm as _dtm
+    from .mesh import generative as _gen
+
+    if _dtm.available():
+        print(f"  bulldozer       {_dtm.version()}   bare earth by drape-cloth filter")
+    else:
+        print("  bulldozer       NOT INSTALLED - the DTM falls back to the "
+              "morphological filter,")
+        print("                  which sits ~6 m high on any roof the semantic "
+              "raster mislabels.")
+        print("                  pip install bulldozer-dtm")
+
+    try:
+        import skimage  # noqa: F401
+
+        print(f"  scikit-image    {skimage.__version__}   footprint tracing "
+              "and simplification")
+    except ImportError:
+        print("  scikit-image    NOT INSTALLED - footprints keep their raster "
+              "staircase")
+
+    print(f"  generative      {_gen.summary()}")
+
     if args.load:
         from .depth.backbones import get_backbone
 
@@ -1507,7 +1428,31 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--chip", type=int, default=1024)
     pr.add_argument("--overlap", type=float, default=0.25)
     pr.add_argument("--dem", default=None,
-                    help="bare-earth DEM GeoTIFF, or sim:<terrain.tif> for development")
+                    help="bare-earth DEM: a GeoTIFF path, sim:<terrain.tif> for "
+                         "development, or a fetchable product name (copernicus, "
+                         "copernicus90). Copernicus GLO-30 is the default product "
+                         "because it is the most accurate free global DEM in urban "
+                         "and low-relief terrain, which is what a city scene is")
+    pr.add_argument("--fetch-dem", action="store_true",
+                    help="allow downloading DEM tiles from the AWS Open Data mirror. "
+                         "Without it a product name resolves only from the local "
+                         "tile cache and a miss is an error, never a silent skip")
+    pr.add_argument("--osm", action="store_true",
+                    help="harvest OpenStreetMap building footprints and the road "
+                         "network for this scene, and use them to correct the "
+                         "semantic raster the DEM anchor gate reads. Footprints are "
+                         "a shape and ground prior only - they never supply a height")
+    pr.add_argument("--osm-cache-only", action="store_true",
+                    help="use OSM but do not call Overpass; read the local cache or fail")
+    pr.add_argument("--dtm", default="bulldozer",
+                    choices=["bulldozer", "morphological"],
+                    help="how bare earth is extracted. bulldozer is a multi-scale "
+                         "drape-cloth filter and reads the surface's own shape; "
+                         "morphological is the older filter that believes the "
+                         "semantic raster and sits on any roof it mislabelled")
+    pr.add_argument("--dtm-max-object", type=float, default=15.0,
+                    help="widest non-terrain object, in metres. 15 is the minimum of "
+                         "a sweep over the four delivered scenes against lidar truth")
     pr.add_argument("--ref", default=None, help="reference DSM for validation")
     pr.add_argument("--sem", default=None, help="segmentation raster (else heuristic)")
     pr.add_argument("--gcps", default=None, help="csv with row,col,elev_m")
@@ -1579,33 +1524,32 @@ def build_parser() -> argparse.ArgumentParser:
     # Imported for its defaults rather than duplicating them: the timeout and
     # the atlas size are decided by what threefiner does, which is stated once,
     # in the module that has to live with it.
-    from .mesh import facades as fa_defaults
 
-    pf = sub.add_parser("facades", help=(
-        "synthesise facade texture with threefiner (needs a CUDA GPU). "
-        "Geometry is fixed and the output is a separate, labelled artifact."))
-    pf.add_argument("run", help="a run directory with segmentation/")
-    pf.add_argument("--out", default=None, help="default <run>/facades")
-    pf.add_argument("--limit", type=int, default=8,
-                    help="how many buildings, largest first; 0 for all. "
-                         "Minutes each on a GPU, so a whole scene is hours")
-    pf.add_argument("--preset", default="sd_fixgeo",
-                    choices=["sd_fixgeo", "if_fixgeo", "if2_fixgeo"],
-                    help="only fixed-geometry presets; the others deform measured walls")
-    pf.add_argument("--prompt", default=None)
-    pf.add_argument("--iters", type=int, default=0, help="0 keeps the preset default")
-    pf.add_argument("--timeout", type=int, default=fa_defaults.DEFAULT_TIMEOUT_S,
-                    help="seconds per building before it is given up on; the "
-                         "first one also pays for the model download")
-    pf.add_argument("--texture-res", type=int, default=fa_defaults.DEFAULT_TEXTURE_RES,
-                    help="pixels per side of each refined building's baked atlas")
-    pf.add_argument("--dry-run", action="store_true",
-                    help="prepare the per-building meshes without touching a GPU")
-    pf.add_argument("--tileset", default=None,
-                    help="tileset.json to register the refined model with; "
-                         "found automatically when it sits beside the run")
-    pf.add_argument("--json", default=None, help="write the record here")
-    pf.set_defaults(func=cmd_facades)
+
+    prf = sub.add_parser("refine-mesh", help=(
+        "refine facade appearance with TRELLIS.2 - Sat2City v2's frozen "
+        "appearance path applied to this pipeline's own mesh. Needs a CUDA GPU. "
+        "Nothing is trained and no vertex moves: the returned surface is "
+        "asserted against the input before any colour is kept"))
+    prf.add_argument("run", help="a directory written by `traksha run`")
+    prf.add_argument("--root", default=None,
+                     help="path to a TRELLIS.2 checkout (its CUDA extensions are "
+                          "source builds and are not on PyPI)")
+    prf.add_argument("--out", default=None, help="default <run>/refined")
+    prf.add_argument("--limit", type=int, default=8,
+                     help="how many buildings, largest first; 0 for all")
+    prf.add_argument("--seed", type=int, default=42)
+    prf.add_argument("--resolution", type=int, default=1024, choices=[512, 1024],
+                     help="shape-encode resolution; 512 selects a lighter flow "
+                          "model and fits a smaller card")
+    prf.add_argument("--texture-res", type=int, default=2048,
+                     help="baked PBR atlas, pixels per side")
+    prf.add_argument("--no-low-vram", action="store_true",
+                     help="keep every module resident; faster, needs more VRAM")
+    prf.add_argument("--dry-run", action="store_true",
+                     help="select and cost the buildings without touching a GPU")
+    prf.set_defaults(func=cmd_refine_mesh)
+
 
     pv = sub.add_parser("viewer", help="Phase 4: build if needed, then serve the 3D web app")
     pv.add_argument("run", help="a directory written by `traksha run`")

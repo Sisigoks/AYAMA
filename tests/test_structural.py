@@ -252,3 +252,84 @@ def test_the_sheet_it_replaces_fails_the_separation_it_passes():
     ncomp2, _ = Q.components(mesh["vertices"], mesh["triangles"])
     assert ncomp2 > ncomp
     assert Q.verticality(mesh["vertices"], mesh["triangles"])["wall_area_m2"] > 0.0
+
+
+# ------------------------------------------------------------ flat platforms
+# Flat is the default and the burden of proof is on tilting. The argument is not
+# aesthetic: a monocular backbone's noise lives at the same spatial scale as a
+# flat roof's real detail, so a level roof rebuilt vertex by vertex comes back
+# rippled and the ripple is error rendered as architecture.
+def _roof(z):
+    rows, cols = np.mgrid[0:z.shape[0], 0:z.shape[1]]
+    return S.choose_roof(rows.ravel().astype(float), cols.ravel().astype(float),
+                         z.ravel())
+
+
+def test_a_level_roof_becomes_one_horizontal_platform():
+    z = np.full((20, 20), 118.0) + np.random.default_rng(0).normal(0, 0.2, (20, 20))
+    got = _roof(z)
+    assert got["mode"] == "platform"
+    assert got["platform_z"] == pytest.approx(118.0, abs=0.3)
+
+
+def test_a_genuinely_pitched_roof_keeps_its_plane():
+    rows, cols = np.mgrid[0:20, 0:20]
+    z = 100.0 + 0.4 * cols                      # 7.6 m of rise across the roof
+    got = _roof(z.astype(float))
+    assert got["mode"] == "plane"
+    assert got["plane"] is not None
+    assert got["pitch_m"] > S.MIN_PITCH_M
+
+
+def test_a_slight_tilt_is_still_built_as_a_platform():
+    """A plane fitted to noise always beats a constant by a little. Both conditions."""
+    rows, cols = np.mgrid[0:20, 0:20]
+    z = 100.0 + 0.02 * cols                     # 0.38 m across: not a pitch
+    got = _roof(z.astype(float))
+    assert got["mode"] == "platform"
+
+
+def test_a_roof_no_shape_describes_keeps_what_was_calibrated():
+    rng = np.random.default_rng(1)
+    z = 100.0 + rng.normal(0, 6.0, (20, 20))
+    got = _roof(z)
+    assert got["mode"] == "measured"
+    assert got["plane"] is None
+
+
+def test_a_platform_roof_is_actually_flat_in_the_mesh():
+    dsm = scene()
+    m = block(dsm, 10, 10, 30, 34, 18.0)
+    dsm[10:30, 10:34] += np.random.default_rng(2).normal(0, 0.25, (20, 24))
+    b = S.measure(1, m, dsm, np.full(dsm.shape, 100.0, np.float32))
+    assert b is not None and b.roof_mode == "platform"
+    mesh = S.build(dsm, dsm - 100.0, [b], 0.5)
+    first, n_v, n_roof = mesh["vertex_spans"]["building_1"]
+    cap_z = np.asarray(mesh["vertices"])[first:first + n_roof, 2]
+    assert np.ptp(cap_z) < 1e-6
+
+
+def test_the_run_reports_how_many_roofs_it_flattened():
+    """"31 of 100 were squared up" is checkable; "the roofs are flat" is not."""
+    dsm = scene()
+    m = block(dsm, 10, 10, 30, 34, 18.0)
+    b = S.measure(1, m, dsm, np.full(dsm.shape, 100.0, np.float32))
+    mesh = S.build(dsm, dsm - 100.0, [b], 0.5)
+    assert sum(mesh["roof_modes"].values()) == 1
+    assert mesh["flat_platforms"] is True
+
+
+def test_flat_platforms_can_be_turned_off_to_restore_the_old_behaviour():
+    dsm = scene()
+    m = block(dsm, 10, 10, 30, 34, 18.0)
+    b = S.measure(1, m, dsm, np.full(dsm.shape, 100.0, np.float32))
+    mesh = S.build(dsm, dsm - 100.0, [b], 0.5, flat_platforms=False)
+    assert mesh["flat_platforms"] is False
+
+
+def test_the_roof_decision_travels_in_the_building_record():
+    dsm = scene()
+    m = block(dsm, 10, 10, 30, 34, 18.0)
+    rec = S.measure(1, m, dsm, np.full(dsm.shape, 100.0, np.float32)).record()
+    assert rec["roof_mode"] in ("platform", "plane", "measured")
+    assert "platform_z" in rec and "pitch_m" in rec
